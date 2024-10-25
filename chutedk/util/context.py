@@ -4,7 +4,7 @@ Helper to distinguish between local and remote contexts.
 
 import os
 
-IS_REMOTE = os.getenv("PARACHUTE_EXECUTION_CONTEXT") == "REMOTE"
+IS_REMOTE = os.getenv("PARACHUTES_EXECUTION_CONTEXT") == "REMOTE"
 
 
 def is_remote() -> bool:

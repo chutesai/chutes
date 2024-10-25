@@ -14,7 +14,6 @@ CHMOD_RE = re.compile(r"^([0-7]{3})$")
 
 
 class ADD(BaseDirective):
-
     def __init__(
         self,
         source: str,

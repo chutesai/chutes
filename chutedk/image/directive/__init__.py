@@ -15,7 +15,6 @@ class DirectiveType(Enum):
 
 
 class BaseDirective:
-
     def __init__(self, _type: DirectiveType, _args: str):
         """
         Constructor.  Nothing fancy here, use the derived classes instead.

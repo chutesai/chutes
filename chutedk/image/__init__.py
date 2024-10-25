@@ -11,7 +11,6 @@ from chutedk.image.directive.entrypoint import ENTRYPOINT
 
 
 class Image:
-
     default_base_image = "nvidia/cuda:12.6.1-cudnn-devel-ubuntu24.04"
 
     def __init__(self):
