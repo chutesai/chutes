@@ -85,16 +85,12 @@ class Application(FastAPI):
             else:
                 hook()
 
-    def cord(self, backoff_config: Dict[str, Any] = {}, **kwargs):
+    def cord(self, **kwargs):
         """
-        Decorator to define a remote function.
+        Decorator to define a parachute cord (function).
         """
-        #def decorator(func):
-        #    print(f"INSIDE OUTER DECORATOR")
-
         from chutedk.application.cord import Cord
-        cord = Cord(self, backoff_config, **kwargs)
+
+        cord = Cord(self, **kwargs)
         self._cords.append(cord)
         return cord
-
-        #return decorator
