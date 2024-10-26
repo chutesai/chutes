@@ -20,7 +20,6 @@ class VLLMChute(BaseModel):
     chat_stream: Callable
     completion_stream: Callable
     models: Callable
-
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
@@ -35,6 +34,17 @@ def build_vllm_chute(
         image=image,
         node_selector=node_selector,
     )
+
+    # Semi-optimized defaults.
+    if not engine_args:
+        engine_args.update(
+            {
+                "num_scheduler_steps": 16,
+                "multi_step_stream_outputs": True,
+                "max_logprobs": 5,
+                "enforce_eager": False,
+            }
+        )
 
     @chute.on_startup()
     async def initialize_vllm(self):
@@ -61,6 +71,7 @@ def build_vllm_chute(
             lora_modules=[],
             prompt_adapters=[],
             request_logger=request_logger,
+            return_tokens_as_token_ids=True,
         )
         vllm_api_server.completion = lambda s: OpenAIServingCompletion(
             self.engine,
@@ -69,6 +80,7 @@ def build_vllm_chute(
             lora_modules=[],
             prompt_adapters=[],
             request_logger=request_logger,
+            return_tokens_as_token_ids=True,
         )
 
     def _parse_stream_chunk(encoded_chunk):
