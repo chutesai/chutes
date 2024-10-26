@@ -4,24 +4,27 @@ import backoff
 import pickle
 import gzip
 import pybase64 as base64
+from typing import Dict
 from contextlib import asynccontextmanager
+from starlette.responses import StreamingResponse
 from chutedk.config import CLIENT_ID, API_BASE_URL
-from chutedk.application.base import Application
-from chutedk.application.node_selector import NodeSelector
+from chutedk.chute.base import Chute
 from chutedk.exception import InvalidPath, DuplicatePath, StillProvisioning
 from chutedk.util.context import is_local
 
 # Simple regex to check for custom path overrides.
-PATH_RE = re.compile(r"^/[a-z0-9]+[a-z0-9-_]*$")
+PATH_RE = re.compile(r"^(/[a-z0-9]+[a-z0-9-_]*)+$")
 
 
 class Cord:
     def __init__(
         self,
-        app: Application,
-        selector: NodeSelector,
+        app: Chute,
         stream: bool = False,
         path: str = None,
+        passthrough_path: str = None,
+        passthrough: bool = False,
+        method: str = "GET",
         provision_timeout: int = 180,
         **session_kwargs,
     ):
@@ -29,23 +32,29 @@ class Cord:
         Constructor.
         """
         self._app = app
-        self._path = path
+        self._path = None
+        if path:
+            self.path = path
+        self._passthrough_path = None
+        if passthrough_path:
+            self.passthrough_path = passthrough_path
         self._stream = stream
-        self._selector = selector
+        self._passthrough = passthrough
+        self._method = method
         self._session_kwargs = session_kwargs
         self._provision_timeout = 60
 
     @property
     def path(self):
         """
-        URL getter.
+        URL path getter.
         """
         return self._path
 
     @path.setter
     def path(self, path: str):
         """
-        URL setter with some basic validation.
+        URL path setter with some basic validation.
 
         :param path: The path to use for the new endpoint.
         :type path: str
@@ -57,6 +66,27 @@ class Cord:
         if any([cord.path == path for cord in self._app.cords]):
             raise DuplicatePath(path)
         self._path = path
+
+    @property
+    def passthrough_path(self):
+        """
+        Passthrough/upstream URL path getter.
+        """
+        return self._passthrough_path
+
+    @passthrough_path.setter
+    def passthrough_path(self, path: str):
+        """
+        Passthrough/usptream path setter with some basic validation.
+
+        :param path: The path to use for the upstream endpoint.
+        :type path: str
+
+        """
+        path = "/" + path.lstrip("/").rstrip("/")
+        if "//" in path or not PATH_RE.match(path):
+            raise InvalidPath(path)
+        self._passthrough_path = path
 
     @asynccontextmanager
     async def _local_call_base(self, *args, **kwargs):
@@ -91,7 +121,7 @@ class Cord:
                     json=request_payload,
                     headers={
                         "X-Parachute-ClientID": CLIENT_ID,
-                        "X-Parachute-ApplicationID": self._app.uid,
+                        "X-Parachute-ChuteID": self._app.uid,
                         "X-Parachute-Function": self._func.__name__,
                     },
                 ) as response:
@@ -109,7 +139,7 @@ class Cord:
         Call the function from the local context, i.e. make an API request.
         """
         async with self._local_call_base(*args, **kwargs) as response:
-            return await response.json()
+            return await self._func(response)
 
     async def _local_stream_call(self, *args, **kwargs):
         """
@@ -119,7 +149,19 @@ class Cord:
         """
         async with self._local_call_base(*args, **kwargs) as response:
             async for content in response.content:
-                yield content
+                yield await self._func(content)
+
+    @asynccontextmanager
+    async def _passthrough_call(self, **kwargs):
+        """
+        Call a passthrough endpoint.
+        """
+        print(f"I AM IN PASSTHROUGH: {self.path=} {self._method=}")
+        async with aiohttp.ClientSession(base_url="http://127.0.0.1:8000") as session:
+            async with getattr(session, self._method.lower())(
+                self.passthrough_path, **kwargs
+            ) as response:
+                yield response
 
     async def _remote_call(self, *args, **kwargs):
         """
@@ -127,6 +169,10 @@ class Cord:
         runs on the miner's deployment.
         """
         print(f"GOT HERE _remote_call -> {self._func.__name__} with {args=} {kwargs=}")
+        if self._passthrough:
+            async with self._passthrough_call(**kwargs) as response:
+                return await response.json()
+
         return_value = await self._func(*args, **kwargs)
         # Again with the pickle...
         return {"result": base64.b64encode(gzip.compress(pickle.dumps(return_value)))}
@@ -139,13 +185,31 @@ class Cord:
         print(
             f"GOT HERE _remote_stream_call -> {self._func.__name__} with {args=} {kwargs=}"
         )
+        if self._passthrough:
+            async with self._passthrough_call(**kwargs) as response:
+                async for content in response.content:
+                    yield content
+            return
+
         async for data in self._func(*args, **kwargs):
             yield data
+
+    async def _request_handler(self, request: Dict[str, str]):
+        """
+        Decode/deserialize incoming request and call the appropriate function.
+        """
+        args = pickle.loads(gzip.decompress(base64.b64decode(request["args"])))
+        kwargs = pickle.loads(gzip.decompress(base64.b64decode(request["kwargs"])))
+        if self._stream:
+            return StreamingResponse(self._remote_stream_call(*args, **kwargs))
+        return await self._remote_call(*args, **kwargs)
 
     def __call__(self, func):
         self._func = func
         if not self._path:
             self.path = func.__name__
+        if not self._passthrough_path:
+            self.passthrough_path = func.__name__
         if is_local():
             return self._local_call if not self._stream else self._local_stream_call
         return self._remote_call if not self._stream else self._remote_stream_call

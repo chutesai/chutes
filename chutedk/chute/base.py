@@ -2,25 +2,25 @@
 Main application class, along with all of the inference decorators.
 """
 
-import gzip
-import pybase64 as base64
-import pickle
 import asyncio
 import uuid
-from typing import Any, Dict, List
+from typing import Any, List
 from fastapi import FastAPI
-from starlette.responses import StreamingResponse
 from chutedk.image import Image
 from chutedk.config import CLIENT_ID
 from chutedk.util.context import is_remote
+from chutedk.chute.node_selector import NodeSelector
 
 
-class Application(FastAPI):
-    def __init__(self, name: str, image: Image, **kwargs):
+class Chute(FastAPI):
+    def __init__(
+        self, name: str, image: Image, node_selector: NodeSelector = None, **kwargs
+    ):
         super().__init__(**kwargs)
         self._name = name
         self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{CLIENT_ID}:{name}"))
         self._image = image
+        self._node_selector = node_selector
         self._startup_hooks = []
         self._shutdown_hooks = []
         self._cords = []
@@ -90,23 +90,16 @@ class Application(FastAPI):
 
         # Add all of the API endpoints.
         for cord in self._cords:
-
-            async def _endpoint(request: Dict[str, str]):  # args: str, kwargs: str):
-                args = pickle.loads(gzip.decompress(base64.b64decode(request["args"])))
-                kwargs = pickle.loads(
-                    gzip.decompress(base64.b64decode(request["kwargs"]))
-                )
-                if cord._stream:
-                    return StreamingResponse(cord._remote_stream_call(*args, **kwargs))
-                return cord._remote_call(*args, **kwargs)
-
-            self.add_api_route(f"/{self._uid}{cord.path}", _endpoint, methods=["POST"])
+            self.add_api_route(
+                f"/{self.uid}{cord.path}", cord._request_handler, methods=["POST"]
+            )
+            print(f"ADDED API ROUTE: /{self.uid}{cord.path}")
 
     def cord(self, **kwargs):
         """
         Decorator to define a parachute cord (function).
         """
-        from chutedk.application.cord import Cord
+        from chutedk.chute.cord import Cord
 
         cord = Cord(self, **kwargs)
         self._cords.append(cord)
