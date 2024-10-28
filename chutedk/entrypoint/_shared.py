@@ -3,6 +3,7 @@ import re
 import sys
 import argparse
 import importlib
+import importlib.util
 from loguru import logger
 from typing import List, Dict, Any, Tuple
 
@@ -49,11 +50,20 @@ def load_chute(
     from chutedk.chute import Chute, ChutePack
 
     # Load the module.
+    sys.path.append(os.getcwd())
     module_name, chute_name = chute_ref_str.split(":")
     try:
-        module = importlib.import_module(module_name)
-    except ImportError:
-        logger.error(f"Unable to import module '{module_name}'")
+        # module = importlib.import_module(module_name)
+        spec = importlib.util.spec_from_file_location(
+            module_name, os.getcwd() + f"/{module_name}.py"
+        )
+        if spec is None:
+            raise ImportError(f"Cannot find module {module_name} in {os.getcwd()}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    except ImportError as exc:
+        logger.error(f"Unable to import module '{module_name}': {exc}")
         sys.exit(1)
 
     # Get the Chute reference (FastAPI server).

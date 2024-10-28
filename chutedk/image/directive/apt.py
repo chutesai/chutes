@@ -9,6 +9,7 @@ class APT(BaseDirective):
     def __init__(self):
         """Constructor."""
         self._type = DirectiveType.RUN
+        self._build_context = []
 
     @classmethod
     def update(cls):

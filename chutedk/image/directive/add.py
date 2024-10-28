@@ -112,7 +112,7 @@ class ADD(BaseDirective):
             ]
             assert (
                 self._build_context
-            ), "No (accessible) source paths matched provided pattern"
+            ), f"No (accessible) source paths matched provided pattern '{positive_patterns}'"
 
         # Destination within the image.
         arguments.append(dest)

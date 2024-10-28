@@ -21,3 +21,4 @@ class FROM(BaseDirective):
         assert IMAGE_RE.match(image), f"Invalid image: {image}"
         self._type = DirectiveType.FROM
         self._args = image
+        self._build_context = []

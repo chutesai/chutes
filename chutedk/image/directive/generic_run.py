@@ -12,3 +12,4 @@ class RUN(BaseDirective):
         """
         self._type = DirectiveType.RUN
         self._args = command
+        self._build_context = []

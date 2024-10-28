@@ -21,3 +21,4 @@ class ENV(BaseDirective):
         assert ENV_KEY_RE.match(key), f"Invalid variable name: {key}"
         self._type = DirectiveType.ENV
         self._args = f"{key}={value}"
+        self._build_context = []

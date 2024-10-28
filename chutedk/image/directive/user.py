@@ -12,3 +12,4 @@ class USER(BaseDirective):
         """
         self._type = DirectiveType.USER
         self._args = user
+        self._build_context = []

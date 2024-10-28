@@ -1,4 +1,3 @@
-import os
 import sys
 from loguru import logger
 from uvicorn import Config, Server
@@ -39,7 +38,7 @@ async def run_chute(args):
     """
     chute, args = load_chute("chutedk run", args, CLI_ARGS)
 
-    from chutedk.chute import Chute, ChutePack
+    from chutedk.chute import ChutePack
     from chutedk.util.context import is_local
 
     if is_local():

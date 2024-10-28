@@ -20,6 +20,8 @@ class Image:
         """
         self._name = None
         self._tag = None
+        self.name = name
+        self.tag = tag
         self._directives = [
             FROM(self.default_base_image),
         ]
@@ -32,20 +34,20 @@ class Image:
     @name.setter
     def name(self, name: str):
         """Name setter with basic validation."""
-        if not re.match(r"^[a-z][0-9][a-z0-9-_\.]*$", name, re.I):
+        if not re.match(r"^[a-z0-9][a-z0-9-_\.]*$", name, re.I):
             raise ValueError(f"Invalid image name: '{name}'")
         self._name = name
 
     @property
     def tag(self):
         """Tag for the image."""
-        return self._name
+        return self._tag
 
     @tag.setter
     def tag(self, tag: str):
         """Tag setter with basic validation."""
-        if not re.match(r"^[a-z][0-9][a-z0-9-_\.]*$", tag, re.I):
-            raise ValueError(f"Invalid image name: '{name}'")
+        if not re.match(r"^[a-z0-9][a-z0-9-_\.]*$", tag, re.I):
+            raise ValueError(f"Invalid image tag: '{tag}'")
         self._tag = tag
 
     def __str__(self):

@@ -12,3 +12,4 @@ class WORKDIR(BaseDirective):
         """
         self._type = DirectiveType.WORKDIR
         self._args = workdir
+        self._build_context = []

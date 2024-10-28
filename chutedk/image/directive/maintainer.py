@@ -12,3 +12,4 @@ class MAINTAINER(BaseDirective):
         """
         self._type = DirectiveType.MAINTAINER
         self._args = maintainer
+        self._build_context = []

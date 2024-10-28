@@ -15,3 +15,4 @@ class ENTRYPOINT(BaseDirective):
         self._type = DirectiveType.ENTRYPOINT
         command = [args] if isinstance(args, str) else args
         self._args = json.dumps(command)
+        self._build_context = []
