@@ -4,6 +4,7 @@ Main application class, along with all of the inference decorators.
 
 import asyncio
 import uuid
+from loguru import logger
 from typing import Any, List
 from fastapi import FastAPI
 from chutedk.image import Image
@@ -93,7 +94,9 @@ class Chute(FastAPI):
             self.add_api_route(
                 f"/{self.uid}{cord.path}", cord._request_handler, methods=["POST"]
             )
-            print(f"ADDED API ROUTE: /{self.uid}{cord.path}")
+            logger.info(
+                f"Added new API route: /{self.uid}{cord.path} calling {cord._func.__name__}"
+            )
 
     def cord(self, **kwargs):
         """

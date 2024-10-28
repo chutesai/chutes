@@ -3,7 +3,9 @@ import re
 import backoff
 import pickle
 import gzip
+import time
 import pybase64 as base64
+from loguru import logger
 from typing import Dict
 from contextlib import asynccontextmanager
 from starlette.responses import StreamingResponse
@@ -42,7 +44,7 @@ class Cord:
         self._passthrough = passthrough
         self._method = method
         self._session_kwargs = session_kwargs
-        self._provision_timeout = 60
+        self._provision_timeout = provision_timeout
 
     @property
     def path(self):
@@ -94,13 +96,14 @@ class Cord:
         Invoke the function from within the local/client side context, meaning
         we're actually just calling the chutes API.
         """
-        print(f"GOT HERE _local_call -> {self._func.__name__} with {args=} {kwargs=}")
+        logger.debug(f"Invoking remote function {self._func.__name__} via HTTP...")
 
         @backoff.on_exception(
             backoff.constant,
             (StillProvisioning,),
             jitter=None,
             interval=1,
+            max_time=self._provision_timeout,
         )
         @asynccontextmanager
         async def _call():
@@ -126,13 +129,23 @@ class Cord:
                     },
                 ) as response:
                     if response.status == 503:
+                        logger.warning(
+                            f"Function {self._func.__name__} is still provisioning..."
+                        )
                         raise StillProvisioning(await response.text())
                     elif response.status != 200:
+                        logger.error(
+                            f"Error invoking {self._func.__name__} [status={response.status}]: {await response.text()}"
+                        )
                         raise Exception(await response.text())
                     yield response
 
+        started_at = time.time()
         async with _call() as response:
             yield response
+        logger.success(
+            f"Completed remote invocation [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
+        )
 
     async def _local_call(self, *args, **kwargs):
         """
@@ -156,7 +169,9 @@ class Cord:
         """
         Call a passthrough endpoint.
         """
-        print(f"I AM IN PASSTHROUGH: {self.path=} {self._method=}")
+        logger.debug(
+            f"Received passthrough call, passing along to {self.passthrough_path} via {self._method}"
+        )
         async with aiohttp.ClientSession(base_url="http://127.0.0.1:8000") as session:
             async with getattr(session, self._method.lower())(
                 self.passthrough_path, **kwargs
@@ -168,13 +183,22 @@ class Cord:
         Function call from within the remote context, that is, the code that actually
         runs on the miner's deployment.
         """
-        print(f"GOT HERE _remote_call -> {self._func.__name__} with {args=} {kwargs=}")
+        logger.info(
+            f"Received invocation request [{self._func.__name__} passthrough={self._passthrough}]"
+        )
+        started_at = time.time()
         if self._passthrough:
             async with self._passthrough_call(**kwargs) as response:
+                logger.success(
+                    f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
+                )
                 return await response.json()
 
         return_value = await self._func(*args, **kwargs)
         # Again with the pickle...
+        logger.success(
+            f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
+        )
         return {"result": base64.b64encode(gzip.compress(pickle.dumps(return_value)))}
 
     async def _remote_stream_call(self, *args, **kwargs):
@@ -182,17 +206,22 @@ class Cord:
         Function call from within the remote context, that is, the code that actually
         runs on the miner's deployment.
         """
-        print(
-            f"GOT HERE _remote_stream_call -> {self._func.__name__} with {args=} {kwargs=}"
-        )
+        logger.info(f"Received streaming invocation request [{self._func.__name__}]")
+        started_at = time.time()
         if self._passthrough:
             async with self._passthrough_call(**kwargs) as response:
                 async for content in response.content:
                     yield content
+            logger.success(
+                f"Completed request [{self._func.__name__} (passthrough)] in {time.time() - started_at} seconds"
+            )
             return
 
         async for data in self._func(*args, **kwargs):
             yield data
+        logger.success(
+            f"Completed request [{self._func.__name__}] in {time.time() - started_at} seconds"
+        )
 
     async def _request_handler(self, request: Dict[str, str]):
         """

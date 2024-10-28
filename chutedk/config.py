@@ -1,4 +1,5 @@
 import os
+from loguru import logger
 from pathlib import Path
 from configparser import ConfigParser, NoSectionError
 from chutedk.exception import AuthenticationRequired, NotConfigured
@@ -10,6 +11,7 @@ if not os.path.exists(CONFIG_PATH):
     raise NotConfigured(
         f"Please set either populate {CONFIG_PATH} or set PARACHUTES_CONFIG_PATH to alternative/valid config path!"
     )
+logger.debug(f"Loading parachutes config from {CONFIG_PATH}...")
 CONFIG = ConfigParser()
 CONFIG.read(CONFIG_PATH)
 if not (CLIENT_ID := CONFIG.get("auth", "client_id")):
@@ -31,3 +33,4 @@ if not API_BASE_URL:
         if not os.getenv("PARACHUTES_DEV_MODE")
         else "http://127.0.0.1:8000"
     )
+logger.debug(f"Configured parachutes: client_id={CLIENT_ID} api={API_BASE_URL}")
