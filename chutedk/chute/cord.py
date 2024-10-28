@@ -143,7 +143,7 @@ class Cord:
         started_at = time.time()
         async with _call() as response:
             yield response
-        logger.success(
+        logger.debug(
             f"Completed remote invocation [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
         )
 

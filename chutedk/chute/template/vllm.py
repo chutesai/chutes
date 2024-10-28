@@ -1,9 +1,8 @@
 import json
-from pydantic import BaseModel, ConfigDict
 from typing import Dict, Any, Callable
 from chutedk.image import Image
 from chutedk.image.standard.vllm import VLLM
-from chutedk.chute import Chute, NodeSelector
+from chutedk.chute import Chute, ChutePack, NodeSelector
 import torch
 from vllm import AsyncEngineArgs, AsyncLLMEngine
 import vllm.entrypoints.openai.api_server as vllm_api_server
@@ -13,20 +12,18 @@ from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
 from vllm.entrypoints.openai.serving_engine import BaseModelPath
 
 
-class VLLMChute(BaseModel):
-    chute: Chute
+class VLLMChute(ChutePack):
     chat: Callable
     completion: Callable
     chat_stream: Callable
     completion_stream: Callable
     models: Callable
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 def build_vllm_chute(
     model_name: str,
     node_selector: NodeSelector,
-    image: Image = VLLM,
+    image: str | Image = VLLM,
     engine_args: Dict[str, Any] = {},
 ):
     chute = Chute(

@@ -1,3 +1,4 @@
+import re
 from typing import List
 from chutedk.image.directive.base_image import FROM
 from chutedk.image.directive.apt import APT
@@ -13,13 +14,39 @@ from chutedk.image.directive.entrypoint import ENTRYPOINT
 class Image:
     default_base_image = "nvidia/cuda:12.6.1-cudnn-devel-ubuntu24.04"
 
-    def __init__(self):
+    def __init__(self, name: str, tag: str):
         """
         Semi-useless constructor - don't try to pass args here, use the provided methods.
         """
+        self._name = None
+        self._tag = None
         self._directives = [
             FROM(self.default_base_image),
         ]
+
+    @property
+    def name(self):
+        """Name of the image."""
+        return self._name
+
+    @name.setter
+    def name(self, name: str):
+        """Name setter with basic validation."""
+        if not re.match(r"^[a-z][0-9][a-z0-9-_\.]*$", name, re.I):
+            raise ValueError(f"Invalid image name: '{name}'")
+        self._name = name
+
+    @property
+    def tag(self):
+        """Tag for the image."""
+        return self._name
+
+    @tag.setter
+    def tag(self, tag: str):
+        """Tag setter with basic validation."""
+        if not re.match(r"^[a-z][0-9][a-z0-9-_\.]*$", tag, re.I):
+            raise ValueError(f"Invalid image name: '{name}'")
+        self._tag = tag
 
     def __str__(self):
         """String representation."""

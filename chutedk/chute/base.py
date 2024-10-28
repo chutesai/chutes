@@ -7,6 +7,7 @@ import uuid
 from loguru import logger
 from typing import Any, List
 from fastapi import FastAPI
+from pydantic import BaseModel, ConfigDict
 from chutedk.image import Image
 from chutedk.config import CLIENT_ID
 from chutedk.util.context import is_remote
@@ -15,7 +16,11 @@ from chutedk.chute.node_selector import NodeSelector
 
 class Chute(FastAPI):
     def __init__(
-        self, name: str, image: Image, node_selector: NodeSelector = None, **kwargs
+        self,
+        name: str,
+        image: str | Image,
+        node_selector: NodeSelector = None,
+        **kwargs,
     ):
         super().__init__(**kwargs)
         self._name = name
@@ -107,3 +112,9 @@ class Chute(FastAPI):
         cord = Cord(self, **kwargs)
         self._cords.append(cord)
         return cord
+
+
+# For returning things from the templates, aside from just a chute.
+class ChutePack(BaseModel):
+    chute: Chute
+    model_config = ConfigDict(arbitrary_types_allowed=True)
