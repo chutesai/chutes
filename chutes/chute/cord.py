@@ -9,7 +9,7 @@ from loguru import logger
 from typing import Dict
 from contextlib import asynccontextmanager
 from starlette.responses import StreamingResponse
-from chutes.config import CLIENT_ID, API_BASE_URL
+from chutes.config import USER_ID, API_BASE_URL
 from chutes.chute.base import Chute
 from chutes.exception import InvalidPath, DuplicatePath, StillProvisioning
 from chutes.util.context import is_local
@@ -123,7 +123,7 @@ class Cord:
                     f"/{self._app.uid}{self.path}",
                     json=request_payload,
                     headers={
-                        "X-Parachute-ClientID": CLIENT_ID,
+                        "X-Parachute-UserID": USER_ID,
                         "X-Parachute-ChuteID": self._app.uid,
                         "X-Parachute-Function": self._func.__name__,
                     },

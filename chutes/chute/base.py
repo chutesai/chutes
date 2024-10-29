@@ -9,7 +9,7 @@ from typing import Any, List, Dict
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict
 from chutes.image import Image
-from chutes.config import CLIENT_ID
+from chutes.config import USER_ID
 from chutes.util.context import is_remote
 from chutes.chute.node_selector import NodeSelector
 
@@ -31,7 +31,7 @@ class Chute(FastAPI):
     ):
         super().__init__(**kwargs)
         self._name = name
-        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{CLIENT_ID}:{name}"))
+        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{USER_ID}:{name}"))
         self._image = image
         self._node_selector = node_selector
         self._startup_hooks = []

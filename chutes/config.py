@@ -14,9 +14,9 @@ if not os.path.exists(CONFIG_PATH):
 logger.debug(f"Loading parachutes config from {CONFIG_PATH}...")
 CONFIG = ConfigParser()
 CONFIG.read(CONFIG_PATH)
-if not (CLIENT_ID := CONFIG.get("auth", "client_id")):
+if not (USER_ID := CONFIG.get("auth", "user_id")):
     raise AuthenticationRequired(
-        f"Please ensure you have an [auth] section defined in {CONFIG_PATH} with 'client_id' value"
+        f"Please ensure you have an [auth] section defined in {CONFIG_PATH} with 'user_id' value"
     )
 if not (API_KEY := CONFIG.get("auth", "api_key")):
     raise AuthenticationRequired(
@@ -33,4 +33,4 @@ if not API_BASE_URL:
         if not os.getenv("PARACHUTES_DEV_MODE")
         else "http://127.0.0.1:8000"
     )
-logger.debug(f"Configured parachutes: client_id={CLIENT_ID} api={API_BASE_URL}")
+logger.debug(f"Configured parachutes: user_id={USER_ID} api={API_BASE_URL}")

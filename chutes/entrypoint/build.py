@@ -99,6 +99,7 @@ async def build_remote(image):
             os.path.join(build_directory, "chute"), "zip", build_directory
         )
         logger.info(f"Created the build package: {output_path}")
+
         # XXX upload to API (signed URL via minio?) then subscribe to websocket?
 
 
