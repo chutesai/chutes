@@ -1,4 +1,4 @@
-from chutedk.image.directive import BaseDirective, DirectiveType
+from chutes.image.directive import BaseDirective, DirectiveType
 
 
 class USER(BaseDirective):

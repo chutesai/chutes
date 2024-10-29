@@ -8,10 +8,10 @@ from loguru import logger
 from typing import Any, List
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict
-from chutedk.image import Image
-from chutedk.config import CLIENT_ID
-from chutedk.util.context import is_remote
-from chutedk.chute.node_selector import NodeSelector
+from chutes.image import Image
+from chutes.config import CLIENT_ID
+from chutes.util.context import is_remote
+from chutes.chute.node_selector import NodeSelector
 
 
 class Chute(FastAPI):
@@ -107,7 +107,7 @@ class Chute(FastAPI):
         """
         Decorator to define a parachute cord (function).
         """
-        from chutedk.chute.cord import Cord
+        from chutes.chute.cord import Cord
 
         cord = Cord(self, **kwargs)
         self._cords.append(cord)

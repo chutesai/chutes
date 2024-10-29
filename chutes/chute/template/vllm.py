@@ -1,8 +1,8 @@
 import json
 from typing import Dict, Any, Callable
-from chutedk.image import Image
-from chutedk.image.standard.vllm import VLLM
-from chutedk.chute import Chute, ChutePack, NodeSelector
+from chutes.image import Image
+from chutes.image.standard.vllm import VLLM
+from chutes.chute import Chute, ChutePack, NodeSelector
 import torch
 from vllm import AsyncEngineArgs, AsyncLLMEngine
 import vllm.entrypoints.openai.api_server as vllm_api_server

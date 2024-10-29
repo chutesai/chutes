@@ -9,10 +9,10 @@ from loguru import logger
 from typing import Dict
 from contextlib import asynccontextmanager
 from starlette.responses import StreamingResponse
-from chutedk.config import CLIENT_ID, API_BASE_URL
-from chutedk.chute.base import Chute
-from chutedk.exception import InvalidPath, DuplicatePath, StillProvisioning
-from chutedk.util.context import is_local
+from chutes.config import CLIENT_ID, API_BASE_URL
+from chutes.chute.base import Chute
+from chutes.exception import InvalidPath, DuplicatePath, StillProvisioning
+from chutes.util.context import is_local
 
 # Simple regex to check for custom path overrides.
 PATH_RE = re.compile(r"^(/[a-z0-9]+[a-z0-9-_]*)+$")

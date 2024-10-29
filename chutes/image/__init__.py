@@ -1,14 +1,14 @@
 import re
 from typing import List
-from chutedk.image.directive.base_image import FROM
-from chutedk.image.directive.apt import APT
-from chutedk.image.directive.add import ADD
-from chutedk.image.directive.generic_run import RUN
-from chutedk.image.directive.workdir import WORKDIR
-from chutedk.image.directive.env import ENV
-from chutedk.image.directive.user import USER
-from chutedk.image.directive.maintainer import MAINTAINER
-from chutedk.image.directive.entrypoint import ENTRYPOINT
+from chutes.image.directive.base_image import FROM
+from chutes.image.directive.apt import APT
+from chutes.image.directive.add import ADD
+from chutes.image.directive.generic_run import RUN
+from chutes.image.directive.workdir import WORKDIR
+from chutes.image.directive.env import ENV
+from chutes.image.directive.user import USER
+from chutes.image.directive.maintainer import MAINTAINER
+from chutes.image.directive.entrypoint import ENTRYPOINT
 
 
 class Image:

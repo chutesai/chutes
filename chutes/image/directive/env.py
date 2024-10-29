@@ -1,5 +1,5 @@
 import re
-from chutedk.image.directive import BaseDirective, DirectiveType
+from chutes.image.directive import BaseDirective, DirectiveType
 
 ENV_KEY_RE = re.compile(r"^([a-z_][a-z0-9_]*)$", re.I)
 

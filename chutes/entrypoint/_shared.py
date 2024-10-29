@@ -47,7 +47,7 @@ def load_chute(
         logger.remove()
         logger.add(sys.stdout, level="INFO")
 
-    from chutedk.chute import Chute, ChutePack
+    from chutes.chute import Chute, ChutePack
 
     # Load the module.
     sys.path.append(os.getcwd())

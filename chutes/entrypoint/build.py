@@ -7,9 +7,9 @@ import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from loguru import logger
-from chutedk.image.directive.add import ADD
-from chutedk.image.directive.generic_run import RUN
-from chutedk.entrypoint._shared import load_chute
+from chutes.image.directive.add import ADD
+from chutes.image.directive.generic_run import RUN
+from chutes.entrypoint._shared import load_chute
 
 
 CLI_ARGS = {
@@ -106,9 +106,9 @@ async def build_image(input_args):
     """
     Build an image for the parachutes platform.
     """
-    chute, args = load_chute("chutedk build", deepcopy(input_args), CLI_ARGS)
+    chute, args = load_chute("chutes build", deepcopy(input_args), CLI_ARGS)
 
-    from chutedk.chute import ChutePack
+    from chutes.chute import ChutePack
 
     # Get the image reference from the chute.
     chute = chute.chute if isinstance(chute, ChutePack) else chute
@@ -123,9 +123,9 @@ async def build_image(input_args):
 
     # XXX check if the image is already built.
 
-    # Always tack on the final directives, which include installing chutedk and adding project files.
+    # Always tack on the final directives, which include installing chutes and adding project files.
     image._directives.append(
-        RUN("pip install git+https://github.com/jondurbin/chutedk.git")
+        RUN("pip install git+https://github.com/jondurbin/chutes.git")
     )
     current_directory = os.getcwd()
     if args.include_cwd:

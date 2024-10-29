@@ -1,6 +1,6 @@
 import json
 from typing import List
-from chutedk.image.directive import BaseDirective, DirectiveType
+from chutes.image.directive import BaseDirective, DirectiveType
 
 
 class ENTRYPOINT(BaseDirective):

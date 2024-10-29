@@ -2,7 +2,7 @@ import os
 from loguru import logger
 from pathlib import Path
 from configparser import ConfigParser, NoSectionError
-from chutedk.exception import AuthenticationRequired, NotConfigured
+from chutes.exception import AuthenticationRequired, NotConfigured
 
 CONFIG_PATH = os.getenv("PARACHUTES_CONFIG_PATH") or os.path.join(
     Path.home(), ".parachutes", "config.ini"

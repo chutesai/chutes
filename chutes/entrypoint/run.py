@@ -1,7 +1,7 @@
 import sys
 from loguru import logger
 from uvicorn import Config, Server
-from chutedk.entrypoint._shared import load_chute
+from chutes.entrypoint._shared import load_chute
 
 
 CLI_ARGS = {
@@ -36,10 +36,10 @@ async def run_chute(args):
     """
     Run the chute (uvicorn server).
     """
-    chute, args = load_chute("chutedk run", args, CLI_ARGS)
+    chute, args = load_chute("chutes run", args, CLI_ARGS)
 
-    from chutedk.chute import ChutePack
-    from chutedk.util.context import is_local
+    from chutes.chute import ChutePack
+    from chutes.util.context import is_local
 
     if is_local():
         logger.error("Cannot run chutes in local context!")

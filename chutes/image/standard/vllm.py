@@ -1,4 +1,4 @@
-from chutedk.image import Image
+from chutes.image import Image
 
 VLLM = "parachutes/vllm:0.6.3"
 
@@ -14,6 +14,6 @@ VLLM = "parachutes/vllm:0.6.3"
 #     .with_env("PATH", "/opt/python/bin:$PATH")
 #     .run_command("/opt/python/bin/pip install --no-cache vllm==0.6.3 wheel packaging")
 #     .run_command("/opt/python/bin/pip install --no-cache flash-attn==2.6.3")
-#     .run_command("/opt/python/bin/pip install --no-cache chutedk")
+#     .run_command("/opt/python/bin/pip install --no-cache git+https://github.com/jondurbin/chutes")
 #     .run_command("/opt/python/bin/pip uninstall -y xformers")
 # )

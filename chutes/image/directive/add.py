@@ -3,7 +3,7 @@ import os
 import re
 from typing import List
 from urllib.parse import urlparse
-from chutedk.image.directive import BaseDirective, DirectiveType
+from chutes.image.directive import BaseDirective, DirectiveType
 
 # Simple RE-based validation for some of the add options.
 CHECKSUM_RE = re.compile(r"^(?:sha(?:256|384|512)):[a-f0-0]+$")

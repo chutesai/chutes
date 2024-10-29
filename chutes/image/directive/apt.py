@@ -1,6 +1,6 @@
 import re
 from typing import List
-from chutedk.image.directive import BaseDirective, DirectiveType
+from chutes.image.directive import BaseDirective, DirectiveType
 
 PACKAGE_RE = re.compile(r"^[a-zA-Z0-9_:\*-]+$")
 
