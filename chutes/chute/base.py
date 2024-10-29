@@ -5,13 +5,20 @@ Main application class, along with all of the inference decorators.
 import asyncio
 import uuid
 from loguru import logger
-from typing import Any, List
+from typing import Any, List, Dict
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict
 from chutes.image import Image
 from chutes.config import CLIENT_ID
 from chutes.util.context import is_remote
 from chutes.chute.node_selector import NodeSelector
+
+
+async def _pong(request: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Echo incoming request as a liveness check.
+    """
+    return request
 
 
 class Chute(FastAPI):
@@ -102,6 +109,10 @@ class Chute(FastAPI):
             logger.info(
                 f"Added new API route: /{self.uid}{cord.path} calling {cord._func.__name__}"
             )
+
+        # Add a liveness check endpoint.
+        self.add_api_route(f"/{self.uid}/_ping", _pong, methods=["POST"])
+        logger.info(f"Added healthcheck endpoint: /{self.uid}/_ping")
 
     def cord(self, **kwargs):
         """

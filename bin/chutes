@@ -3,10 +3,10 @@
 import sys
 import asyncio
 from loguru import logger
-from chutedk.entrypoint.build import build_image
+from chutes.entrypoint.build import build_image
 
-# from chutedk.entrypoint.deploy import deploy_chute
-from chutedk.entrypoint.run import run_chute
+# from chutes.entrypoint.deploy import deploy_chute
+from chutes.entrypoint.run import run_chute
 
 COMMAND_MAP = {
     "build": build_image,
