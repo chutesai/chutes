@@ -155,7 +155,7 @@ async def image_exists(image):
     """
     async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
         async with session.get(
-            f"/images/{image.name}:{image.tag}",
+            f"/images/{image.uid}",
             headers={
                 "X-Parachute-UserID": USER_ID,
                 "Authorization": f"Bearer {API_KEY}",

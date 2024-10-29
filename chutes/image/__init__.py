@@ -1,4 +1,5 @@
 import re
+import uuid
 from typing import List
 from chutes.image.directive.base_image import FROM
 from chutes.image.directive.apt import APT
@@ -22,9 +23,17 @@ class Image:
         self._tag = None
         self.name = name
         self.tag = tag
+        self._uid = str(
+            uuid.uuid5(uuid.NAMESPACE_OID, f"{USER_ID}/{self.name}:{self.tag}")
+        )
         self._directives = [
             FROM(self.default_base_image),
         ]
+
+    @property
+    def uid(self):
+        """UID"""
+        return self._uid
 
     @property
     def name(self):
