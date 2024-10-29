@@ -4,6 +4,8 @@ import sys
 import shutil
 import importlib
 import tempfile
+import pybase64 as base64
+import pickle
 from contextlib import contextmanager
 from copy import deepcopy
 from loguru import logger
@@ -88,7 +90,7 @@ def build_local(image):
         )
 
 
-async def build_remote(image):
+async def build_remote(image, wait=None):
     """
     Build an image remotely, that is, package up the build context and ship it
     off to the parachutes API to have it built.
@@ -98,9 +100,70 @@ async def build_remote(image):
         output_path = shutil.make_archive(
             os.path.join(build_directory, "chute"), "zip", build_directory
         )
-        logger.info(f"Created the build package: {output_path}")
+        logger.info(f"Created the build package: {output_path}, uploading...")
 
-        # XXX upload to API (signed URL via minio?) then subscribe to websocket?
+        form = aiohttp.FormData()
+        with open(os.path.join(build_directory, "chute.zip"), "rb") as infile:
+            form.add_field(
+                "build_context",
+                infile,
+                filename="chute.zip",
+                content_type="application/zip",
+            )
+        form.add_field("name", image.name)
+        form.add_field("tag", image.tag)
+        form.add_field("dockerfile", str(image))
+        form.add_field("image", base64.b64encode(pickle.dumps(image)))
+
+        # Send the POST request
+        async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+            async with session.post(
+                f"/images",
+                data=form,
+                headers={
+                    "X-Parachute-UserID": USER_ID,
+                    "Authorization": f"Bearer {API_KEY}",
+                },
+            ) as response:
+                if response.status == 409:
+                    logger.error(
+                        f"Image with name={image.name} and tag={image.tag} already exists!"
+                    )
+                elif response.status == 401:
+                    logger.error("Authorization error, please check your credentials.")
+                elif response.status != 202:
+                    logger.error(
+                        f"Unexpected error uploading image data: {await response.text()}"
+                    )
+                else:
+                    data = await response.json()
+                    logger.info("Uploaded image package: image_id={data['image_id']}")
+                    if wait is None:
+                        wait = input(
+                            "\033[1m\033[4mWould you like to wait for image to be built? (y/n) \033[0m"
+                        )
+                        wait = wait.strip().lower() == "true"
+                    if wait:
+                        logger.debug(
+                            f"Just kidding, the image waiting code isn't ready yet 😔"
+                        )
+
+
+async def image_exists(image):
+    """
+    Check if an image already exists.
+    """
+    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+        async with session.get(
+            f"/images/{image.name}:{image.tag}",
+            headers={
+                "X-Parachute-UserID": USER_ID,
+                "Authorization": f"Bearer {API_KEY}",
+            },
+        ) as response:
+            if response.status == 200:
+                return True
+    return False
 
 
 async def build_image(input_args):
@@ -120,9 +183,14 @@ async def build_image(input_args):
         logger.error(
             f"You appear to be using a pre-defined/standard image '{image}', no need to build anything!"
         )
-        sys.exit(0)
+        sys.exit(1)
 
-    # XXX check if the image is already built.
+    # Check if the image is already built.
+    if await image_exists(image):
+        logger.error(
+            f"Image with name={image.name} and tag={image.tag} already exists!"
+        )
+        sys.exit(1)
 
     # Always tack on the final directives, which include installing chutes and adding project files.
     image._directives.append(
