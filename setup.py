@@ -12,7 +12,7 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/jondurbin/chutes",
     author="Jon Durbin",
-    license="MIT",
+    license_expression="MIT",
     packages=find_packages(),
     install_requires=[
         "aiohttp[speedups]>=3.10,<4",
@@ -34,7 +34,6 @@ setup(
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: MIT",
         "Operating System :: POSIX :: Linux",
         "Programming Language :: Python :: 3.10",
     ],
