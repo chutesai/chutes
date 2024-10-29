@@ -250,4 +250,4 @@ async def build_image(input_args):
         return build_local(image)
 
     # Package up the context and ship it off for building.
-    return await build_remote(image)
+    return await build_remote(image, wait=args.wait, public=args.public)
