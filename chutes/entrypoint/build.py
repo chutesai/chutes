@@ -32,6 +32,14 @@ CLI_ARGS = {
         "action": "store_true",
         "help": "include the entire current directory in build context, recursively",
     },
+    "--wait": {
+        "action": "store_true",
+        "help": "wait for image to be built",
+    },
+    "--public": {
+        "action": "store_true",
+        "help": "mark an image as public/available to anyone",
+    },
 }
 
 
@@ -90,7 +98,7 @@ def build_local(image):
         )
 
 
-async def build_remote(image, wait=None):
+async def build_remote(image, wait=None, public=False):
     """
     Build an image remotely, that is, package up the build context and ship it
     off to the parachutes API to have it built.
@@ -113,6 +121,7 @@ async def build_remote(image, wait=None):
         form.add_field("name", image.name)
         form.add_field("tag", image.tag)
         form.add_field("dockerfile", str(image))
+        form.add_field("public", public)
         form.add_field("image", base64.b64encode(pickle.dumps(image)))
 
         # Send the POST request
