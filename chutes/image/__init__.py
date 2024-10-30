@@ -1,6 +1,7 @@
 import re
 import uuid
 from typing import List
+from chutes.config import USER_ID
 from chutes.image.directive.base_image import FROM
 from chutes.image.directive.apt import APT
 from chutes.image.directive.add import ADD

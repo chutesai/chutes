@@ -1,3 +1,4 @@
+import aiohttp
 import re
 import os
 import sys
@@ -6,9 +7,11 @@ import importlib
 import tempfile
 import pybase64 as base64
 import pickle
+from io import BytesIO
 from contextlib import contextmanager
 from copy import deepcopy
 from loguru import logger
+from chutes.config import API_BASE_URL, USER_ID, API_KEY
 from chutes.image.directive.add import ADD
 from chutes.image.directive.generic_run import RUN
 from chutes.entrypoint._shared import load_chute
@@ -110,27 +113,27 @@ async def build_remote(image, wait=None, public=False):
         )
         logger.info(f"Created the build package: {output_path}, uploading...")
 
-        form = aiohttp.FormData()
+        form_data = aiohttp.FormData()
+        form_data.add_field("name", image.name)
+        form_data.add_field("tag", image.tag)
+        form_data.add_field("dockerfile", str(image))
+        form_data.add_field("public", str(public))
+        form_data.add_field("image", base64.b64encode(pickle.dumps(image)).decode())
         with open(os.path.join(build_directory, "chute.zip"), "rb") as infile:
-            form.add_field(
+            form_data.add_field(
                 "build_context",
-                infile,
+                BytesIO(infile.read()),
                 filename="chute.zip",
                 content_type="application/zip",
             )
-        form.add_field("name", image.name)
-        form.add_field("tag", image.tag)
-        form.add_field("dockerfile", str(image))
-        form.add_field("public", public)
-        form.add_field("image", base64.b64encode(pickle.dumps(image)))
 
         # Send the POST request
         async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
             async with session.post(
-                f"/images",
-                data=form,
+                f"/images/",
+                data=form_data,
                 headers={
-                    "X-Parachute-UserID": USER_ID,
+                    "X-Parachutes-UserID": USER_ID,
                     "Authorization": f"Bearer {API_KEY}",
                 },
             ) as response:
@@ -146,7 +149,7 @@ async def build_remote(image, wait=None, public=False):
                     )
                 else:
                     data = await response.json()
-                    logger.info("Uploaded image package: image_id={data['image_id']}")
+                    logger.info(f"Uploaded image package: image_id={data['image_id']}")
                     if wait is None:
                         wait = input(
                             "\033[1m\033[4mWould you like to wait for image to be built? (y/n) \033[0m"
@@ -162,16 +165,21 @@ async def image_exists(image):
     """
     Check if an image already exists.
     """
+    logger.debug(f"Checking if image {image.name}:{image.tag} exists...")
     async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
         async with session.get(
             f"/images/{image.uid}",
             headers={
-                "X-Parachute-UserID": USER_ID,
+                "Accept": "application/json",
+                "X-Parachutes-UserID": USER_ID,
                 "Authorization": f"Bearer {API_KEY}",
             },
         ) as response:
             if response.status == 200:
                 return True
+            elif response.status == 404:
+                return False
+            raise Exception(await response.text())
     return False
 
 
