@@ -1,9 +1,9 @@
 import aiohttp
 import re
 import backoff
-import pickle
 import gzip
 import time
+import orjson as json
 import pybase64 as base64
 from loguru import logger
 from typing import Dict
@@ -111,10 +111,8 @@ class Cord:
             # security context escalation, no host path access, and limited networking, I think
             # we'll survive, and it allows complex objects as args/return values.
             request_payload = {
-                "args": base64.b64encode(gzip.compress(pickle.dumps(args))).decode(),
-                "kwargs": base64.b64encode(
-                    gzip.compress(pickle.dumps(kwargs))
-                ).decode(),
+                "args": base64.b64encode(gzip.compress(json.dumps(args))).decode(),
+                "kwargs": base64.b64encode(gzip.compress(json.dumps(kwargs))).decode(),
             }
             async with aiohttp.ClientSession(
                 base_url=API_BASE_URL, **self._session_kwargs
@@ -196,11 +194,10 @@ class Cord:
                 return await response.json()
 
         return_value = await self._func(*args, **kwargs)
-        # Again with the pickle...
         logger.success(
             f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
         )
-        return {"result": base64.b64encode(gzip.compress(pickle.dumps(return_value)))}
+        return {"result": base64.b64encode(gzip.compress(json.dumps(return_value)))}
 
     async def _remote_stream_call(self, *args, **kwargs):
         """
@@ -228,8 +225,10 @@ class Cord:
         """
         Decode/deserialize incoming request and call the appropriate function.
         """
-        args = pickle.loads(gzip.decompress(base64.b64decode(request["args"])))
-        kwargs = pickle.loads(gzip.decompress(base64.b64decode(request["kwargs"])))
+        args = json.loads(gzip.decompress(base64.b64decode(request["args"])).decode())
+        kwargs = json.loads(
+            gzip.decompress(base64.b64decode(request["kwargs"])).decode()
+        )
         if self._stream:
             return StreamingResponse(self._remote_stream_call(*args, **kwargs))
         return await self._remote_call(*args, **kwargs)
