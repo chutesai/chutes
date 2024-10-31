@@ -107,9 +107,6 @@ class Cord:
         )
         @asynccontextmanager
         async def _call():
-            # Pickle is nasty, but... since we're running in ephemeral containers with no
-            # security context escalation, no host path access, and limited networking, I think
-            # we'll survive, and it allows complex objects as args/return values.
             request_payload = {
                 "args": base64.b64encode(gzip.compress(json.dumps(args))).decode(),
                 "kwargs": base64.b64encode(gzip.compress(json.dumps(kwargs))).decode(),

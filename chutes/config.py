@@ -28,9 +28,5 @@ try:
 except NoSectionError:
     ...
 if not API_BASE_URL:
-    API_BASE_URL = (
-        "https://api.parachutes.ai"
-        if not os.getenv("PARACHUTES_DEV_MODE")
-        else "http://127.0.0.1:8000"
-    )
+    API_BASE_URL = os.getenv("PARACHUTES_API_URL", "https://api.parachutes.ai")
 logger.debug(f"Configured parachutes: user_id={USER_ID} api={API_BASE_URL}")
