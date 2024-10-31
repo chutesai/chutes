@@ -148,7 +148,9 @@ class Cord:
         Call the function from the local context, i.e. make an API request.
         """
         async with self._local_call_base(*args, **kwargs) as response:
-            return await self._func(response)
+            if self._passthrough:
+                return await self._func(response)
+            return await response.json()
 
     async def _local_stream_call(self, *args, **kwargs):
         """
@@ -158,7 +160,7 @@ class Cord:
         """
         async with self._local_call_base(*args, **kwargs) as response:
             async for content in response.content:
-                yield await self._func(content)
+                yield await self._func(content) if self._passthrough else content
 
     @asynccontextmanager
     async def _passthrough_call(self, **kwargs):
