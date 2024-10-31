@@ -33,8 +33,9 @@ async def deploy(chute, public=False):
         "public": public,
         "cords": [
             {
-                "method": cord.method,
+                "method": cord._method,
                 "path": cord.path,
+                "stream": cord._stream,
             }
             for cord in chute._cords
         ],
@@ -97,7 +98,7 @@ async def deploy_chute(input_args):
     chute = chute.chute if isinstance(chute, ChutePack) else chute
 
     # Ensure the image is ready to be used.
-    if not await image_available(chute.imageimage):
+    if not await image_available(chute.image):
         logger.error(f"Image '{chute.image}' is not available to be used (yet)!")
         sys.exit(1)
 
