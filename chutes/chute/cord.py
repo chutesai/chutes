@@ -115,12 +115,12 @@ class Cord:
                 base_url=API_BASE_URL, **self._session_kwargs
             ) as session:
                 async with session.post(
-                    f"/{self._app.uid}{self.path}",
+                    f"/chutes/{self._app.uid}{self.path}",
                     json=request_payload,
                     headers={
-                        "X-Parachute-UserID": USER_ID,
-                        "X-Parachute-ChuteID": self._app.uid,
-                        "X-Parachute-Function": self._func.__name__,
+                        "X-Parachutes-UserID": USER_ID,
+                        "X-Parachutes-ChuteID": self._app.uid,
+                        "X-Parachutes-Function": self._func.__name__,
                         "Authorization": f"Bearer {API_KEY}",
                     },
                 ) as response:
