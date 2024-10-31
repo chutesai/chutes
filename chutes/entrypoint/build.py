@@ -138,7 +138,10 @@ async def build_remote(image, wait=None, public=False):
                     "X-Parachutes-UserID": USER_ID,
                     "Authorization": f"Bearer {API_KEY}",
                 },
+                timeout=aiohttp.ClientTimeout(total=None),
             ) as response:
+
+                # When the client waits for the image, we just stream the logs.
                 if wait:
                     async for data_enc in response.content:
                         data = data_enc.decode()
