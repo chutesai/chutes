@@ -7,6 +7,7 @@ import importlib
 import tempfile
 import pybase64 as base64
 import pickle
+import orjson as json
 from io import BytesIO
 from contextlib import contextmanager
 from copy import deepcopy
@@ -118,6 +119,7 @@ async def build_remote(image, wait=None, public=False):
         form_data.add_field("tag", image.tag)
         form_data.add_field("dockerfile", str(image))
         form_data.add_field("public", str(public))
+        form_data.add_field("wait", str(wait))
         form_data.add_field("image", base64.b64encode(pickle.dumps(image)).decode())
         with open(os.path.join(build_directory, "chute.zip"), "rb") as infile:
             form_data.add_field(
@@ -130,13 +132,25 @@ async def build_remote(image, wait=None, public=False):
         # Send the POST request
         async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
             async with session.post(
-                f"/images/",
+                "/images/",
                 data=form_data,
                 headers={
                     "X-Parachutes-UserID": USER_ID,
                     "Authorization": f"Bearer {API_KEY}",
                 },
             ) as response:
+                if wait:
+                    async for data_enc in response.content:
+                        data = data_enc.decode()
+                        if data and data.strip() and "data: {" in data:
+                            data = json.loads(data[6:])
+                            log_method = (
+                                logger.info
+                                if data["log_type"] == "stdout"
+                                else logger.warning
+                            )
+                            log_method(data["log"].strip())
+                    return
                 if response.status == 409:
                     logger.error(
                         f"Image with name={image.name} and tag={image.tag} already exists!"
@@ -149,16 +163,9 @@ async def build_remote(image, wait=None, public=False):
                     )
                 else:
                     data = await response.json()
-                    logger.info(f"Uploaded image package: image_id={data['image_id']}")
-                    if wait is None:
-                        wait = input(
-                            "\033[1m\033[4mWould you like to wait for image to be built? (y/n) \033[0m"
-                        )
-                        wait = wait.strip().lower() == "true"
-                    if wait:
-                        logger.debug(
-                            f"Just kidding, the image waiting code isn't ready yet 😔"
-                        )
+                    logger.info(
+                        f"Uploaded image package: image_id={data['image_id']}, build will run async"
+                    )
 
 
 async def image_exists(image):
