@@ -54,6 +54,10 @@ class Chute(FastAPI):
     def cords(self):
         return self._cords
 
+    @property
+    def node_selector(self):
+        return self._node_selector
+
     def _on_event(self, hooks: List[Any]):
         """
         Decorator to register a function for an event type, e.g. startup/shutdown.

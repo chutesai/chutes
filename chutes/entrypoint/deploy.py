@@ -31,6 +31,7 @@ async def deploy(chute, public=False):
         "name": chute.name,
         "image": chute.image if isinstance(chute.image, str) else chute.image.uid,
         "public": public,
+        "node_selector": chute.node_selector.dict(),
         "cords": [
             {
                 "method": cord._method,
@@ -64,7 +65,7 @@ async def deploy(chute, public=False):
                 )
 
 
-async def image_available(image):
+async def image_available(image, public):
     """
     Check if an image exists and is built/published in the registry.
     """
@@ -82,6 +83,11 @@ async def image_available(image):
             if response.status == 200:
                 data = await response.json()
                 if data.get("status") == "built and pushed":
+                    if public and not data.get("public"):
+                        logger.error(
+                            "Unable to create public chutes from non-public images"
+                        )
+                        return False
                     return True
     return False
 
@@ -98,9 +104,9 @@ async def deploy_chute(input_args):
     chute = chute.chute if isinstance(chute, ChutePack) else chute
 
     # Ensure the image is ready to be used.
-    if not await image_available(chute.image):
+    if not await image_available(chute.image, args.public):
         logger.error(f"Image '{chute.image}' is not available to be used (yet)!")
         sys.exit(1)
 
     # Deploy!
-    return await deploy(chute)
+    return await deploy(chute, args.public)
