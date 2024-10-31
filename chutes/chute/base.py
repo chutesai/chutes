@@ -31,7 +31,7 @@ class Chute(FastAPI):
     ):
         super().__init__(**kwargs)
         self._name = name
-        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{USER_ID}:{name}"))
+        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{USER_ID}::chute::{name}"))
         self._image = image
         self._node_selector = node_selector
         self._startup_hooks = []
