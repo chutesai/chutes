@@ -153,6 +153,8 @@ async def build_remote(image, wait=None, public=False):
                                 else logger.warning
                             )
                             log_method(data["log"].strip())
+                        elif data.startswith("DONE"):
+                            break
                     return
                 if response.status == 409:
                     logger.error(
