@@ -6,7 +6,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 
 setup(
     name="chutes",
-    version="0.0.7",
+    version="0.0.8",
     description="ParachutesAI development kit.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -24,6 +24,8 @@ setup(
         "pydantic>=2.9,<3",
         "pybase64>=1.4.0",
         "orjson>=3.10",
+        "fickling==0.1.3",
+        "setuptools>=0.75"
     ],
     extras_require={
         "dev": [

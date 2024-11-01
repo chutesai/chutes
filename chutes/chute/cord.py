@@ -4,8 +4,10 @@ import backoff
 import gzip
 import time
 import orjson as json
+import fickling
+import pickle
 import pybase64 as base64
-from fastapi import Request
+from fastapi import Request, HTTPException, status
 from loguru import logger
 from contextlib import asynccontextmanager
 from starlette.responses import StreamingResponse
@@ -109,8 +111,10 @@ class Cord:
         @asynccontextmanager
         async def _call():
             request_payload = {
-                "args": base64.b64encode(gzip.compress(json.dumps(args))).decode(),
-                "kwargs": base64.b64encode(gzip.compress(json.dumps(kwargs))).decode(),
+                "args": base64.b64encode(gzip.compress(pickle.dumps(args))).decode(),
+                "kwargs": base64.b64encode(
+                    gzip.compress(pickle.dumps(kwargs))
+                ).decode(),
             }
             async with aiohttp.ClientSession(
                 base_url=API_BASE_URL, **self._session_kwargs
@@ -226,7 +230,7 @@ class Cord:
         logger.success(
             f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
         )
-        return {"result": base64.b64encode(gzip.compress(json.dumps(return_value)))}
+        return return_value
 
     async def _remote_stream_call(self, *args, **kwargs):
         """
@@ -257,10 +261,20 @@ class Cord:
         if self._passthrough_port is None:
             self._passthrough_port = request.url.port
         request = await request.json()
-        args = json.loads(gzip.decompress(base64.b64decode(request["args"])).decode())
-        kwargs = json.loads(
-            gzip.decompress(base64.b64decode(request["kwargs"])).decode()
-        )
+        try:
+            args = fickling.load(
+                gzip.decompress(base64.b64decode(request["args"])).decode()
+            )
+            kwargs = fickling.load(
+                gzip.decompress(base64.b64decode(request["kwargs"])).decode()
+            )
+        except fickling.UnsafeFileError as exc:
+            message = f"Detected potentially hazardous call arguments, blocking: {exc}"
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_401_FORBIDDEN,
+                detail=message,
+            )
         if self._stream:
             return StreamingResponse(self._remote_stream_call(*args, **kwargs))
         return await self._remote_call(*args, **kwargs)
