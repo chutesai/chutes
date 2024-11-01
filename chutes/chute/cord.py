@@ -120,7 +120,7 @@ class Cord:
                 base_url=API_BASE_URL, **self._session_kwargs
             ) as session:
                 async with session.post(
-                    f"/chutes/{self._app.uid}{self.path}",
+                    f"/{self._app.uid}{self.path}",
                     json=request_payload,
                     headers={
                         "X-Parachutes-UserID": USER_ID,
@@ -262,12 +262,8 @@ class Cord:
             self._passthrough_port = request.url.port
         request = await request.json()
         try:
-            args = fickling.load(
-                gzip.decompress(base64.b64decode(request["args"])).decode()
-            )
-            kwargs = fickling.load(
-                gzip.decompress(base64.b64decode(request["kwargs"])).decode()
-            )
+            args = fickling.load(gzip.decompress(base64.b64decode(request["args"])))
+            kwargs = fickling.load(gzip.decompress(base64.b64decode(request["kwargs"])))
         except fickling.exception.UnsafeFileError as exc:
             message = f"Detected potentially hazardous call arguments, blocking: {exc}"
             logger.error(message)

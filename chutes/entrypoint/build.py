@@ -222,7 +222,7 @@ async def build_image(input_args):
         sys.exit(1)
 
     # Always tack on the final directives, which include installing chutes and adding project files.
-    image._directives.append(RUN("pip install chutes"))
+    image._directives.append(RUN("pip install chutes --upgrade"))
     current_directory = os.getcwd()
     if args.include_cwd:
         image._directives.append(ADD(source=".", dest="/app"))
