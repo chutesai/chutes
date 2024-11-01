@@ -7,7 +7,6 @@ import orjson as json
 import pybase64 as base64
 from fastapi import Request
 from loguru import logger
-from typing import Dict
 from contextlib import asynccontextmanager
 from starlette.responses import StreamingResponse
 from chutes.config import USER_ID, API_BASE_URL, API_KEY
@@ -149,10 +148,10 @@ class Cord:
         """
         Call the function from the local context, i.e. make an API request.
         """
-        async with self._local_call_base(*args, **kwargs) as response:
-            if self._passthrough:
-                return await self._func(response)
-            return await response.json()
+        result = None
+        async for item in self._local_stream_call(*args, **kwargs):
+            result = item
+        return result
 
     async def _local_stream_call(self, *args, **kwargs):
         """
@@ -161,8 +160,35 @@ class Cord:
         response.
         """
         async with self._local_call_base(*args, **kwargs) as response:
-            async for content in response.content:
-                yield await self._func(content) if self._passthrough else content
+            async for encoded_content in response.content:
+                content = encoded_content.decode()
+                if not content or not content.strip() or not "data: {" in content:
+                    continue
+                data = json.loads(content[6:])
+                if data.get("trace"):
+                    message = "".join(
+                        [
+                            data["trace"]["timestamp"],
+                            " ["
+                            + " ".join(
+                                [
+                                    f"{key}={value}"
+                                    for key, value in data["trace"].items()
+                                    if key not in ("timestamp", "message")
+                                ]
+                            ),
+                            f"]: {data['trace']['message']}",
+                        ]
+                    )
+                    logger.debug(message)
+                elif data.get("error"):
+                    logger.error(data["error"])
+                    raise Exception(data["error"])
+                elif data.get("result"):
+                    if self._passthrough:
+                        yield await self._func(data["result"])
+                    else:
+                        yield data["result"]
 
     @asynccontextmanager
     async def _passthrough_call(self, **kwargs):

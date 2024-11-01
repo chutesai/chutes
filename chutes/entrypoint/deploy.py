@@ -37,6 +37,7 @@ async def deploy(chute, public=False):
                 "method": cord._method,
                 "path": cord.path,
                 "stream": cord._stream,
+                "function": cord._func.__name__,
             }
             for cord in chute._cords
         ],

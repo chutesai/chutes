@@ -81,9 +81,9 @@ def build_vllm_chute(
         )
 
     def _parse_stream_chunk(encoded_chunk):
-        if not encoded_chunk:
-            return None
-        chunk = encoded_chunk.decode()
+        chunk = (
+            encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()
+        )
         if "data: {" in chunk:
             return json.loads(chunk[6:])
         return None
