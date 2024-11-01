@@ -268,7 +268,7 @@ class Cord:
             kwargs = fickling.load(
                 gzip.decompress(base64.b64decode(request["kwargs"])).decode()
             )
-        except fickling.UnsafeFileError as exc:
+        except fickling.exception.UnsafeFileError as exc:
             message = f"Detected potentially hazardous call arguments, blocking: {exc}"
             logger.error(message)
             raise HTTPException(
