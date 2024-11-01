@@ -100,8 +100,8 @@ def build_vllm_chute(
     @chute.cord(
         passthrough_path="/v1/chat/completions", method="POST", passthrough=True
     )
-    async def chat(response):
-        return await response.json()
+    async def chat(data):
+        return data
 
     @chute.cord(
         passthrough_path="/v1/completions", method="POST", passthrough=True, stream=True
@@ -110,12 +110,12 @@ def build_vllm_chute(
         return _parse_stream_chunk(encoded_chunk)
 
     @chute.cord(passthrough_path="/v1/completions", method="POST", passthrough=True)
-    async def completion(response):
-        return await response.json()
+    async def completion(data):
+        return data
 
     @chute.cord(passthrough_path="/v1/models", method="GET", passthrough=True)
-    async def get_models(response):
-        return await response.json()
+    async def get_models(data):
+        return data
 
     return VLLMChute(
         chute=chute,
