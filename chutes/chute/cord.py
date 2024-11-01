@@ -5,6 +5,7 @@ import gzip
 import time
 import orjson as json
 import pybase64 as base64
+from fastapi import Request
 from loguru import logger
 from typing import Dict
 from contextlib import asynccontextmanager
@@ -40,6 +41,7 @@ class Cord:
         self._passthrough_path = None
         if passthrough_path:
             self.passthrough_path = passthrough_path
+        self._passthrough_port = None
         self._stream = stream
         self._passthrough = passthrough
         self._method = method
@@ -115,7 +117,7 @@ class Cord:
                 base_url=API_BASE_URL, **self._session_kwargs
             ) as session:
                 async with session.post(
-                    f"/chutes/{self._app.uid}{self.path}",
+                    f"/{self._app.uid}{self.path}",
                     json=request_payload,
                     headers={
                         "X-Parachutes-UserID": USER_ID,
@@ -170,7 +172,9 @@ class Cord:
         logger.debug(
             f"Received passthrough call, passing along to {self.passthrough_path} via {self._method}"
         )
-        async with aiohttp.ClientSession(base_url="http://127.0.0.1:8000") as session:
+        async with aiohttp.ClientSession(
+            base_url=f"http://127.0.0.1:{self._passthrough_port or 8000}"
+        ) as session:
             async with getattr(session, self._method.lower())(
                 self.passthrough_path, **kwargs
             ) as response:
@@ -220,10 +224,13 @@ class Cord:
             f"Completed request [{self._func.__name__}] in {time.time() - started_at} seconds"
         )
 
-    async def _request_handler(self, request: Dict[str, str]):
+    async def _request_handler(self, request: Request):
         """
         Decode/deserialize incoming request and call the appropriate function.
         """
+        if self._passthrough_port is None:
+            self._passthrough_port = request.url.port
+        request = await request.json()
         args = json.loads(gzip.decompress(base64.b64decode(request["args"])).decode())
         kwargs = json.loads(
             gzip.decompress(base64.b64decode(request["kwargs"])).decode()
