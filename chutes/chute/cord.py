@@ -117,7 +117,7 @@ class Cord:
                 base_url=API_BASE_URL, **self._session_kwargs
             ) as session:
                 async with session.post(
-                    f"/{self._app.uid}{self.path}",
+                    f"/chutes/{self._app.uid}{self.path}",
                     json=request_payload,
                     headers={
                         "X-Parachutes-UserID": USER_ID,
