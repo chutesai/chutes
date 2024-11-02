@@ -159,7 +159,7 @@ async def register(input_args):
                         f"hotkey_ss58address = {ss58}",
                     ]
                 )
-                print(updated_config)
+                print(updated_config + "\n\n")
                 save = input(f"Save to {CONFIG_PATH} (y/n): ")
                 if save.strip().lower() == "y":
                     with open(CONFIG_PATH, "w") as outfile:
