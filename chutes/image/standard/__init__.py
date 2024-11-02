@@ -1,1 +1,1 @@
-from .vllm import VLLM
+from .vllm import VLLM  # noqa: F401

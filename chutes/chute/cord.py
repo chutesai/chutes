@@ -11,10 +11,11 @@ from fastapi import Request, HTTPException, status
 from loguru import logger
 from contextlib import asynccontextmanager
 from starlette.responses import StreamingResponse
-from chutes.config import USER_ID, API_BASE_URL, API_KEY
+from chutes.config import API_BASE_URL
 from chutes.chute.base import Chute
 from chutes.exception import InvalidPath, DuplicatePath, StillProvisioning
 from chutes.util.context import is_local
+from chutes.util.auth import sign_request
 
 # Simple regex to check for custom path overrides.
 PATH_RE = re.compile(r"^(/[a-z0-9]+[a-z0-9-_]*)+$")
@@ -116,18 +117,20 @@ class Cord:
                     gzip.compress(pickle.dumps(kwargs))
                 ).decode(),
             }
+            headers, payload_string = sign_request(payload=request_payload)
+            headers.update(
+                {
+                    "X-Parachutes-ChuteID": self._app.uid,
+                    "X-Parachutes-Function": self._func.__name__,
+                }
+            )
             async with aiohttp.ClientSession(
                 base_url=API_BASE_URL, **self._session_kwargs
             ) as session:
                 async with session.post(
                     f"/chutes/{self._app.uid}{self.path}",
-                    json=request_payload,
-                    headers={
-                        "X-Parachutes-UserID": USER_ID,
-                        "X-Parachutes-ChuteID": self._app.uid,
-                        "X-Parachutes-Function": self._func.__name__,
-                        "Authorization": f"Bearer {API_KEY}",
-                    },
+                    data=payload_string,
+                    headers=headers,
                 ) as response:
                     if response.status == 503:
                         logger.warning(
@@ -166,7 +169,7 @@ class Cord:
         async with self._local_call_base(*args, **kwargs) as response:
             async for encoded_content in response.content:
                 content = encoded_content.decode()
-                if not content or not content.strip() or not "data: {" in content:
+                if not content or not content.strip() or "data: {" not in content:
                     continue
                 data = json.loads(content[6:])
                 if data.get("trace"):

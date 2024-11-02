@@ -2,8 +2,9 @@ import aiohttp
 import sys
 from copy import deepcopy
 from loguru import logger
-from chutes.config import API_BASE_URL, USER_ID, API_KEY
+from chutes.config import API_BASE_URL
 from chutes.entrypoint._shared import load_chute
+from chutes.util.auth import sign_request
 
 
 CLI_ARGS = {
@@ -42,14 +43,12 @@ async def deploy(chute, public=False):
             for cord in chute._cords
         ],
     }
+    headers, request_string = sign_request(request_body)
     async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
         async with session.post(
             "/chutes/",
-            json=request_body,
-            headers={
-                "X-Parachutes-UserID": USER_ID,
-                "Authorization": f"Bearer {API_KEY}",
-            },
+            data=request_string,
+            headers=headers,
             timeout=aiohttp.ClientTimeout(total=None),
         ) as response:
             if response.status == 409:
@@ -72,14 +71,11 @@ async def image_available(image, public):
     """
     image_id = image if isinstance(image, str) else image.uid
     logger.debug(f"Checking if {image_id=} is available...")
+    headers, _ = sign_request(purpose="images")
     async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
         async with session.get(
             f"/images/{image_id}",
-            headers={
-                "Accept": "application/json",
-                "X-Parachutes-UserID": USER_ID,
-                "Authorization": f"Bearer {API_KEY}",
-            },
+            headers=headers,
         ) as response:
             if response.status == 200:
                 data = await response.json()

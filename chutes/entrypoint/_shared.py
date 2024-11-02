@@ -53,7 +53,6 @@ def load_chute(
     sys.path.append(os.getcwd())
     module_name, chute_name = chute_ref_str.split(":")
     try:
-        # module = importlib.import_module(module_name)
         spec = importlib.util.spec_from_file_location(
             module_name, os.getcwd() + f"/{module_name}.py"
         )

@@ -12,10 +12,11 @@ from io import BytesIO
 from contextlib import contextmanager
 from copy import deepcopy
 from loguru import logger
-from chutes.config import API_BASE_URL, USER_ID, API_KEY
+from chutes.config import API_BASE_URL
 from chutes.image.directive.add import ADD
 from chutes.image.directive.generic_run import RUN
 from chutes.entrypoint._shared import load_chute
+from chutes.util.auth import sign_request
 
 
 CLI_ARGS = {
@@ -129,15 +130,35 @@ async def build_remote(image, wait=None, public=False):
                 content_type="application/zip",
             )
 
-        # Send the POST request
+        class FakeStreamWriter:
+            def __init__(self):
+                self.output = BytesIO()
+
+            async def write(self, chunk):
+                self.output.write(chunk)
+
+            async def drain(self):
+                pass
+
+            async def write_eof(self):
+                pass
+
+        # Get the payload and write it to the custom writer
+        payload = form_data()
+        writer = FakeStreamWriter()
+        await payload.write(writer)
+
+        # Retrieve the raw bytes of the request body
+        raw_data = writer.output.getvalue()
+
         async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+            headers, payload_string = sign_request(payload=raw_data)
+            headers["Content-Type"] = payload.content_type
+            headers["Content-Length"] = str(len(raw_data))
             async with session.post(
                 "/images/",
-                data=form_data,
-                headers={
-                    "X-Parachutes-UserID": USER_ID,
-                    "Authorization": f"Bearer {API_KEY}",
-                },
+                data=raw_data,  # form_data, #payload_string,
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=None),
             ) as response:
 
@@ -178,14 +199,11 @@ async def image_exists(image):
     Check if an image already exists.
     """
     logger.debug(f"Checking if image {image.name}:{image.tag} exists...")
+    headers, _ = sign_request(purpose="images")
     async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
         async with session.get(
             f"/images/{image.uid}",
-            headers={
-                "Accept": "application/json",
-                "X-Parachutes-UserID": USER_ID,
-                "Authorization": f"Bearer {API_KEY}",
-            },
+            headers=headers,
         ) as response:
             if response.status == 200:
                 return True

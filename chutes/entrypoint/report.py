@@ -35,7 +35,8 @@ async def report_invocation(input_args):
     if args.config_path:
         os.environ["PARACHUTES_CONFIG_PATH"] = args.config_path
 
-    from chutes.config import API_BASE_URL, USER_ID, API_KEY
+    from chutes.util.auth import sign_request
+    from chutes.config import API_BASE_URL
 
     # Ensure we have a reason.
     if not args.reason:
@@ -52,16 +53,12 @@ async def report_invocation(input_args):
             sys.exit(0)
 
     # Send it.
+    headers, payload_string = sign_request(payload={"reason": reason})
     async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
         async with session.post(
             f"/invocations/{args.invocation_id}/report",
-            json={
-                "reason": reason,
-            },
-            headers={
-                "X-Parachutes-UserID": USER_ID,
-                "Authorization": f"Bearer {API_KEY}",
-            },
+            data=payload_string,
+            headers=headers,
         ) as response:
             if response.status == 200:
                 logger.success((await response.json())["status"])

@@ -1,5 +1,3 @@
-from chutes.image import Image
-
 VLLM = "parachutes/vllm:0.6.3"
 
 # To build this yourself, you can use something like:

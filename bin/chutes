@@ -2,17 +2,15 @@
 
 import sys
 import asyncio
+import importlib
 from loguru import logger
-from chutes.entrypoint.build import build_image
-from chutes.entrypoint.deploy import deploy_chute
-from chutes.entrypoint.run import run_chute
-from chutes.entrypoint.report import report_invocation
 
 COMMAND_MAP = {
-    "build": build_image,
-    "deploy": deploy_chute,
-    "run": run_chute,
-    "report": report_invocation,
+    "build": "build_image",
+    "deploy": "deploy_chute",
+    "run": "run_chute",
+    "report": "report_invocation",
+    "register": "register",
 }
 
 
@@ -24,7 +22,8 @@ async def main():
             f"Please specify one of the supported commands: {', '.join(list(COMMAND_MAP))}"
         )
         sys.exit(1)
-    await COMMAND_MAP[args[0]](args[1:])
+    module = importlib.import_module(f"chutes.entrypoint.{args[0]}")
+    await getattr(module, COMMAND_MAP[args[0]])(args[1:])
 
 
 if __name__ == "__main__":
