@@ -6,7 +6,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 
 setup(
     name="chutes",
-    version="0.0.14",
+    version="0.0.15",
     description="ParachutesAI development kit.",
     long_description=long_description,
     long_description_content_type="text/markdown",
