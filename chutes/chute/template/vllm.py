@@ -91,6 +91,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/chat/completions",
+        public_api_path="/v1/chat/completions",
         method="POST",
         passthrough=True,
         stream=True,
@@ -99,22 +100,40 @@ def build_vllm_chute(
         return _parse_stream_chunk(encoded_chunk)
 
     @chute.cord(
-        passthrough_path="/v1/chat/completions", method="POST", passthrough=True
+        passthrough_path="/v1/chat/completions",
+        public_api_path="/v1/chat/completions",
+        method="POST",
+        passthrough=True,
     )
     async def chat(data):
         return data
 
     @chute.cord(
-        passthrough_path="/v1/completions", method="POST", passthrough=True, stream=True
+        passthrough_path="/v1/completions",
+        public_api_path="/v1/completions",
+        method="POST",
+        passthrough=True,
+        stream=True,
     )
     async def completion_stream(encoded_chunk):
         return _parse_stream_chunk(encoded_chunk)
 
-    @chute.cord(passthrough_path="/v1/completions", method="POST", passthrough=True)
+    @chute.cord(
+        passthrough_path="/v1/completions",
+        public_api_path="/v1/completions",
+        method="POST",
+        passthrough=True,
+    )
     async def completion(data):
         return data
 
-    @chute.cord(passthrough_path="/v1/models", method="GET", passthrough=True)
+    @chute.cord(
+        passthrough_path="/v1/models",
+        public_api_path="/v1/models",
+        public_api_method="GET",
+        method="GET",
+        passthrough=True,
+    )
     async def get_models(data):
         return data
 

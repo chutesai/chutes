@@ -29,6 +29,8 @@ class Cord:
         path: str = None,
         passthrough_path: str = None,
         passthrough: bool = False,
+        public_api_path: str = None,
+        public_api_method: str = "POST",
         method: str = "GET",
         provision_timeout: int = 180,
         **session_kwargs,
@@ -43,6 +45,10 @@ class Cord:
         self._passthrough_path = None
         if passthrough_path:
             self.passthrough_path = passthrough_path
+        self._public_api_path = None
+        if public_api_path:
+            self.public_api_path = public_api_path
+        self._public_api_method = public_api_method
         self._passthrough_port = None
         self._stream = stream
         self._passthrough = passthrough
@@ -93,6 +99,27 @@ class Cord:
         if "//" in path or not PATH_RE.match(path):
             raise InvalidPath(path)
         self._passthrough_path = path
+
+    @property
+    def public_api_path(self):
+        """
+        API path when using the hostname based invocation API calls.
+        """
+        return self._public_api_path
+
+    @public_api_path.setter
+    def public_api_path(self, path: str):
+        """
+        API path setter with basic validation.
+
+        :param path: The path to use for the upstream endpoint.
+        :type path: str
+
+        """
+        path = "/" + path.lstrip("/").rstrip("/")
+        if "//" in path or not PATH_RE.match(path):
+            raise InvalidPath(path)
+        self._public_api_path = path
 
     @asynccontextmanager
     async def _local_call_base(self, *args, **kwargs):
