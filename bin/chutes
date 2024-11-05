@@ -11,6 +11,7 @@ COMMAND_MAP = {
     "run": "run_chute",
     "report": "report_invocation",
     "register": "register",
+    "api_key": "create_api_key",
 }
 
 
@@ -18,7 +19,11 @@ async def main():
     """Run various commands."""
     args = sys.argv[1:]
     command = args[0] if args else None
-    if command and command not in COMMAND_MAP and command in ("chutes", "images"):
+    if (
+        command
+        and command not in COMMAND_MAP
+        and command in ("chutes", "images", "api_keys")
+    ):
         action = args[1] if len(args) > 1 else "list"
         if action in ("get", "list", "delete"):
             call_args = []

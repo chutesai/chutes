@@ -97,7 +97,10 @@ async def delete_object(object_type: str, name_or_id: str):
 
 list_images = partial(list_objects, "images")
 list_chutes = partial(list_objects, "chutes")
+list_api_keys = partial(list_objects, "api_keys")
 get_image = partial(get_object, "images")
 get_chute = partial(get_object, "chutes")
+get_api_key = partial(get_object, "api_keys")
 delete_image = partial(delete_object, "images")
 delete_chute = partial(delete_object, "chutes")
+delete_api_key = partial(delete_object, "api_keys")
