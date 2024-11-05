@@ -116,10 +116,11 @@ async def register(input_args):
         coldkey_pub_data = json.load(infile)
     ss58 = hotkey_data["ss58Address"]
     secret_seed = hotkey_data["secretSeed"].replace("0x", "")
+    coldkey_ss58 = coldkey_pub_data["ss58Address"]
     payload = json.dumps(
         {
             "username": args.username,
-            "commission_address": coldkey_pub_data["ss58Address"],
+            "coldkey": coldkey_ss58,
         }
     )
     keypair = Keypair.create_from_seed(seed_hex=secret_seed)
@@ -157,6 +158,9 @@ async def register(input_args):
                         f"hotkey_seed = {secret_seed}",
                         f"hotkey_name = {args.hotkey}",
                         f"hotkey_ss58address = {ss58}",
+                        "",
+                        "[payment]",
+                        f"address = {data['payment_address']}",
                     ]
                 )
                 print(updated_config + "\n\n")
@@ -164,5 +168,8 @@ async def register(input_args):
                 if save.strip().lower() == "y":
                     with open(CONFIG_PATH, "w") as outfile:
                         outfile.write(updated_config + "\n")
+                logger.success(
+                    f"Successfully registered username={data['username']}! Send tao funds to {data['payment_address']} when you are ready."
+                )
             else:
                 logger.error(await response.json())

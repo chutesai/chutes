@@ -30,6 +30,7 @@ def build_vllm_chute(
         name=model_name,
         image=image,
         node_selector=node_selector,
+        standard_template="vllm",
     )
 
     # Semi-optimized defaults.

@@ -77,7 +77,7 @@ def temporary_build_directory(image):
         sys.exit(1)
 
     # Copy all of the context files over to a temp dir (to use for local building or a zip file for remote).
-    _clean_path = lambda in_: in_[len(os.getcwd()) + 1 :]
+    _clean_path = lambda in_: in_[len(os.getcwd()) + 1 :]  # noqa: E731
     with tempfile.TemporaryDirectory() as tempdir:
         for path in all_input_files:
             temp_path = os.path.join(tempdir, _clean_path(path))
@@ -253,7 +253,7 @@ async def build_image(input_args):
                 f"You must run the build command from the directory containing your target chute module: {module.__file__} [{current_directory=}]"
             )
             sys.exit(1)
-        _clean_path = lambda in_: in_[len(current_directory) + 1 :]
+        _clean_path = lambda in_: in_[len(current_directory) + 1 :]  # noqa: E731
         image._directives.append(
             ADD(
                 source=_clean_path(module.__file__),

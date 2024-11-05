@@ -32,6 +32,7 @@ async def deploy(chute, public=False):
         "name": chute.name,
         "image": chute.image if isinstance(chute.image, str) else chute.image.uid,
         "public": public,
+        "standard_template": chute.standard_template,
         "node_selector": chute.node_selector.dict(),
         "cords": [
             {

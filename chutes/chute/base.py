@@ -26,6 +26,7 @@ class Chute(FastAPI):
         self,
         name: str,
         image: str | Image,
+        standard_template: str = None,
         node_selector: NodeSelector = None,
         **kwargs,
     ):
@@ -33,6 +34,7 @@ class Chute(FastAPI):
         self._name = name
         self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{USER_ID}::chute::{name}"))
         self._image = image
+        self._standard_template = standard_template
         self._node_selector = node_selector
         self._startup_hooks = []
         self._shutdown_hooks = []
@@ -57,6 +59,10 @@ class Chute(FastAPI):
     @property
     def node_selector(self):
         return self._node_selector
+
+    @property
+    def standard_template(self):
+        return self._standard_template
 
     def _on_event(self, hooks: List[Any]):
         """
