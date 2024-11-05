@@ -145,6 +145,7 @@ class Image:
                     "wget",
                     "libbz2-dev",
                     "libexpat1-dev",
+                    "liblzma-dev",
                 ]
             ),
             WORKDIR("/usr/src"),

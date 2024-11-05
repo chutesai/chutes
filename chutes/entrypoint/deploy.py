@@ -39,7 +39,7 @@ async def deploy(chute, public=False):
                 "method": cord._method,
                 "path": cord.path,
                 "public_api_path": cord.public_api_path,
-                "public_api_method": cord.public_api_method,
+                "public_api_method": cord._public_api_method,
                 "stream": cord._stream,
                 "function": cord._func.__name__,
             }
