@@ -105,7 +105,8 @@ async def deploy_chute(input_args):
 
     # Ensure the image is ready to be used.
     if not await image_available(chute.image, args.public):
-        logger.error(f"Image '{chute.image}' is not available to be used (yet)!")
+        image_id = chute.image if isinstance(chute.image, str) else chute.image._uid
+        logger.error(f"Image '{image_id}' is not available to be used (yet)!")
         sys.exit(1)
 
     # Deploy!

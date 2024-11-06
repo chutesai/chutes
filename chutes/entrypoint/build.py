@@ -198,11 +198,12 @@ async def image_exists(image):
     """
     Check if an image already exists.
     """
-    logger.debug(f"Checking if image {image.name}:{image.tag} exists...")
+    image_id = image if isinstance(image, str) else image.uid
+    logger.debug(f"Checking if {image_id=} is available...")
     headers, _ = sign_request(purpose="images")
     async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
         async with session.get(
-            f"/images/{image.uid}",
+            f"/images/{image_id}",
             headers=headers,
         ) as response:
             if response.status == 200:

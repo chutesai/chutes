@@ -6,8 +6,8 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 
 setup(
     name="chutes",
-    version="0.0.16",
-    description="ParachutesAI development kit.",
+    version="0.0.17",
+    description="Chtues development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/jondurbin/chutes",
