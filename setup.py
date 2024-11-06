@@ -6,11 +6,11 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 
 setup(
     name="chutes",
-    version="0.0.17",
+    version="0.0.18",
     description="Chtues development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/jondurbin/chutes",
+    url="https://github.com/rayonlabs/chutes",
     author="Jon Durbin",
     license_expression="MIT",
     packages=find_packages(),
