@@ -32,6 +32,8 @@ CLI_ARGS = {
 }
 
 
+# NOTE: Might want to change the name of this to 'start'.
+# So `run` means an easy way to perform inference on a chute (pull the cord :P)
 async def run_chute(args):
     """
     Run the chute (uvicorn server).
