@@ -6,7 +6,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 
 setup(
     name="chutes",
-    version="0.0.16",
+    version="0.0.17",
     description="ParachutesAI development kit.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -27,6 +27,7 @@ setup(
         "fickling==0.1.3",
         "setuptools>=0.75",
         "substrate-interface>=1.7.11",
+        "rich>=13.0.0",
     ],
     extras_require={
         "dev": [

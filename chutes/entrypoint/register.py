@@ -40,6 +40,17 @@ CLI_ARGS = {
 }
 
 
+async def _ping_api(base_url: str):
+    try:
+        async with aiohttp.ClientSession(base_url=base_url) as session:
+            async with session.get("/ping") as response:
+                response.raise_for_status()
+                return response.status == 200
+    except Exception as e:
+        logger.error(f"Failed to connect to the API at url {base_url}: {e}")
+        return False
+
+
 async def register(input_args):
     """
     Register a user!
@@ -50,6 +61,9 @@ async def register(input_args):
     os.environ["PARACHUTES_ALLOW_MISSING"] = "true"
 
     from chutes.config import API_BASE_URL, CONFIG_PATH
+
+    if not await _ping_api(API_BASE_URL):
+        sys.exit(1)
 
     # Interactive mode for username.
     if not args.username:
