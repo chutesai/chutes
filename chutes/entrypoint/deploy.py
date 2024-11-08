@@ -11,7 +11,7 @@ CLI_ARGS = {
     "--config-path": {
         "type": str,
         "default": None,
-        "help": "custom path to the parachutes config (credentials, API URL, etc.)",
+        "help": "custom path to the chutes config (credentials, API URL, etc.)",
     },
     "--debug": {
         "action": "store_true",

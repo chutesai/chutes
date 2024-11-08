@@ -12,7 +12,7 @@ CLI_ARGS = {
     "--config-path": {
         "type": str,
         "default": None,
-        "help": "custom path to the parachutes config (credentials, API URL, etc.)",
+        "help": "custom path to the chutes config (credentials, API URL, etc.)",
     },
     "--invocation-id": {
         "type": str,
@@ -33,7 +33,7 @@ async def report_invocation(input_args):
     """
     args = parse_args(input_args, CLI_ARGS)
     if args.config_path:
-        os.environ["PARACHUTES_CONFIG_PATH"] = args.config_path
+        os.environ["CHUTES_CONFIG_PATH"] = args.config_path
 
     from chutes.util.auth import sign_request
     from chutes.config import API_BASE_URL

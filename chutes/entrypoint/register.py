@@ -18,7 +18,7 @@ CLI_ARGS = {
     "--config-path": {
         "type": str,
         "default": None,
-        "help": "custom path to the parachutes config (credentials, API URL, etc.)",
+        "help": "custom path to the chutes config (credentials, API URL, etc.)",
     },
     "--username": {
         "type": str,
@@ -46,8 +46,8 @@ async def register(input_args):
     """
     args = parse_args(input_args, CLI_ARGS)
     if args.config_path:
-        os.environ["PARACHUTES_CONFIG_PATH"] = args.config_path
-    os.environ["PARACHUTES_ALLOW_MISSING"] = "true"
+        os.environ["CHUTES_CONFIG_PATH"] = args.config_path
+    os.environ["CHUTES_ALLOW_MISSING"] = "true"
 
     from chutes.config import API_BASE_URL, CONFIG_PATH
 
