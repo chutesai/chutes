@@ -126,17 +126,17 @@ async def register(input_args):
     keypair = Keypair.create_from_seed(seed_hex=secret_seed)
     headers = {
         "Content-Type": "application/json",
-        "X-Parachutes-Hotkey": ss58,
-        "X-Parachutes-Nonce": str(int(time.time())),
+        "X-Chutes-Hotkey": ss58,
+        "X-Chutes-Nonce": str(int(time.time())),
     }
     sig_str = ":".join(
         [
             ss58,
-            headers["X-Parachutes-Nonce"],
+            headers["X-Chutes-Nonce"],
             hashlib.sha256(payload.encode()).hexdigest(),
         ]
     )
-    headers["X-Parachutes-Signature"] = keypair.sign(sig_str.encode()).hex()
+    headers["X-Chutes-Signature"] = keypair.sign(sig_str.encode()).hex()
     async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
         async with session.post(
             "/users/register",

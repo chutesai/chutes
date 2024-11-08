@@ -147,8 +147,8 @@ class Cord:
             headers, payload_string = sign_request(payload=request_payload)
             headers.update(
                 {
-                    "X-Parachutes-ChuteID": self._app.uid,
-                    "X-Parachutes-Function": self._func.__name__,
+                    "X-Chutes-ChuteID": self._app.uid,
+                    "X-Chutes-Function": self._func.__name__,
                 }
             )
             async with aiohttp.ClientSession(

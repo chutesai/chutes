@@ -12,9 +12,9 @@ def sign_request(payload: Dict[str, Any] | str = None, purpose: str = None):
     """
     nonce = str(int(time.time()))
     headers = {
-        "X-Parachutes-UserID": USER_ID,
-        "X-Parachutes-Hotkey": HOTKEY_SS58,
-        "X-Parachutes-Nonce": nonce,
+        "X-Chutes-UserID": USER_ID,
+        "X-Chutes-Hotkey": HOTKEY_SS58,
+        "X-Chutes-Nonce": nonce,
     }
     signature_string = None
     payload_string = None
@@ -29,7 +29,7 @@ def sign_request(payload: Dict[str, Any] | str = None, purpose: str = None):
         )
     else:
         signature_string = ":".join([purpose, nonce, HOTKEY_SS58])
-        headers["X-Parachutes-Auth"] = signature_string
+        headers["X-Chutes-Auth"] = signature_string
     keypair = Keypair.create_from_seed(seed_hex=HOTKEY_SEED)
-    headers["X-Parachutes-Signature"] = keypair.sign(signature_string.encode()).hex()
+    headers["X-Chutes-Signature"] = keypair.sign(signature_string.encode()).hex()
     return headers, payload_string
