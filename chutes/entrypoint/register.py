@@ -179,6 +179,3 @@ def register(
 
     asyncio.run(_register())
 
-
-if __name__ == "__main__":
-    asyncio.run(register(sys.argv[1:]))
