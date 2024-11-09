@@ -9,18 +9,22 @@ import json
 import glob
 import time
 import aiohttp
-import hashlib
 from loguru import logger
 from pathlib import Path
 from substrateinterface import Keypair
 import typer
 from chutes.config import get_config
 from rich import print
+from chutes.constants import HOTKEY_HEADER, NONCE_HEADER, SIGNATURE_HEADER
+from chutes.util.auth import get_signing_message
 
 
 async def _ping_api(base_url: str):
+    logger.info(f"Pinging API at {base_url}")
     try:
-        async with aiohttp.ClientSession(base_url=base_url) as session:
+        async with aiohttp.ClientSession(
+            base_url=base_url, timeout=aiohttp.ClientTimeout(total=2)
+        ) as session:
             async with session.get("/ping") as response:
                 response.raise_for_status()
                 return response.status == 200
@@ -128,17 +132,12 @@ def register(
         keypair = Keypair.create_from_seed(seed_hex=secret_seed)
         headers = {
             "Content-Type": "application/json",
-            "X-Parachutes-Hotkey": ss58,
-            "X-Parachutes-Nonce": str(int(time.time())),
+            HOTKEY_HEADER: ss58,
+            NONCE_HEADER: str(int(time.time())),
         }
-        sig_str = ":".join(
-            [
-                ss58,
-                headers["X-Parachutes-Nonce"],
-                hashlib.sha256(payload.encode()).hexdigest(),
-            ]
-        )
-        headers["X-Parachutes-Signature"] = keypair.sign(sig_str.encode()).hex()
+        sig_str = get_signing_message(ss58, headers[NONCE_HEADER], payload)
+        headers[SIGNATURE_HEADER] = keypair.sign(sig_str.encode()).hex()
+        logger.debug(f"Sending payload: {payload} with headers: {headers}. Signing message was :")
         async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
             async with session.post(
                 "/users/register",

@@ -16,6 +16,7 @@ from chutes.exception import InvalidPath, DuplicatePath, StillProvisioning
 from chutes.util.context import is_local
 from chutes.util.auth import sign_request
 from chutes.config import get_config
+from chutes.constants import CHUTEID_HEADER, FUNCTION_HEADER
 
 # Simple regex to check for custom path overrides.
 PATH_RE = re.compile(r"^(/[a-z0-9]+[a-z0-9-_]*)+$")
@@ -148,8 +149,8 @@ class Cord:
             headers, payload_string = sign_request(payload=request_payload)
             headers.update(
                 {
-                    "X-Parachutes-ChuteID": self._app.uid,
-                    "X-Parachutes-Function": self._func.__name__,
+                    CHUTEID_HEADER: self._app.uid,
+                    FUNCTION_HEADER: self._func.__name__,
                 }
             )
             async with aiohttp.ClientSession(

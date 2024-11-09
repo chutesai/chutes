@@ -89,6 +89,8 @@ def create_api_key(
 
         headers, payload_string = sign_request(payload)
 
+        logger.debug(f"Sending payload: {payload_string} with headers: {headers}. Signing ")
+
         async def send_request():
             async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
                 async with session.post(
