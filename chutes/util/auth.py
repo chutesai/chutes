@@ -9,6 +9,8 @@ from chutes.config import HOTKEY_SEED, HOTKEY_SS58, USER_ID
 def sign_request(payload: Dict[str, Any] | str = None, purpose: str = None):
     """
     Generate a signed request.
+
+    # NOTE: Could add the ability to use api keys here too. Important for inference.
     """
     nonce = str(int(time.time()))
     headers = {

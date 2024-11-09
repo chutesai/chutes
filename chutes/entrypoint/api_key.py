@@ -1,92 +1,72 @@
-"""
-Create a new API key.
-"""
-
 import os
 import sys
 import json
 import aiohttp
+import typer
 from rich import print_json
 from loguru import logger
 from chutes.util.auth import sign_request
-from chutes.entrypoint._shared import parse_args
+from chutes.config import API_BASE_URL
 
-CLI_ARGS = {
-    "--config-path": {
-        "type": str,
-        "default": None,
-        "help": "custom path to the parachutes config (credentials, API URL, etc.)",
-    },
-    "--name": {
-        "type": str,
-        "required": True,
-        "help": "name to assign to the API key",
-    },
-    "--admin": {
-        "action": "store_true",
-        "help": "allow any action for this API key",
-    },
-    "--images": {
-        "action": "store_true",
-        "help": "allow full access to images",
-    },
-    "--chutes": {
-        "action": "store_true",
-        "help": "allow full access to chutes",
-    },
-    "--image-ids": {
-        "type": str,
-        "nargs": "+",
-        "help": "allow access to one or more specific images",
-    },
-    "--chute-ids": {
-        "type": str,
-        "nargs": "+",
-        "help": "allow access to one or more specific chutes",
-    },
-    "--action": {
-        "type": str,
-        "choices": ["read", "write", "delete", "invoke"],
-        "help": "specify the verb to apply to all scopes",
-    },
-    "--json": {
-        "type": str,
-        "help": 'provide a raw scopes document as JSON, for more advanced usage, e.g. {"scopes": [{"object_type": "images", "action": "read"}, {"object_type": "chutes", "object_id": "00...00", "action": "invoke"}]}',
-    },
-}
+app = typer.Typer()
 
 
-async def create_api_key(input_args):
+@app.command()
+def create_api_key(
+    name: str = typer.Argument(..., help="Name to assign to the API key"),
+    config_path: str = typer.Option(
+        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+    ),
+    admin: bool = typer.Option(False, help="Allow any action for this API key"),
+    images: bool = typer.Option(False, help="Allow full access to images"),
+    chutes: bool = typer.Option(False, help="Allow full access to chutes"),
+    image_ids: list[str] = typer.Option(
+        None, help="Allow access to one or more specific images"
+    ),
+    chute_ids: list[str] = typer.Option(
+        None, help="Allow access to one or more specific chutes"
+    ),
+    action: str = typer.Option(
+        None,
+        help="Specify the verb to apply to all scopes",
+        prompt=True,
+        case_sensitive=False,
+        show_choices=True,
+        choices=["read", "write", "delete", "invoke"],
+    ),
+    json_input: str = typer.Option(
+        None, help="Provide a raw scopes document as JSON, for more advanced usage"
+    ),
+):
     """
-    Create a new API key.
+    Create a new API key as a user
     """
-    args = parse_args(input_args, CLI_ARGS)
-    if args.config_path:
-        os.environ["PARACHUTES_CONFIG_PATH"] = args.config_path
-
-    from chutes.config import API_BASE_URL
+    if config_path:
+        os.environ["PARACHUTES_CONFIG_PATH"] = config_path
 
     # Build our request payload with nested scopes.
     payload = {
-        "name": args.name,
-        "admin": args.admin,
+        "name": name,
+        "admin": admin,
     }
-    if not args.admin:
+    if not admin:
         payload["scopes"] = []
-        if args.json:
+        if json_input:
             try:
-                payload["scopes"] = json.loads(args.json)["scopes"]
-            except Exception:
+                payload["scopes"] = json.loads(json_input)["scopes"]
+            except json.JSONDecodeError:
                 logger.error("Invalid scopes JSON provided!")
                 sys.exit(1)
         else:
             for object_type, ids in (
-                ("images", args.image_ids),
-                ("chutes", args.chute_ids),
+                ("images", image_ids),
+                ("chutes", chute_ids),
             ):
-                if getattr(args, object_type):
+                if (object_type == "images" and images) or (
+                    object_type == "chutes" and chutes
+                ):
                     payload["scopes"].append(
-                        {"object_type": object_type, "action": args.action}
+                        {"object_type": object_type, "action": action}
                     )
                 elif ids:
                     for _id in ids:
@@ -94,24 +74,34 @@ async def create_api_key(input_args):
                             {
                                 "object_type": object_type,
                                 "object_id": _id,
-                                "action": args.action,
+                                "action": action,
                             }
                         )
 
-    # Send it.
+    # Sign & send request
+
     headers, payload_string = sign_request(payload)
-    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
-        async with session.post(
-            "/api_keys/",
-            data=payload_string,
-            headers=headers,
-        ) as response:
-            if response.status == 200:
-                data = await response.json()
-                logger.success("API key created successfully")
-                print_json(data=data)
-                print(
-                    f"\nTo use the key, add \"Authorization: Basic {data['secret_key']}\" to your headers!\n"
-                )
-            else:
-                logger.error(await response.json())
+
+    async def send_request():
+        async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+            async with session.post(
+                "/api_keys/",
+                data=payload_string,
+                headers=headers,
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    logger.success("API key created successfully")
+                    print_json(data=data)
+                    print(
+                        f"\nTo use the key, add \"Authorization: Basic {data['secret_key']}\" to your headers!\n"
+                    )
+                else:
+                    error_message = await response.text()
+                    logger.error(f"Failed to create API key: {error_message}")
+
+    typer.run(send_request)
+
+
+if __name__ == "__main__":
+    app()

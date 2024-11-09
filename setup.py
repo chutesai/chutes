@@ -1,3 +1,4 @@
+# NOTE: Should replace with a pyproject.toml 
 import os
 from setuptools import setup, find_packages
 
@@ -28,6 +29,7 @@ setup(
         "setuptools>=0.75",
         "substrate-interface>=1.7.11",
         "rich>=13.0.0",
+        "typer>=0.12.5",
     ],
     extras_require={
         "dev": [

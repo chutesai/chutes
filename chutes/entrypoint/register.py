@@ -2,6 +2,7 @@
 Register on the chutes run platform.
 """
 
+import asyncio
 import os
 import sys
 import json
@@ -12,6 +13,7 @@ import hashlib
 from loguru import logger
 from pathlib import Path
 from substrateinterface import Keypair
+from chutes.config import get_config
 from chutes.entrypoint._shared import parse_args
 
 CLI_ARGS = {
@@ -32,11 +34,9 @@ CLI_ARGS = {
     "--wallet": {
         "type": str,
         "help": "name of the wallet to use",
+        "default": "default",
     },
-    "--hotkey": {
-        "type": str,
-        "help": "hotkey to register with",
-    },
+    "--hotkey": {"type": str, "help": "hotkey to register with", "default": "default"},
 }
 
 
@@ -55,14 +55,15 @@ async def register(input_args):
     """
     Register a user!
     """
+    config = get_config()
     args = parse_args(input_args, CLI_ARGS)
     if args.config_path:
         os.environ["PARACHUTES_CONFIG_PATH"] = args.config_path
     os.environ["PARACHUTES_ALLOW_MISSING"] = "true"
 
-    from chutes.config import API_BASE_URL, CONFIG_PATH
+    from chutes.config import CONFIG_PATH
 
-    if not await _ping_api(API_BASE_URL):
+    if not await _ping_api(config.api_base_url):
         sys.exit(1)
 
     # Interactive mode for username.
@@ -151,7 +152,7 @@ async def register(input_args):
         ]
     )
     headers["X-Parachutes-Signature"] = keypair.sign(sig_str.encode()).hex()
-    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         async with session.post(
             "/users/register",
             data=payload,
@@ -165,7 +166,7 @@ async def register(input_args):
                 updated_config = "\n".join(
                     [
                         "[api]",
-                        f"base_url = {API_BASE_URL}",
+                        f"base_url = {config.api_base_url}",
                         "",
                         "[auth]",
                         f"user_id = {data['user_id']}",
@@ -183,7 +184,13 @@ async def register(input_args):
                     with open(CONFIG_PATH, "w") as outfile:
                         outfile.write(updated_config + "\n")
                 logger.success(
-                    f"Successfully registered username={data['username']}! Send tao funds to {data['payment_address']} when you are ready."
+                    f"Successfully registered username={data['username']}, with fingerprint {data['fingerprint']}. "
+                    "Keep the fingerprint safe as this is account login credentials - do not lose or share it!"
+                    "To add balance for your account, send tao to {data['payment_address']}."
                 )
             else:
                 logger.error(await response.json())
+
+
+if __name__ == "__main__":
+    asyncio.run(register(sys.argv[1:]))

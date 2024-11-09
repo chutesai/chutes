@@ -4,21 +4,26 @@ Basic endpoint access stuff.
 
 import aiohttp
 import json
+from fastapi import Depends
 from rich import print_json
 from loguru import logger
 from functools import partial
-from chutes.config import API_BASE_URL
+from chutes.config import Config, get_config
 from chutes.util.auth import sign_request
 
 
 async def list_objects(
-    object_type: str, name: str = None, limit: int = 25, page: int = 0
+    object_type: str,
+    name: str = None,
+    limit: int = 25,
+    page: int = 0,
+    config: Config = Depends(get_config),
 ):
     """
     List objects of a particular type, paginated.
     """
     headers, _ = sign_request(purpose=object_type)
-    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         params = {
             key: value
             for key, value in {
@@ -47,12 +52,14 @@ async def list_objects(
                 print_json(json.dumps(item))
 
 
-async def get_object(object_type: str, name_or_id: str):
+async def get_object(
+    object_type: str, name_or_id: str, config: Config = Depends(get_config)
+):
     """
     Get an object by ID (or name).
     """
     headers, _ = sign_request(purpose=object_type)
-    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         async with session.get(
             f"/{object_type}/{name_or_id}",
             headers=headers,
@@ -69,7 +76,9 @@ async def get_object(object_type: str, name_or_id: str):
             print_json(json.dumps(data))
 
 
-async def delete_object(object_type: str, name_or_id: str):
+async def delete_object(
+    object_type: str, name_or_id: str, config: Config = Depends(get_config)
+):
     """
     Delete an object by ID (or name).
     """
@@ -79,7 +88,7 @@ async def delete_object(object_type: str, name_or_id: str):
     if confirm.lower() != "y":
         return
     headers, _ = sign_request(purpose=object_type)
-    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         async with session.delete(
             f"/{object_type}/{name_or_id}",
             headers=headers,
