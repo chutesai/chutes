@@ -2,7 +2,7 @@ import aiohttp
 import sys
 from copy import deepcopy
 from loguru import logger
-from chutes.config import API_BASE_URL
+from chutes.config import get_config
 from chutes.entrypoint._shared import load_chute
 from chutes.util.auth import sign_request
 
@@ -28,6 +28,7 @@ async def deploy(chute, public=False):
     """
     Perform the actual chute deployment.
     """
+    config = get_config()
     request_body = {
         "name": chute.name,
         "image": chute.image if isinstance(chute.image, str) else chute.image.uid,
@@ -47,7 +48,7 @@ async def deploy(chute, public=False):
         ],
     }
     headers, request_string = sign_request(request_body)
-    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         async with session.post(
             "/chutes/",
             data=request_string,
@@ -72,10 +73,11 @@ async def image_available(image, public):
     """
     Check if an image exists and is built/published in the registry.
     """
+    config = get_config()
     image_id = image if isinstance(image, str) else image.uid
     logger.debug(f"Checking if {image_id=} is available...")
     headers, _ = sign_request(purpose="images")
-    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         async with session.get(
             f"/images/{image_id}",
             headers=headers,

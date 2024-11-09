@@ -7,7 +7,7 @@ import sys
 import aiohttp
 from loguru import logger
 from chutes.entrypoint._shared import parse_args
-
+from chutes.config import get_config
 CLI_ARGS = {
     "--config-path": {
         "type": str,
@@ -31,12 +31,13 @@ async def report_invocation(input_args):
     """
     Report an invocation.
     """
+    config = get_config()
     args = parse_args(input_args, CLI_ARGS)
     if args.config_path:
         os.environ["PARACHUTES_CONFIG_PATH"] = args.config_path
 
     from chutes.util.auth import sign_request
-    from chutes.config import API_BASE_URL
+
 
     # Ensure we have a reason.
     if not args.reason:
@@ -54,7 +55,7 @@ async def report_invocation(input_args):
 
     # Send it.
     headers, payload_string = sign_request(payload={"reason": reason})
-    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         async with session.post(
             f"/invocations/{args.invocation_id}/report",
             data=payload_string,

@@ -12,7 +12,8 @@ from io import BytesIO
 from contextlib import contextmanager
 from copy import deepcopy
 from loguru import logger
-from chutes.config import API_BASE_URL
+
+from chutes.config import get_config
 from chutes.image.directive.add import ADD
 from chutes.image.directive.generic_run import RUN
 from chutes.entrypoint._shared import load_chute
@@ -53,6 +54,7 @@ def temporary_build_directory(image):
     """
     Helper to copy the build context files to a build directory.
     """
+
     # Confirm the context files with the user.
     all_input_files = []
     for directive in image._directives:
@@ -108,6 +110,7 @@ async def build_remote(image, wait=None, public=False):
     Build an image remotely, that is, package up the build context and ship it
     off to the parachutes API to have it built.
     """
+    config = get_config()
     with temporary_build_directory(image) as build_directory:
         logger.info(f"Packaging up the build directory to upload: {build_directory}")
         output_path = shutil.make_archive(
@@ -151,7 +154,7 @@ async def build_remote(image, wait=None, public=False):
         # Retrieve the raw bytes of the request body
         raw_data = writer.output.getvalue()
 
-        async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+        async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
             headers, payload_string = sign_request(payload=raw_data)
             headers["Content-Type"] = payload.content_type
             headers["Content-Length"] = str(len(raw_data))
@@ -198,9 +201,10 @@ async def image_exists(image):
     """
     Check if an image already exists.
     """
+    config = get_config()
     logger.debug(f"Checking if image {image.name}:{image.tag} exists...")
     headers, _ = sign_request(purpose="images")
-    async with aiohttp.ClientSession(base_url=API_BASE_URL) as session:
+    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         async with session.get(
             f"/images/{image.uid}",
             headers=headers,

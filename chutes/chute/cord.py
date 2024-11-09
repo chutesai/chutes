@@ -11,11 +11,11 @@ from fastapi import Request, HTTPException, status
 from loguru import logger
 from contextlib import asynccontextmanager
 from starlette.responses import StreamingResponse
-from chutes.config import API_BASE_URL
 from chutes.chute.base import Chute
 from chutes.exception import InvalidPath, DuplicatePath, StillProvisioning
 from chutes.util.context import is_local
 from chutes.util.auth import sign_request
+from chutes.config import get_config
 
 # Simple regex to check for custom path overrides.
 PATH_RE = re.compile(r"^(/[a-z0-9]+[a-z0-9-_]*)+$")
@@ -55,6 +55,7 @@ class Cord:
         self._method = method
         self._session_kwargs = session_kwargs
         self._provision_timeout = provision_timeout
+        self._config = get_config()
 
     @property
     def path(self):
@@ -152,7 +153,7 @@ class Cord:
                 }
             )
             async with aiohttp.ClientSession(
-                base_url=API_BASE_URL, **self._session_kwargs
+                base_url=self._config.api_base_url, **self._session_kwargs
             ) as session:
                 async with session.post(
                     f"/chutes/{self._app.uid}{self.path}",
