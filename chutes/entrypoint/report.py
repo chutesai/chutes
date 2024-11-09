@@ -6,41 +6,27 @@ import os
 import sys
 import aiohttp
 from loguru import logger
-from chutes.entrypoint._shared import parse_args
+import typer
 from chutes.config import get_config
-CLI_ARGS = {
-    "--config-path": {
-        "type": str,
-        "default": None,
-        "help": "custom path to the parachutes config (credentials, API URL, etc.)",
-    },
-    "--invocation-id": {
-        "type": str,
-        "required": True,
-        "help": "invocation ID to report",
-    },
-    "--reason": {
-        "type": str,
-        "default": None,
-        "help": "explanation/reason for the report",
-    },
-}
+from chutes.util.auth import sign_request
 
 
-async def report_invocation(input_args):
+async def report_invocation(
+    invocation_id: str = typer.Option(..., help="invocation ID to report"),
+    config_path: str = typer.Option(
+        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+    ),
+    reason: str | None = typer.Option(None, help="explanation/reason for the report"),
+):
     """
     Report an invocation.
     """
     config = get_config()
-    args = parse_args(input_args, CLI_ARGS)
-    if args.config_path:
-        os.environ["PARACHUTES_CONFIG_PATH"] = args.config_path
-
-    from chutes.util.auth import sign_request
-
+    if config_path:
+        os.environ["PARACHUTES_CONFIG_PATH"] = config_path
 
     # Ensure we have a reason.
-    if not args.reason:
+    if not reason:
         reason = input("Please describe the issue with the invocation: ")
         try:
             while True:
@@ -57,7 +43,7 @@ async def report_invocation(input_args):
     headers, payload_string = sign_request(payload={"reason": reason})
     async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         async with session.post(
-            f"/invocations/{args.invocation_id}/report",
+            f"/invocations/{invocation_id}/report",
             data=payload_string,
             headers=headers,
         ) as response:

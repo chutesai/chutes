@@ -21,29 +21,31 @@ def parse_args(args: List[Any], args_config: Dict[str, Any]):
 
 
 def load_chute(
-    log_prefix: str, args: List[Any], args_config: Dict[str, Any]
+    chute_ref_str: str,
+    config_path: str | None,
+    debug: bool,
 ) -> Tuple[Any, Any]:
     """
     Load a chute from the chute ref string via dynamic imports and such.
     """
     # The first arg is always the module:app variable reference, similar to uvicorn foo:app [other args]
-    if not args:
-        logger.error(f"usage: {log_prefix} [module_name:chute_name] [args]")
-        sys.exit(1)
-    chute_ref_str = args.pop(0)
-    if not CHUTE_REF_RE.match(chute_ref_str):
-        logger.error(
-            "Invalid module name '{chute_ref_str}', usage: {log_prefix} {module_name:chute_name} [args]"
-        )
-        sys.exit(1)
-    args = parse_args(args, args_config)
+    # if not args:
+    #     logger.error(f"usage: {log_prefix} [module_name:chute_name] [args]")
+    #     sys.exit(1)
+    # chute_ref_str = args.pop(0)
+    # if not CHUTE_REF_RE.match(chute_ref_str):
+    #     logger.error(
+    #         "Invalid module name '{chute_ref_str}', usage: {log_prefix} {module_name:chute_name} [args]"
+    #     )
+    #     sys.exit(1)
+    # args = parse_args(args, args_config)
 
     # Config path updates.
-    if args.config_path:
-        os.environ["PARACHUTES_CONFIG_PATH"] = args.config_path
+    if config_path:
+        os.environ["PARACHUTES_CONFIG_PATH"] = config_path
 
     # Debug logging?
-    if not args.debug:
+    if not debug:
         logger.remove()
         logger.add(sys.stdout, level="INFO")
 
@@ -77,4 +79,4 @@ def load_chute(
         logger.error(f"Unable to find chute '{chute_name}' in module '{module_name}'")
         sys.exit(1)
 
-    return chute, args
+    return chute

@@ -1,5 +1,6 @@
 import sys
 from loguru import logger
+import typer
 from uvicorn import Config, Server
 from chutes.entrypoint._shared import load_chute
 
@@ -34,11 +35,22 @@ CLI_ARGS = {
 
 # NOTE: Might want to change the name of this to 'start'.
 # So `run` means an easy way to perform inference on a chute (pull the cord :P)
-async def run_chute(args):
+async def run_chute(
+    config_path: str = typer.Option(
+        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+    ),
+    port: int | None = typer.Option(None, help="port to listen on"),
+    host: str | None = typer.Option(None, help="host to bind to"),
+    uds: str | None = typer.Option(None, help="unix domain socket path"),
+    debug: bool = typer.Option(False, help="enable debug logging"),
+):
     """
     Run the chute (uvicorn server).
     """
-    chute, args = load_chute("chutes run", args, CLI_ARGS)
+    # How to get the chute ref string?
+    chute, _ = load_chute(
+        "chutes run", chute_ref_str=..., config_path=config_path, debug=...
+    )
 
     from chutes.chute import ChutePack
     from chutes.util.context import is_local
@@ -50,6 +62,6 @@ async def run_chute(args):
     # Run the server.
     chute = chute.chute if isinstance(chute, ChutePack) else chute
     await chute.initialize()
-    config = Config(app=chute, host=args.host, port=args.port, uds=args.uds)
+    config = Config(app=chute, host=host, port=port, uds=uds)
     server = Server(config)
     await server.serve()
