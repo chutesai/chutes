@@ -35,7 +35,7 @@ async def _deploy(chute: Chute, public: bool = False):
         ],
     }
     headers, request_string = sign_request(request_body)
-    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
+    async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         async with session.post(
             "/chutes/",
             data=request_string,
@@ -64,7 +64,7 @@ async def _image_available(image: str | Image, public: bool) -> bool:
     image_id = image if isinstance(image, str) else image.uid
     logger.debug(f"Checking if image_id={image_id} is available...")
     headers, _ = sign_request(purpose="images")
-    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
+    async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         async with session.get(
             f"/images/{image_id}",
             headers=headers,

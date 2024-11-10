@@ -154,7 +154,7 @@ async def build_remote(image, wait=None, public=False):
         # Retrieve the raw bytes of the request body
         raw_data = writer.output.getvalue()
 
-        async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
+        async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
             headers, payload_string = sign_request(payload=raw_data)
             headers["Content-Type"] = payload.content_type
             headers["Content-Length"] = str(len(raw_data))
@@ -204,7 +204,7 @@ async def image_exists(image):
     config = get_config()
     logger.debug(f"Checking if image {image.name}:{image.tag} exists...")
     headers, _ = sign_request(purpose="images")
-    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
+    async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         async with session.get(
             f"/images/{image.uid}",
             headers=headers,

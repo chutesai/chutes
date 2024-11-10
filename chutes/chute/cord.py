@@ -154,7 +154,7 @@ class Cord:
                 }
             )
             async with aiohttp.ClientSession(
-                base_url=self._config.api_base_url, **self._session_kwargs
+                base_url=self._config.generic.api_base_url, **self._session_kwargs
             ) as session:
                 async with session.post(
                     f"/chutes/{self._app.uid}{self.path}",

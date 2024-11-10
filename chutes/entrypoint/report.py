@@ -41,7 +41,7 @@ async def report_invocation(
 
     # Send it.
     headers, payload_string = sign_request(payload={"reason": reason})
-    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
+    async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         async with session.post(
             f"/invocations/{invocation_id}/report",
             data=payload_string,

@@ -23,7 +23,7 @@ async def list_objects(
     List objects of a particular type, paginated.
     """
     headers, _ = sign_request(purpose=object_type)
-    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
+    async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         params = {
             key: value
             for key, value in {
@@ -59,7 +59,7 @@ async def get_object(
     Get an object by ID (or name).
     """
     headers, _ = sign_request(purpose=object_type)
-    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
+    async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         async with session.get(
             f"/{object_type}/{name_or_id}",
             headers=headers,
@@ -88,7 +88,7 @@ async def delete_object(
     if confirm.lower() != "y":
         return
     headers, _ = sign_request(purpose=object_type)
-    async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
+    async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         async with session.delete(
             f"/{object_type}/{name_or_id}",
             headers=headers,
