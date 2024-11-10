@@ -190,7 +190,7 @@ async def _image_exists(image):
             raise Exception(await response.text())
 
 
-async def build_image(
+def build_image(
     chute_ref_str: str = typer.Argument(
         ...,
         help="The chute to deploy, either a path to a chute file or a reference to a chute on the platform",
