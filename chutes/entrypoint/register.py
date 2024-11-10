@@ -18,6 +18,7 @@ from chutes.config import get_generic_config
 from rich import print
 from chutes.constants import HOTKEY_HEADER, NONCE_HEADER, SIGNATURE_HEADER
 from chutes.util.auth import get_signing_message
+from chutes.util.user import validate_the_username
 
 
 async def _ping_api(base_url: str):
@@ -67,7 +68,7 @@ def register(
         # Interactive mode for username.
         if not username:
             username = input("Enter desired username: ").strip()
-            if not username:
+            if not validate_the_username(username):
                 logger.error("Bad choice!")
                 sys.exit(1)
 
