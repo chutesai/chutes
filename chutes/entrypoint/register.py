@@ -29,7 +29,7 @@ async def _ping_api(base_url: str):
                 response.raise_for_status()
                 return response.status == 200
     except Exception as e:
-        logger.error(f"Failed to connect to the API at url {base_url}: {e}")
+        logger.error(f"Failed to connect to the API at url {base_url}: {e}. Env var 'CHUTES_API_URL' is {os.getenv('CHUTES_API_URL')}.")
         return False
 
 

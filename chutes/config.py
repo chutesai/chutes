@@ -39,7 +39,7 @@ _config = None
 
 @lru_cache
 def get_generic_config() -> GenericConfig:
-    api_base_url = os.getenv("PARACHUTES_API_URL", "https://api.parachutes.ai")
+    api_base_url = os.getenv("CHUTES_API_URL", "https://api.parachutes.ai")
     return GenericConfig(api_base_url=api_base_url)
 
 
@@ -73,7 +73,7 @@ def get_config() -> Config:
 
         api_base_url = raw_config.get("api", "base_url")
         if not api_base_url:
-            api_base_url = os.getenv("PARACHUTES_API_URL", "https://api.parachutes.ai")
+            api_base_url = os.getenv("CHUTES_API_URL", "https://api.parachutes.ai")
         generic_config = GenericConfig(api_base_url=api_base_url)
         logger.debug(f"Configured parachutes: with api_base_url={api_base_url}")
         _config = Config(auth=auth_config, generic=generic_config)
