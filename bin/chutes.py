@@ -33,7 +33,7 @@ app.add_typer(images_app, name="images")
 api_keys_app.command(
     help="Create an API key for the chutes run platform!", no_args_is_help=True, name="create"
 )(create_api_key)
-app.add_typer(api_keys_app, name="api_keys")
+app.add_typer(api_keys_app)
 
 if __name__ == "__main__":
     app()
