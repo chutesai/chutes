@@ -45,8 +45,8 @@ def register(
         os.path.join(Path.home(), ".bittensor", "wallets"),
         help="path to the bittensor wallets directory",
     ),
-    wallet: str = typer.Option(..., help="name of the wallet to use"),
-    hotkey: str = typer.Option(..., help="hotkey to register with"),
+    wallet: str | None = typer.Option(None, help="name of the wallet to use"),
+    hotkey: str | None = typer.Option(None, help="hotkey to register with"),
 ):
     """
     Register a user!
