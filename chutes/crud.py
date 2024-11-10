@@ -20,7 +20,7 @@ chutes_app = typer.Typer(
 )
 images_app = typer.Typer(no_args_is_help=True, name="images", help="Manage images")
 api_keys_app = typer.Typer(
-    no_args_is_help=True, name="api_keys", help="Manage API keys"
+    no_args_is_help=True, name="keys", help="Manage API keys"
 )
 
 
