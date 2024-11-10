@@ -19,7 +19,7 @@ app.command(
 )(create_api_key)
 app.command(help="Report an invocation!", no_args_is_help=True)(report_invocation)
 app.command(help="Run a chute!", no_args_is_help=True)(run_chute)
-app.command(help="Deploy a chute!", no_args_is_help=False)(deploy_chute)
+app.command(help="Deploy a chute!", no_args_is_help=True)(deploy_chute)
 
 if __name__ == "__main__":
     app()
