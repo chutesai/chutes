@@ -145,6 +145,3 @@ def build_vllm_chute(
         completion_stream=completion_stream,
         models=get_models,
     )
-
-
-chute = build_vllm_chute("meta-llama/Meta-Llama-3.1-8B-Instruct", NodeSelector())
