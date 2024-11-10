@@ -51,10 +51,10 @@ def register(
 
     async def _register():
         nonlocal username, wallet, hotkey
-        config = get_config()
         if config_path:
             os.environ["PARACHUTES_CONFIG_PATH"] = config_path
         os.environ["PARACHUTES_ALLOW_MISSING"] = "true"
+        config = get_config(without_config_file=True)
 
         from chutes.config import CONFIG_PATH
 

@@ -31,16 +31,16 @@ class Config:
 _config = None
 
 
-def get_config():
+def get_config(without_config_file: bool = False) -> Config:
     global _config
     if _config is None:
         # def load_config(self):
         if not os.path.exists(CONFIG_PATH):
-            if not ALLOW_MISSING:
+            if not (ALLOW_MISSING or without_config_file):
                 raise NotConfigured(
                     f"Please set either populate {CONFIG_PATH} or set PARACHUTES_CONFIG_PATH to alternative/valid config path!"
                 )
-        else:
+        elif not without_config_file:
             logger.debug(f"Loading parachutes config from {CONFIG_PATH}...")
             raw_config = ConfigParser()
             raw_config.read(CONFIG_PATH)
