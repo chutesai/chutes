@@ -108,7 +108,7 @@ def deploy_chute(
 
         # Ensure the image is ready to be used.
         if not await _image_available(chute.image, public):
-            logger.error(f"Image '{chute.image}' is not available to be used (yet)!")
+            logger.error(f"Image '{chute.name}' is not available to be used (yet)!")
             sys.exit(1)
 
         # Deploy!
