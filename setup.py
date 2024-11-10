@@ -46,5 +46,9 @@ setup(
         "Operating System :: POSIX :: Linux",
         "Programming Language :: Python :: 3.10",
     ],
-    # scripts=["bin/chutes"],
+    entry_points={
+        "console_scripts": [
+            "chutes=bin.chutes:app",
+        ],
+    },
 )
