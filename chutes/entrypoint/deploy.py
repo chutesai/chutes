@@ -82,6 +82,11 @@ async def _image_available(image: str | Image, public: bool) -> bool:
 
 
 def deploy_chute(
+    # TODO: needs to be a nicer way to do this
+    chute_ref_str: str = typer.Argument(
+        ...,
+        help="The chute to deploy, either a path to a chute file or a reference to a chute on the platform",
+    ),
     config_path: str = typer.Option(
         None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
     ),
@@ -95,8 +100,8 @@ def deploy_chute(
     """
 
     async def _deploy_chute():
-        nonlocal config_path, debug, public
-        chute = load_chute("chutes deploy", config_path=config_path, debug=debug)
+        nonlocal config_path, debug, public, chute_ref_str
+        chute = load_chute(chute_ref_str, config_path=config_path, debug=debug)
 
         # Get the image reference from the chute.
         chute = chute.chute if isinstance(chute, ChutePack) else chute
