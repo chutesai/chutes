@@ -11,6 +11,7 @@ import time
 import aiohttp
 from loguru import logger
 from pathlib import Path
+import rich
 from substrateinterface import Keypair
 import typer
 from chutes.config import get_generic_config
@@ -29,7 +30,9 @@ async def _ping_api(base_url: str):
                 response.raise_for_status()
                 return response.status == 200
     except Exception as e:
-        logger.error(f"Failed to connect to the API at url {base_url}: {e}. Env var 'CHUTES_API_URL' is {os.getenv('CHUTES_API_URL')}.")
+        logger.error(
+            f"Failed to connect to the API at url {base_url}: {e}. Env var 'CHUTES_API_URL' is {os.getenv('CHUTES_API_URL')}."
+        )
         return False
 
 
@@ -48,6 +51,10 @@ def register(
     """
     Register a user!
     """
+
+    rich.print(
+        f"Attempting to register the user {username} with the wallet located at {os.path.join(wallets_path, wallet, 'hotkeys', hotkey)}."
+    )
 
     async def _register():
         nonlocal username, wallet, hotkey
@@ -137,8 +144,12 @@ def register(
         }
         sig_str = get_signing_message(ss58, headers[NONCE_HEADER], payload)
         headers[SIGNATURE_HEADER] = keypair.sign(sig_str.encode()).hex()
-        logger.debug(f"Sending payload: {payload} with headers: {headers}. Signing message was :")
-        async with aiohttp.ClientSession(base_url=generic_config.api_base_url) as session:
+        logger.debug(
+            f"Sending payload: {payload} with headers: {headers}. Signing message was :"
+        )
+        async with aiohttp.ClientSession(
+            base_url=generic_config.api_base_url
+        ) as session:
             async with session.post(
                 "/users/register",
                 data=payload,
@@ -178,4 +189,3 @@ def register(
                     logger.error(await response.json())
 
     asyncio.run(_register())
-
