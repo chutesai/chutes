@@ -10,43 +10,14 @@ import pickle
 import orjson as json
 from io import BytesIO
 from contextlib import contextmanager
-from copy import deepcopy
 from loguru import logger
+import typer
 
 from chutes.config import get_config
 from chutes.image.directive.add import ADD
 from chutes.image.directive.generic_run import RUN
 from chutes.entrypoint._shared import load_chute
 from chutes.util.auth import sign_request
-
-
-CLI_ARGS = {
-    "--config-path": {
-        "type": str,
-        "default": None,
-        "help": "custom path to the parachutes config (credentials, API URL, etc.)",
-    },
-    "--local": {
-        "action": "store_true",
-        "help": "build the image locally, useful for testing/debugging",
-    },
-    "--debug": {
-        "action": "store_true",
-        "help": "enable debug logging",
-    },
-    "--include-cwd": {
-        "action": "store_true",
-        "help": "include the entire current directory in build context, recursively",
-    },
-    "--wait": {
-        "action": "store_true",
-        "help": "wait for image to be built",
-    },
-    "--public": {
-        "action": "store_true",
-        "help": "mark an image as public/available to anyone",
-    },
-}
 
 
 @contextmanager
@@ -89,7 +60,7 @@ def temporary_build_directory(image):
         yield tempdir
 
 
-def build_local(image):
+def _build_local(image):
     """
     Build an image locally, directly with docker (for testing purposes).
     """
@@ -105,7 +76,7 @@ def build_local(image):
         )
 
 
-async def build_remote(image, wait=None, public=False):
+async def _build_remote(image, wait=None, public=False):
     """
     Build an image remotely, that is, package up the build context and ship it
     off to the parachutes API to have it built.
@@ -154,7 +125,9 @@ async def build_remote(image, wait=None, public=False):
         # Retrieve the raw bytes of the request body
         raw_data = writer.output.getvalue()
 
-        async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
+        async with aiohttp.ClientSession(
+            base_url=config.generic.api_base_url
+        ) as session:
             headers, payload_string = sign_request(payload=raw_data)
             headers["Content-Type"] = payload.content_type
             headers["Content-Length"] = str(len(raw_data))
@@ -197,7 +170,7 @@ async def build_remote(image, wait=None, public=False):
                     )
 
 
-async def image_exists(image):
+async def _image_exists(image):
     """
     Check if an image already exists.
     """
@@ -214,14 +187,34 @@ async def image_exists(image):
             elif response.status == 404:
                 return False
             raise Exception(await response.text())
-    return False
 
 
-async def build_image(input_args):
+async def build_image(
+    chute_ref_str: str = typer.Argument(
+        ...,
+        help="The chute to deploy, either a path to a chute file or a reference to a chute on the platform",
+    ),
+    config_path: str = typer.Option(
+        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+    ),
+    local: bool = typer.Option(
+        False, help="build the image locally, useful for testing/debugging"
+    ),
+    debug: bool = typer.Option(False, help="enable debug logging"),
+    include_cwd: bool = typer.Option(
+        False, help="include the entire current directory in build context, recursively"
+    ),
+    wait: bool = typer.Option(False, help="wait for image to be built"),
+    public: bool = typer.Option(
+        False, help="mark an image as public/available to anyone"
+    ),
+):
     """
     Build an image for the parachutes platform.
     """
-    chute, args = load_chute("chutes build", deepcopy(input_args), CLI_ARGS)
+    chute = load_chute(
+        chute_ref_str=chute_ref_str, config_path=config_path, debug=debug
+    )
 
     from chutes.chute import ChutePack
 
@@ -237,7 +230,7 @@ async def build_image(input_args):
         sys.exit(1)
 
     # Check if the image is already built.
-    if await image_exists(image):
+    if await _image_exists(image):
         logger.error(
             f"Image with name={image.name} and tag={image.tag} already exists!"
         )
@@ -246,10 +239,10 @@ async def build_image(input_args):
     # Always tack on the final directives, which include installing chutes and adding project files.
     image._directives.append(RUN("pip install chutes --upgrade"))
     current_directory = os.getcwd()
-    if args.include_cwd:
+    if include_cwd:
         image._directives.append(ADD(source=".", dest="/app"))
     else:
-        module_name, chute_name = input_args[0].split(":")
+        module_name, chute_name = chute_ref_str.split(":")
         module = importlib.import_module(module_name)
         module_path = os.path.abspath(module.__file__)
         if not module_path.startswith(current_directory):
@@ -286,8 +279,8 @@ async def build_image(input_args):
     logger.debug(f"Generated Dockerfile:\n{str(image)}")
 
     # Building locally?
-    if args.local:
-        return build_local(image)
+    if local:
+        return _build_local(image)
 
     # Package up the context and ship it off for building.
-    return await build_remote(image, wait=args.wait, public=args.public)
+    return await _build_remote(image, wait=wait, public=public)
