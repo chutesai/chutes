@@ -13,7 +13,7 @@ from loguru import logger
 from pathlib import Path
 from substrateinterface import Keypair
 import typer
-from chutes.config import get_config
+from chutes.config import get_generic_config
 from rich import print
 from chutes.constants import HOTKEY_HEADER, NONCE_HEADER, SIGNATURE_HEADER
 from chutes.util.auth import get_signing_message
@@ -54,11 +54,11 @@ def register(
         if config_path:
             os.environ["PARACHUTES_CONFIG_PATH"] = config_path
         os.environ["PARACHUTES_ALLOW_MISSING"] = "true"
-        config = get_config(without_config_file=True)
+        generic_config = get_generic_config()
 
         from chutes.config import CONFIG_PATH
 
-        if not await _ping_api(config.generic.api_base_url):
+        if not await _ping_api(generic_config.api_base_url):
             sys.exit(1)
 
         # Interactive mode for username.
@@ -138,7 +138,7 @@ def register(
         sig_str = get_signing_message(ss58, headers[NONCE_HEADER], payload)
         headers[SIGNATURE_HEADER] = keypair.sign(sig_str.encode()).hex()
         logger.debug(f"Sending payload: {payload} with headers: {headers}. Signing message was :")
-        async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
+        async with aiohttp.ClientSession(base_url=generic_config.api_base_url) as session:
             async with session.post(
                 "/users/register",
                 data=payload,
@@ -152,7 +152,7 @@ def register(
                     updated_config = "\n".join(
                         [
                             "[api]",
-                            f"base_url = {config.generic.api_base_url}",
+                            f"base_url = {generic_config.api_base_url}",
                             "",
                             "[auth]",
                             f"user_id = {data['user_id']}",
