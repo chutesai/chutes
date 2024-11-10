@@ -1,30 +1,17 @@
+import asyncio
 import aiohttp
 import sys
-from copy import deepcopy
 from loguru import logger
+import typer
+from chutes.chute.base import Chute
 from chutes.config import get_config
 from chutes.entrypoint._shared import load_chute
+from chutes.image import Image
 from chutes.util.auth import sign_request
+from chutes.chute import ChutePack
 
 
-CLI_ARGS = {
-    "--config-path": {
-        "type": str,
-        "default": None,
-        "help": "custom path to the parachutes config (credentials, API URL, etc.)",
-    },
-    "--debug": {
-        "action": "store_true",
-        "help": "enable debug logging",
-    },
-    "--public": {
-        "action": "store_true",
-        "help": "mark an image as public/available to anyone",
-    },
-}
-
-
-async def deploy(chute, public=False):
+async def _deploy(chute: Chute, public: bool = False):
     """
     Perform the actual chute deployment.
     """
@@ -69,13 +56,13 @@ async def deploy(chute, public=False):
                 )
 
 
-async def image_available(image, public):
+async def _image_available(image: str | Image, public: bool) -> bool:
     """
     Check if an image exists and is built/published in the registry.
     """
     config = get_config()
     image_id = image if isinstance(image, str) else image.uid
-    logger.debug(f"Checking if {image_id=} is available...")
+    logger.debug(f"Checking if image_id={image_id} is available...")
     headers, _ = sign_request(purpose="images")
     async with aiohttp.ClientSession(base_url=config.api_base_url) as session:
         async with session.get(
@@ -94,21 +81,32 @@ async def image_available(image, public):
     return False
 
 
-async def deploy_chute(input_args):
+def deploy_chute(
+    config_path: str = typer.Option(
+        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+    ),
+    debug: bool = typer.Option(False, help="enable debug logging"),
+    public: bool = typer.Option(
+        False, help="mark an image as public/available to anyone"
+    ),
+):
     """
     Deploy a chute to the platform.
     """
-    chute, args = load_chute("chutes deploy", deepcopy(input_args), CLI_ARGS)
 
-    from chutes.chute import ChutePack
+    async def _deploy_chute():
+        nonlocal config_path, debug, public
+        chute = load_chute("chutes deploy", config_path=config_path, debug=debug)
 
-    # Get the image reference from the chute.
-    chute = chute.chute if isinstance(chute, ChutePack) else chute
+        # Get the image reference from the chute.
+        chute = chute.chute if isinstance(chute, ChutePack) else chute
 
-    # Ensure the image is ready to be used.
-    if not await image_available(chute.image, args.public):
-        logger.error(f"Image '{chute.image}' is not available to be used (yet)!")
-        sys.exit(1)
+        # Ensure the image is ready to be used.
+        if not await _image_available(chute.image, public):
+            logger.error(f"Image '{chute.image}' is not available to be used (yet)!")
+            sys.exit(1)
 
-    # Deploy!
-    return await deploy(chute, args.public)
+        # Deploy!
+        return await _deploy(chute, public)
+
+    return asyncio.run(_deploy_chute())

@@ -11,12 +11,12 @@ from fastapi import Request, HTTPException, status
 from loguru import logger
 from contextlib import asynccontextmanager
 from starlette.responses import StreamingResponse
-from chutes.chute.base import Chute
 from chutes.exception import InvalidPath, DuplicatePath, StillProvisioning
 from chutes.util.context import is_local
 from chutes.util.auth import sign_request
 from chutes.config import get_config
 from chutes.constants import CHUTEID_HEADER, FUNCTION_HEADER
+from chutes.chute.base import Chute
 
 # Simple regex to check for custom path overrides.
 PATH_RE = re.compile(r"^(/[a-z0-9]+[a-z0-9-_]*)+$")

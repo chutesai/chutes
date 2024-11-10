@@ -1,7 +1,7 @@
 import re
 import uuid
 from typing import List
-from chutes.config import USER_ID
+from chutes.config import get_config
 from chutes.image.directive.base_image import FROM
 from chutes.image.directive.apt import APT
 from chutes.image.directive.add import ADD
@@ -20,12 +20,15 @@ class Image:
         """
         Semi-useless constructor - don't try to pass args here, use the provided methods.
         """
+        _config = get_config()
         self._name = None
         self._tag = None
         self.name = name
         self.tag = tag
         self._uid = str(
-            uuid.uuid5(uuid.NAMESPACE_OID, f"{USER_ID}/{self.name}:{self.tag}")
+            uuid.uuid5(
+                uuid.NAMESPACE_OID, f"{_config.auth.user_id}/{self.name}:{self.tag}"
+            )
         )
         self._directives = [
             FROM(self.default_base_image),

@@ -3,34 +3,8 @@ from loguru import logger
 import typer
 from uvicorn import Config, Server
 from chutes.entrypoint._shared import load_chute
-
-
-CLI_ARGS = {
-    "--config-path": {
-        "type": str,
-        "default": None,
-        "help": "custom path to the parachutes config (credentials, API URL, etc.)",
-    },
-    "--port": {
-        "type": int,
-        "default": None,
-        "help": "port to listen on",
-    },
-    "--host": {
-        "type": str,
-        "default": None,
-        "help": "host to bind to",
-    },
-    "--uds": {
-        "type": str,
-        "default": None,
-        "help": "unix domain socket path",
-    },
-    "--debug": {
-        "action": "store_true",
-        "help": "enable debug logging",
-    },
-}
+from chutes.chute import ChutePack
+from chutes.util.context import is_local
 
 
 # NOTE: Might want to change the name of this to 'start'.
@@ -49,11 +23,8 @@ async def run_chute(
     """
     # How to get the chute ref string?
     chute, _ = load_chute(
-        "chutes run", chute_ref_str=..., config_path=config_path, debug=...
+        "chutes run", chute_ref_str=..., config_path=config_path, debug=debug
     )
-
-    from chutes.chute import ChutePack
-    from chutes.util.context import is_local
 
     if is_local():
         logger.error("Cannot run chutes in local context!")
