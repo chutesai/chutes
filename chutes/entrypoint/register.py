@@ -81,7 +81,7 @@ def register(
                     if os.path.isdir(item)
                 ]
             )
-            print("Wallets available (commissions soon\u2122 for image/chute use):")
+            print("Wallets available (commissions soon\u2122):")
             for idx in range(len(available_wallets)):
                 print(f"[{idx:2d}] {available_wallets[idx]}")
             choice = input("Enter your choice (number, not name): ")
