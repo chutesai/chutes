@@ -53,7 +53,7 @@ def register(
     """
 
     rich.print(
-        f"Attempting to register the user {username} with the wallet located at {os.path.join(wallets_path, wallet, 'hotkeys', hotkey)}."
+        f"\nAttempting to register the user {username} with the wallet located at {os.path.join(wallets_path, wallet, 'hotkeys', hotkey)}.\n"
     )
 
     async def _register():
