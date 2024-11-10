@@ -5,12 +5,11 @@ Basic endpoint access stuff.
 import asyncio
 import aiohttp
 import json
-from fastapi import Depends
 from rich import print_json
 from loguru import logger
 
 import typer
-from chutes.config import Config, get_config
+from chutes.config import get_config
 from chutes.util.auth import sign_request
 
 
