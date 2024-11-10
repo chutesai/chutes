@@ -1,3 +1,4 @@
+import asyncio
 import aiohttp
 import re
 import os
@@ -212,75 +213,79 @@ async def build_image(
     """
     Build an image for the parachutes platform.
     """
-    chute = load_chute(
-        chute_ref_str=chute_ref_str, config_path=config_path, debug=debug
-    )
 
-    from chutes.chute import ChutePack
-
-    # Get the image reference from the chute.
-    chute = chute.chute if isinstance(chute, ChutePack) else chute
-    image = chute.image
-
-    # Pre-built?
-    if isinstance(image, str):
-        logger.error(
-            f"You appear to be using a pre-defined/standard image '{image}', no need to build anything!"
+    async def _build_image():
+        chute = load_chute(
+            chute_ref_str=chute_ref_str, config_path=config_path, debug=debug
         )
-        sys.exit(1)
 
-    # Check if the image is already built.
-    if await _image_exists(image):
-        logger.error(
-            f"Image with name={image.name} and tag={image.tag} already exists!"
-        )
-        sys.exit(1)
+        from chutes.chute import ChutePack
 
-    # Always tack on the final directives, which include installing chutes and adding project files.
-    image._directives.append(RUN("pip install chutes --upgrade"))
-    current_directory = os.getcwd()
-    if include_cwd:
-        image._directives.append(ADD(source=".", dest="/app"))
-    else:
-        module_name, chute_name = chute_ref_str.split(":")
-        module = importlib.import_module(module_name)
-        module_path = os.path.abspath(module.__file__)
-        if not module_path.startswith(current_directory):
+        # Get the image reference from the chute.
+        chute = chute.chute if isinstance(chute, ChutePack) else chute
+        image = chute.image
+
+        # Pre-built?
+        if isinstance(image, str):
             logger.error(
-                f"You must run the build command from the directory containing your target chute module: {module.__file__} [{current_directory=}]"
+                f"You appear to be using a pre-defined/standard image '{image}', no need to build anything!"
             )
             sys.exit(1)
-        _clean_path = lambda in_: in_[len(current_directory) + 1 :]  # noqa: E731
-        image._directives.append(
-            ADD(
-                source=_clean_path(module.__file__),
-                dest=f"/app/{_clean_path(module.__file__)}",
+
+        # Check if the image is already built.
+        if await _image_exists(image):
+            logger.error(
+                f"Image with name={image.name} and tag={image.tag} already exists!"
             )
-        )
-        imported_files = [
-            os.path.abspath(module.__file__)
-            for module in sys.modules.values()
-            if hasattr(module, "__file__") and module.__file__
-        ]
-        imported_files = [
-            f
-            for f in imported_files
-            if f.startswith(current_directory)
-            and not re.search(r"(site|dist)-packages", f)
-            and f != os.path.abspath(module.__file__)
-        ]
-        for path in imported_files:
+            sys.exit(1)
+
+        # Always tack on the final directives, which include installing chutes and adding project files.
+        image._directives.append(RUN("pip install chutes --upgrade"))
+        current_directory = os.getcwd()
+        if include_cwd:
+            image._directives.append(ADD(source=".", dest="/app"))
+        else:
+            module_name, chute_name = chute_ref_str.split(":")
+            module = importlib.import_module(module_name)
+            module_path = os.path.abspath(module.__file__)
+            if not module_path.startswith(current_directory):
+                logger.error(
+                    f"You must run the build command from the directory containing your target chute module: {module.__file__} [{current_directory=}]"
+                )
+                sys.exit(1)
+            _clean_path = lambda in_: in_[len(current_directory) + 1 :]  # noqa: E731
             image._directives.append(
                 ADD(
-                    source=_clean_path(path),
-                    dest=f"/app/{_clean_path(path)}",
+                    source=_clean_path(module.__file__),
+                    dest=f"/app/{_clean_path(module.__file__)}",
                 )
             )
-    logger.debug(f"Generated Dockerfile:\n{str(image)}")
+            imported_files = [
+                os.path.abspath(module.__file__)
+                for module in sys.modules.values()
+                if hasattr(module, "__file__") and module.__file__
+            ]
+            imported_files = [
+                f
+                for f in imported_files
+                if f.startswith(current_directory)
+                and not re.search(r"(site|dist)-packages", f)
+                and f != os.path.abspath(module.__file__)
+            ]
+            for path in imported_files:
+                image._directives.append(
+                    ADD(
+                        source=_clean_path(path),
+                        dest=f"/app/{_clean_path(path)}",
+                    )
+                )
+        logger.debug(f"Generated Dockerfile:\n{str(image)}")
 
-    # Building locally?
-    if local:
-        return _build_local(image)
+        # Building locally?
+        if local:
+            return _build_local(image)
 
-    # Package up the context and ship it off for building.
-    return await _build_remote(image, wait=wait, public=public)
+        # Package up the context and ship it off for building.
+        return await _build_remote(image, wait=wait, public=public)
+
+    return asyncio.run(_build_image())
