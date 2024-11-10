@@ -81,6 +81,9 @@ def register(
                     if os.path.isdir(item)
                 ]
             )
+            if len(available_wallets) == 0:
+                logger.error("No wallets found in the wallets path!")
+                sys.exit(1)
             print("Wallets available (commissions soon\u2122):")
             for idx in range(len(available_wallets)):
                 print(f"[{idx:2d}] {available_wallets[idx]}")
