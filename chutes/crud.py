@@ -2,26 +2,39 @@
 Basic endpoint access stuff.
 """
 
+import asyncio
 import aiohttp
 import json
 from fastapi import Depends
 from rich import print_json
 from loguru import logger
-from functools import partial
+
+import typer
 from chutes.config import Config, get_config
 from chutes.util.auth import sign_request
 
 
-async def list_objects(
+chutes_app = typer.Typer(
+    no_args_is_help=True,
+    name="chutes",
+    help="Manage chutes, e.g. list chutes, delete a chute, etc.",
+)
+images_app = typer.Typer(no_args_is_help=True, name="images", help="Manage images")
+api_keys_app = typer.Typer(
+    no_args_is_help=True, name="api_keys", help="Manage API keys"
+)
+
+
+async def _list_objects(
     object_type: str,
     name: str = None,
     limit: int = 25,
     page: int = 0,
-    config: Config = Depends(get_config),
 ):
     """
     List objects of a particular type, paginated.
     """
+    config = get_config()
     headers, _ = sign_request(purpose=object_type)
     async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         params = {
@@ -52,12 +65,11 @@ async def list_objects(
                 print_json(json.dumps(item))
 
 
-async def get_object(
-    object_type: str, name_or_id: str, config: Config = Depends(get_config)
-):
+async def _get_object(object_type: str, name_or_id: str):
     """
     Get an object by ID (or name).
     """
+    config = get_config()
     headers, _ = sign_request(purpose=object_type)
     async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         async with session.get(
@@ -76,12 +88,11 @@ async def get_object(
             print_json(json.dumps(data))
 
 
-async def delete_object(
-    object_type: str, name_or_id: str, config: Config = Depends(get_config)
-):
+async def _delete_object(object_type: str, name_or_id: str):
     """
     Delete an object by ID (or name).
     """
+    config = get_config()
     confirm = input(
         f"Are you sure you want to delete {object_type}/{name_or_id}?  This action is irreversable. (y/n): "
     )
@@ -104,12 +115,66 @@ async def delete_object(
             logger.success(f"Successfully deleted {singular} {data[id_field]}")
 
 
-list_images = partial(list_objects, "images")
-list_chutes = partial(list_objects, "chutes")
-list_api_keys = partial(list_objects, "api_keys")
-get_image = partial(get_object, "images")
-get_chute = partial(get_object, "chutes")
-get_api_key = partial(get_object, "api_keys")
-delete_image = partial(delete_object, "images")
-delete_chute = partial(delete_object, "chutes")
-delete_api_key = partial(delete_object, "api_keys")
+@chutes_app.command(name="list", help="List chutes")
+def list_chutes(
+    name: str | None = typer.Option(None, help="Name of chute to filter by"),
+    limit: int = typer.Option(25, help="Number of chutes to display per page"),
+    page: int = typer.Option(0, help="The page number to display"),
+):
+    return asyncio.run(_list_objects("chutes", name=name, limit=limit, page=page))
+
+
+@chutes_app.command(name="get", help="Get a chute by name or ID")
+def get_chute(name_or_id: str = typer.Argument(..., help="Name or ID of chute to get")):
+    return asyncio.run(_get_object("chutes", name_or_id))
+
+
+@chutes_app.command(name="delete", help="Delete a chute by name or ID")
+def delete_chute(
+    name_or_id: str = typer.Argument(..., help="Name or ID of chute to delete")
+):
+    return asyncio.run(_delete_object("chutes", name_or_id))
+
+
+@images_app.command(name="list", help="List images")
+def list_images(
+    name: str | None = typer.Option(None, help="Name of image to filter by"),
+    limit: int = typer.Option(25, help="Number of images to display per page"),
+    page: int = typer.Option(0, help="The page number to display"),
+):
+    return asyncio.run(_list_objects("images", name=name, limit=limit, page=page))
+
+
+@images_app.command(name="get", help="Get an image by name or ID")
+def get_image(name_or_id: str = typer.Argument(..., help="Name or ID of image to get")):
+    return asyncio.run(_get_object("images", name_or_id))
+
+
+@images_app.command(name="delete", help="Delete an image by name or ID")
+def delete_image(
+    name_or_id: str = typer.Argument(..., help="Name or ID of image to delete")
+):
+    return asyncio.run(_delete_object("images", name_or_id))
+
+
+@api_keys_app.command(name="list", help="List API keys")
+def list_api_keys(
+    name: str | None = typer.Option(None, help="Name of API key to filter by"),
+    limit: int = typer.Option(25, help="Number of API keys to display per page"),
+    page: int = typer.Option(0, help="The page number to display"),
+):
+    return asyncio.run(_list_objects("api_keys", name=name, limit=limit, page=page))
+
+
+@api_keys_app.command(name="get", help="Get an API key by name or ID")
+def get_api_key(
+    name_or_id: str = typer.Argument(..., help="Name or ID of API key to get")
+):
+    return asyncio.run(_get_object("api_keys", name_or_id))
+
+
+@api_keys_app.command(name="delete", help="Delete an API key by name or ID")
+def delete_api_key(
+    name_or_id: str = typer.Argument(..., help="Name or ID of API key to delete")
+):
+    return asyncio.run(_delete_object("api_keys", name_or_id))

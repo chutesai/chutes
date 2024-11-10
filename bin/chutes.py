@@ -7,7 +7,7 @@ from chutes.entrypoint.register import register
 from chutes.entrypoint.build import build_image
 from chutes.entrypoint.report import report_invocation
 from chutes.entrypoint.run import run_chute
-
+from chutes.crud import chutes_app, images_app, api_keys_app
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -24,5 +24,15 @@ app.command(help="Report an invocation!", no_args_is_help=True, name="report")(
 app.command(help="Run a chute!", no_args_is_help=True, name="run")(run_chute)
 app.command(help="Deploy a chute!", no_args_is_help=True, name="deploy")(deploy_chute)
 app.command(help="Build an image!", no_args_is_help=True, name="build")(build_image)
+
+# Chutes
+app.add_typer(chutes_app, name="chutes")
+
+# Images
+app.add_typer(images_app, name="images")
+
+# API Keys
+app.add_typer(api_keys_app, name="api_keys")
+
 if __name__ == "__main__":
     app()
