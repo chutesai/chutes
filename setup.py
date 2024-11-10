@@ -1,8 +1,10 @@
-# NOTE: Should replace with a pyproject.toml 
+# NOTE: Should replace with a pyproject.toml
 import os
 from setuptools import setup, find_packages
 
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")) as infile:
+with open(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")
+) as infile:
     long_description = infile.read()
 
 setup(
@@ -44,5 +46,5 @@ setup(
         "Operating System :: POSIX :: Linux",
         "Programming Language :: Python :: 3.10",
     ],
-    scripts=["bin/chutes"],
+    # scripts=["bin/chutes"],
 )
