@@ -45,16 +45,12 @@ def register(
         os.path.join(Path.home(), ".bittensor", "wallets"),
         help="path to the bittensor wallets directory",
     ),
-    wallet: str = typer.Option("default", help="name of the wallet to use"),
-    hotkey: str = typer.Option("default", help="hotkey to register with"),
+    wallet: str = typer.Option(None, help="name of the wallet to use"),
+    hotkey: str = typer.Option(None, help="hotkey to register with"),
 ):
     """
     Register a user!
     """
-
-    rich.print(
-        f"\nAttempting to register the user {username} with the wallet located at {os.path.join(wallets_path, wallet, 'hotkeys', hotkey)}.\n"
-    )
 
     async def _register():
         nonlocal username, wallet, hotkey
@@ -121,6 +117,10 @@ def register(
         ):
             logger.error(f"No hotkey found: {hotkey_path}")
             sys.exit(1)
+
+        rich.print(
+            f"\nAttempting to register the user {username} with the wallet located at {os.path.join(wallets_path, wallet, 'hotkeys', hotkey)}.\n"
+        )
 
         # Send it.
         with open(hotkey_path) as infile:
