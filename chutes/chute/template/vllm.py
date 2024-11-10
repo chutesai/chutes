@@ -41,6 +41,7 @@ def build_vllm_chute(
                 "multi_step_stream_outputs": True,
                 "max_logprobs": 5,
                 "enforce_eager": False,
+                "enable_chunked_prefill": False,
             }
         )
 
