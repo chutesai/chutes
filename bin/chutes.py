@@ -15,9 +15,7 @@ app = typer.Typer(no_args_is_help=True)
 app.command(name="register", help="Create an account with the chutes run platform!")(
     register
 )
-app.command(
-    help="Create an API key for the chutes run platform!", no_args_is_help=True
-)(create_api_key)
+
 app.command(help="Report an invocation!", no_args_is_help=True, name="report")(
     report_invocation
 )
@@ -32,6 +30,9 @@ app.add_typer(chutes_app, name="chutes")
 app.add_typer(images_app, name="images")
 
 # API Keys
+api_keys_app.command(
+    help="Create an API key for the chutes run platform!", no_args_is_help=True, name="create"
+)(create_api_key)
 app.add_typer(api_keys_app, name="api_keys")
 
 if __name__ == "__main__":
