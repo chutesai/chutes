@@ -35,6 +35,7 @@ def get_config(without_config_file: bool = False) -> Config:
     global _config
     if _config is None:
         # def load_config(self):
+        api_base_url = None
         if not os.path.exists(CONFIG_PATH):
             if not (ALLOW_MISSING or without_config_file):
                 raise NotConfigured(
@@ -58,7 +59,7 @@ def get_config(without_config_file: bool = False) -> Config:
                     raise AuthenticationRequired(
                         f"Please ensure you have an [auth] section defined in {CONFIG_PATH} with 'hotkey_seed', 'hotkey_name', and 'hotkey_ss58address' values"
                     )
-        api_base_url = raw_config.get("api", "base_url")
+            api_base_url = raw_config.get("api", "base_url")
         if not api_base_url:
             api_base_url = os.getenv("PARACHUTES_API_URL", "https://api.parachutes.ai")
         logger.debug(f"Configured parachutes: with api_base_url={api_base_url}")
