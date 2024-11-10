@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from loguru import logger
 import typer
@@ -9,7 +10,7 @@ from chutes.util.context import is_local
 
 # NOTE: Might want to change the name of this to 'start'.
 # So `run` means an easy way to perform inference on a chute (pull the cord :P)
-async def run_chute(
+def run_chute(
     chute_ref_str: str = typer.Argument(
         ..., help="chute to run, in the form [module]:[app_name], similar to uvicorn"
     ),
@@ -24,18 +25,22 @@ async def run_chute(
     """
     Run the chute (uvicorn server).
     """
-    # How to get the chute ref string?
-    chute= load_chute(
-        chute_ref_str=chute_ref_str, config_path=config_path, debug=debug
-    )
 
-    if is_local():
-        logger.error("Cannot run chutes in local context!")
-        sys.exit(1)
+    async def _run_chute():
+        # How to get the chute ref string?
+        chute= load_chute(
+            chute_ref_str=chute_ref_str, config_path=config_path, debug=debug
+        )
 
-    # Run the server.
-    chute = chute.chute if isinstance(chute, ChutePack) else chute
-    await chute.initialize()
-    config = Config(app=chute, host=host, port=port, uds=uds)
-    server = Server(config)
-    await server.serve()
+        if is_local():
+            logger.error("Cannot run chutes in local context!")
+            sys.exit(1)
+
+        # Run the server.
+        chute = chute.chute if isinstance(chute, ChutePack) else chute
+        await chute.initialize()
+        config = Config(app=chute, host=host, port=port, uds=uds)
+        server = Server(config)
+        await server.serve()
+
+    asyncio.run(_run_chute())
