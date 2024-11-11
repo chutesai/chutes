@@ -19,6 +19,7 @@ from rich import print
 from chutes.constants import HOTKEY_HEADER, NONCE_HEADER, SIGNATURE_HEADER
 from chutes.util.auth import get_signing_message
 from chutes.util.user import validate_the_username
+from chutes.config import CONFIG_PATH
 
 
 async def _ping_api(base_url: str):
@@ -59,8 +60,6 @@ def register(
             os.environ["PARACHUTES_CONFIG_PATH"] = config_path
         os.environ["PARACHUTES_ALLOW_MISSING"] = "true"
         generic_config = get_generic_config()
-
-        from chutes.config import CONFIG_PATH
 
         if not await _ping_api(generic_config.api_base_url):
             sys.exit(1)
@@ -148,9 +147,11 @@ def register(
         }
         sig_str = get_signing_message(ss58, headers[NONCE_HEADER], payload)
         headers[SIGNATURE_HEADER] = keypair.sign(sig_str.encode()).hex()
-        logger.info(
+        logger.debug(
             f"Sending payload: {payload} with headers: {headers}. Signing message was: {sig_str}"
         )
+        logger.info("here!!!!")
+        exit()
         async with aiohttp.ClientSession(
             base_url=generic_config.api_base_url
         ) as session:
