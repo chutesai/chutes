@@ -25,6 +25,7 @@ from chutes.config import CONFIG_PATH
 async def _ping_api(base_url: str):
     logger.info(f"Pinging API at {base_url}")
     # try:
+    # TODO: fix
     async with aiohttp.ClientSession(
         base_url=base_url, timeout=aiohttp.ClientTimeout(total=2)
     ) as session:
