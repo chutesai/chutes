@@ -15,6 +15,7 @@ from loguru import logger
 import typer
 
 from chutes.config import get_config
+from chutes.image import Image
 from chutes.image.directive.add import ADD
 from chutes.image.directive.generic_run import RUN
 from chutes.entrypoint._shared import load_chute
@@ -171,16 +172,17 @@ async def _build_remote(image, wait=None, public=False):
                     )
 
 
-async def _image_exists(image):
+async def _image_exists(image: str | Image) -> bool:
     """
     Check if an image already exists.
     """
     config = get_config()
-    logger.debug(f"Checking if image {image.name}:{image.tag} exists...")
+    image_id = image if isinstance(image, str) else image.uid
+    logger.debug(f"Checking if {image_id=} is available...")
     headers, _ = sign_request(purpose="images")
     async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         async with session.get(
-            f"/images/{image.uid}",
+            f"/images/{image_id}",
             headers=headers,
         ) as response:
             if response.status == 200:

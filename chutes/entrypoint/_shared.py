@@ -42,7 +42,7 @@ def load_chute(
 
     # Config path updates.
     if config_path:
-        os.environ["PARACHUTES_CONFIG_PATH"] = config_path
+        os.environ["CHUTES_CONFIG_PATH"] = config_path
 
     # Debug logging?
     if not debug:

@@ -9,11 +9,11 @@ with open(
 
 setup(
     name="chutes",
-    version="0.0.17",
-    description="ParachutesAI development kit.",
+    version="0.0.19",
+    description="Chutes development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/jondurbin/chutes",
+    url="https://github.com/rayonlabs/chutes",
     author="Jon Durbin",
     license_expression="MIT",
     packages=find_packages(),

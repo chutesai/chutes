@@ -23,7 +23,7 @@ async def report_invocation(
     """
     config = get_config()
     if config_path:
-        os.environ["PARACHUTES_CONFIG_PATH"] = config_path
+        os.environ["CHUTES_CONFIG_PATH"] = config_path
 
     # Ensure we have a reason.
     if not reason:
