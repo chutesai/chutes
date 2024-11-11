@@ -148,7 +148,7 @@ def register(
         }
         sig_str = get_signing_message(ss58, headers[NONCE_HEADER], payload)
         headers[SIGNATURE_HEADER] = keypair.sign(sig_str.encode()).hex()
-        logger.debug(
+        logger.info(
             f"Sending payload: {payload} with headers: {headers}. Signing message was: {sig_str}"
         )
         async with aiohttp.ClientSession(
