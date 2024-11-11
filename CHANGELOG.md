@@ -4,6 +4,7 @@
 ### CLI
 - Restructured to use typer for CLI
 - Restructed the register command to try to connect to the API before prompting for wallet etc
+- Change Regex to allow nested directories in chute names (e.g. bish/bash:bosh instead of only bash:bosh)
 
 ### Auth
 - Removed the 'X-Parachutes-Auth' header, as it is not necessary if we have 'X-Parachutes-Hotkey' and 'X-Parachutes-Signature'.

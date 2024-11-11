@@ -7,7 +7,7 @@ import importlib.util
 from loguru import logger
 from typing import List, Dict, Any, Tuple
 
-CHUTE_REF_RE = re.compile(r"^[a-z0-9][a-z0-9_]*:[a-z][a-z0-9_]+$", re.I)
+CHUTE_REF_RE = re.compile(r"^[a-z0-9][a-z0-9_/]*:[a-z][a-z0-9_]+$", re.I)
 
 
 def parse_args(args: List[Any], args_config: Dict[str, Any]):
@@ -31,7 +31,7 @@ def load_chute(
 
     if not CHUTE_REF_RE.match(chute_ref_str):
         logger.error(
-            "Invalid module name '{chute_ref_str}', usage: {log_prefix} {module_name:chute_name} [args]"
+            f"Invalid module name '{chute_ref_str}', usage: [module_name:chute_name] [args]"
         )
         sys.exit(1)
 
