@@ -24,18 +24,18 @@ from chutes.config import CONFIG_PATH
 
 async def _ping_api(base_url: str):
     logger.info(f"Pinging API at {base_url}")
-    try:
-        async with aiohttp.ClientSession(
-            base_url=base_url, timeout=aiohttp.ClientTimeout(total=2)
-        ) as session:
-            async with session.get("/ping") as response:
-                response.raise_for_status()
-                return response.status == 200
-    except Exception as e:
-        logger.error(
-            f"Failed to connect to the API at url {base_url}: {e}. Env var 'CHUTES_API_URL' is {os.getenv('CHUTES_API_URL')}."
-        )
-        return False
+    # try:
+    async with aiohttp.ClientSession(
+        base_url=base_url, timeout=aiohttp.ClientTimeout(total=2)
+    ) as session:
+        async with session.get("/ping") as response:
+            response.raise_for_status()
+            return response.status == 200
+    # except Exception as e:
+    #     logger.error(
+    #         f"Failed to connect to the API at url {base_url}: {e}. Env var 'CHUTES_API_URL' is {os.getenv('CHUTES_API_URL')}."
+    #     )
+    #     return False
 
 
 def register(
