@@ -11,5 +11,5 @@
 ### Generic
 - Changed config to be a singleton, to prevent errors at import time
 - Constants for headers for easier use
-- Added rich dependency
+- Added rich dependency & typer
 - Fixed the vllm template to not use chunked prefill
