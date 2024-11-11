@@ -9,7 +9,7 @@ with open(
 
 setup(
     name="chutes",
-    version="0.0.19",
+    version="0.0.20",
     description="Chutes development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",

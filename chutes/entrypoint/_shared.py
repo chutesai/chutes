@@ -28,17 +28,12 @@ def load_chute(
     """
     Load a chute from the chute ref string via dynamic imports and such.
     """
-    # The first arg is always the module:app variable reference, similar to uvicorn foo:app [other args]
-    # if not args:
-    #     logger.error(f"usage: {log_prefix} [module_name:chute_name] [args]")
-    #     sys.exit(1)
-    # chute_ref_str = args.pop(0)
-    # if not CHUTE_REF_RE.match(chute_ref_str):
-    #     logger.error(
-    #         "Invalid module name '{chute_ref_str}', usage: {log_prefix} {module_name:chute_name} [args]"
-    #     )
-    #     sys.exit(1)
-    # args = parse_args(args, args_config)
+
+    if not CHUTE_REF_RE.match(chute_ref_str):
+        logger.error(
+            "Invalid module name '{chute_ref_str}', usage: {log_prefix} {module_name:chute_name} [args]"
+        )
+        sys.exit(1)
 
     # Config path updates.
     if config_path:

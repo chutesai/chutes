@@ -37,7 +37,7 @@ def build_vllm_chute(
     if not engine_args:
         engine_args.update(
             {
-                "num_scheduler_steps": 1,
+                "num_scheduler_steps": 16,
                 "multi_step_stream_outputs": True,
                 "max_logprobs": 5,
                 "enforce_eager": False,
