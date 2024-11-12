@@ -84,7 +84,7 @@ def deploy_chute(
         help="The chute to deploy, either a path to a chute file or a reference to a chute on the platform",
     ),
     config_path: str = typer.Option(
-        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+        None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
     debug: bool = typer.Option(False, help="enable debug logging"),
     public: bool = typer.Option(False, help="mark an image as public/available to anyone"),

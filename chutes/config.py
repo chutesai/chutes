@@ -8,10 +8,8 @@ from chutes.exception import AuthenticationRequired, NotConfigured
 from dataclasses import dataclass
 
 os.makedirs(os.path.join(Path.home(), CHUTES_DIR), exist_ok=True)
-CONFIG_PATH = os.getenv("PARACHUTES_CONFIG_PATH") or os.path.join(
-    Path.home(), CHUTES_DIR, "config.ini"
-)
-ALLOW_MISSING = os.getenv("PARACHUTES_ALLOW_MISSING", "false").lower() == "true"
+CONFIG_PATH = os.getenv("CHUTES_CONFIG_PATH") or os.path.join(Path.home(), CHUTES_DIR, "config.ini")
+ALLOW_MISSING = os.getenv("CHUTES_ALLOW_MISSING", "false").lower() == "true"
 
 
 # Have a class for config to prevent errors at import time.
@@ -39,7 +37,7 @@ _config = None
 
 @lru_cache
 def get_generic_config() -> GenericConfig:
-    api_base_url = os.getenv("CHUTES_API_URL", "https://api.parachutes.ai")
+    api_base_url = os.getenv("CHUTES_API_URL", "https://api.chutes.ai")
     return GenericConfig(api_base_url=api_base_url)
 
 
@@ -50,10 +48,10 @@ def get_config() -> Config:
         if not os.path.exists(CONFIG_PATH):
             if not ALLOW_MISSING:
                 raise NotConfigured(
-                    f"Please set either populate {CONFIG_PATH} or set PARACHUTES_CONFIG_PATH to alternative/valid config path!"
+                    f"Please set either populate {CONFIG_PATH} or set CHUTES_CONFIG_PATH to alternative/valid config path!"
                 )
         else:
-            logger.debug(f"Loading parachutes config from {CONFIG_PATH}...")
+            logger.debug(f"Loading chutes config from {CONFIG_PATH}...")
             raw_config = ConfigParser()
             raw_config.read(CONFIG_PATH)
 
@@ -73,8 +71,8 @@ def get_config() -> Config:
 
         api_base_url = raw_config.get("api", "base_url")
         if not api_base_url:
-            api_base_url = os.getenv("CHUTES_API_URL", "https://api.parachutes.ai")
+            api_base_url = os.getenv("CHUTES_API_URL", "https://api.chutes.ai")
         generic_config = GenericConfig(api_base_url=api_base_url)
-        logger.debug(f"Configured parachutes: with api_base_url={api_base_url}")
+        logger.debug(f"Configured chutes: with api_base_url={api_base_url}")
         _config = Config(auth=auth_config, generic=generic_config)
     return _config

@@ -40,7 +40,7 @@ async def _ping_api(base_url: str):
 
 def register(
     config_path: str = typer.Option(
-        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+        None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
     username: str = typer.Option(None, help="username"),
     wallets_path: str = typer.Option(
@@ -57,8 +57,8 @@ def register(
     async def _register():
         nonlocal username, wallet, hotkey
         if config_path:
-            os.environ["PARACHUTES_CONFIG_PATH"] = config_path
-        os.environ["PARACHUTES_ALLOW_MISSING"] = "true"
+            os.environ["CHUTES_CONFIG_PATH"] = config_path
+        os.environ["CHUTES_ALLOW_MISSING"] = "true"
         generic_config = get_generic_config()
 
         if not await _ping_api(generic_config.api_base_url):
@@ -179,8 +179,8 @@ def register(
                             outfile.write(updated_config + "\n")
                     logger.success(
                         f"Successfully registered username={data['username']}, with fingerprint {data['fingerprint']}. "
-                        "Keep the fingerprint safe as this is account login credentials - do not lose or share it!"
-                        "To add balance for your account, send tao to {data['payment_address']}."
+                        "Keep the fingerprint safe as this is account login credentials - do not lose or share it! "
+                        f"To add balance for your account, send tao to {data['payment_address']}."
                     )
                 else:
                     logger.error(await response.json())

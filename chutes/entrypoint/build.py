@@ -81,7 +81,7 @@ def _build_local(image):
 async def _build_remote(image, wait=None, public=False):
     """
     Build an image remotely, that is, package up the build context and ship it
-    off to the parachutes API to have it built.
+    off to the chutes API to have it built.
     """
     config = get_config()
     with temporary_build_directory(image) as build_directory:
@@ -191,7 +191,7 @@ def build_image(
         help="The chute to deploy, either a path to a chute file or a reference to a chute on the platform",
     ),
     config_path: str = typer.Option(
-        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+        None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
     local: bool = typer.Option(False, help="build the image locally, useful for testing/debugging"),
     debug: bool = typer.Option(False, help="enable debug logging"),
@@ -202,7 +202,7 @@ def build_image(
     public: bool = typer.Option(False, help="mark an image as public/available to anyone"),
 ):
     """
-    Build an image for the parachutes platform.
+    Build an image for the chutes platform.
     """
 
     async def _build_image():

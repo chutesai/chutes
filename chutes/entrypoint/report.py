@@ -14,7 +14,7 @@ from chutes.util.auth import sign_request
 async def report_invocation(
     invocation_id: str = typer.Option(..., help="invocation ID to report"),
     config_path: str = typer.Option(
-        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+        None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
     reason: str | None = typer.Option(None, help="explanation/reason for the report"),
 ):

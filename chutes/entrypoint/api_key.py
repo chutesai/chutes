@@ -21,7 +21,7 @@ class Action(Enum):
 def create_api_key(
     name: str = typer.Option(..., help="Name to assign to the API key"),
     config_path: str = typer.Option(
-        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+        None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
     admin: bool = typer.Option(False, help="Allow any action for this API key"),
     images: bool = typer.Option(False, help="Allow full access to images"),
@@ -45,7 +45,7 @@ def create_api_key(
         """
         config = get_config()
         if config_path:
-            os.environ["PARACHUTES_CONFIG_PATH"] = config_path
+            os.environ["CHUTES_CONFIG_PATH"] = config_path
 
         # Build our request payload with nested scopes.
         payload = {

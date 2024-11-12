@@ -15,7 +15,7 @@ def run_chute(
         ..., help="chute to run, in the form [module]:[app_name], similar to uvicorn"
     ),
     config_path: str = typer.Option(
-        None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
+        None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
     port: int | None = typer.Option(None, help="port to listen on"),
     host: str | None = typer.Option(None, help="host to bind to"),
