@@ -28,9 +28,7 @@ def run_chute(
 
     async def _run_chute():
         # How to get the chute ref string?
-        chute= load_chute(
-            chute_ref_str=chute_ref_str, config_path=config_path, debug=debug
-        )
+        chute = load_chute(chute_ref_str=chute_ref_str, config_path=config_path, debug=debug)
 
         if is_local():
             logger.error("Cannot run chutes in local context!")

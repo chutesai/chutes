@@ -14,7 +14,11 @@ from loguru import logger
 
 
 def get_signing_message(
-    hotkey: str, nonce: str, payload_str: str | bytes | None, purpose: str | None = None, payload_hash: str | None = None
+    hotkey: str,
+    nonce: str,
+    payload_str: str | bytes | None,
+    purpose: str | None = None,
+    payload_hash: str | None = None,
 ) -> str:
     """Get the signing message for a given hotkey, nonce, and payload."""
     if payload_str:
@@ -27,8 +31,6 @@ def get_signing_message(
         return f"{hotkey}:{nonce}:{payload_hash}"
     else:
         raise ValueError("Either payload_str or purpose must be provided")
-
-
 
 
 def sign_request(payload: Dict[str, Any] | str | None = None, purpose: str = None):

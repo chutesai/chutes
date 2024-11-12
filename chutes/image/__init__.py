@@ -26,9 +26,7 @@ class Image:
         self.name = name
         self.tag = tag
         self._uid = str(
-            uuid.uuid5(
-                uuid.NAMESPACE_OID, f"{_config.auth.user_id}/{self.name}:{self.tag}"
-            )
+            uuid.uuid5(uuid.NAMESPACE_OID, f"{_config.auth.user_id}/{self.name}:{self.tag}")
         )
         self._directives = [
             FROM(self.default_base_image),
@@ -79,9 +77,7 @@ class Image:
 
         """
         self._directives = [FROM(base_image)] + [
-            directive
-            for directive in self._directives
-            if not isinstance(directive, FROM)
+            directive for directive in self._directives if not isinstance(directive, FROM)
         ]
         return self
 
@@ -125,11 +121,7 @@ class Image:
         """
         bin_suffix = ".".join(version.split(".")[:2])
         current_workdir = (
-            [
-                directive._args
-                for directive in self._directives
-                if isinstance(directive, WORKDIR)
-            ]
+            [directive._args for directive in self._directives if isinstance(directive, WORKDIR)]
             or ["/root"]
         )[-1]
         self._directives += [
@@ -152,9 +144,7 @@ class Image:
                 ]
             ),
             WORKDIR("/usr/src"),
-            RUN(
-                f"wget https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
-            ),
+            RUN(f"wget https://www.python.org/ftp/python/{version}/Python-{version}.tgz"),
             RUN(f"tar -xzf Python-{version}.tgz"),
             WORKDIR(f"/usr/src/Python-{version}"),
             RUN(
@@ -218,8 +208,6 @@ class Image:
         Helper to set the image's entrypoint.
         """
         self._directives = [
-            directive
-            for directive in self._directives
-            if not isinstance(directive, ENTRYPOINT)
+            directive for directive in self._directives if not isinstance(directive, ENTRYPOINT)
         ] + [ENTRYPOINT(*args)]
         return self

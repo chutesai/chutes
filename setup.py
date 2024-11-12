@@ -2,9 +2,7 @@
 import os
 from setuptools import setup, find_packages
 
-with open(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")
-) as infile:
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")) as infile:
     long_description = infile.read()
 
 setup(

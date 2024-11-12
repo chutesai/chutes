@@ -12,13 +12,9 @@ from chutes.crud import chutes_app, images_app, api_keys_app
 app = typer.Typer(no_args_is_help=True)
 
 
-app.command(name="register", help="Create an account with the chutes run platform!")(
-    register
-)
+app.command(name="register", help="Create an account with the chutes run platform!")(register)
 
-app.command(help="Report an invocation!", no_args_is_help=True, name="report")(
-    report_invocation
-)
+app.command(help="Report an invocation!", no_args_is_help=True, name="report")(report_invocation)
 app.command(help="Run a chute!", no_args_is_help=True, name="run")(run_chute)
 app.command(help="Deploy a chute!", no_args_is_help=True, name="deploy")(deploy_chute)
 app.command(help="Build an image!", no_args_is_help=True, name="build")(build_image)

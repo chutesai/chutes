@@ -101,9 +101,7 @@ def register(
             available_hotkeys = sorted(
                 [
                     os.path.basename(item)
-                    for item in glob.glob(
-                        os.path.join(wallets_path, wallet, "hotkeys", "*")
-                    )
+                    for item in glob.glob(os.path.join(wallets_path, wallet, "hotkeys", "*"))
                     if os.path.isfile(item)
                 ]
             )
@@ -115,9 +113,7 @@ def register(
                 logger.error("Bad choice!")
                 sys.exit(1)
             hotkey = available_hotkeys[int(choice)]
-        if not os.path.isfile(
-            hotkey_path := os.path.join(wallets_path, wallet, "hotkeys", hotkey)
-        ):
+        if not os.path.isfile(hotkey_path := os.path.join(wallets_path, wallet, "hotkeys", hotkey)):
             logger.error(f"No hotkey found: {hotkey_path}")
             sys.exit(1)
 
@@ -150,9 +146,7 @@ def register(
         logger.debug(
             f"Sending payload: {payload} with headers: {headers}. Signing message was: {sig_str}"
         )
-        async with aiohttp.ClientSession(
-            base_url=generic_config.api_base_url
-        ) as session:
+        async with aiohttp.ClientSession(base_url=generic_config.api_base_url) as session:
             async with session.post(
                 "/users/register",
                 data=payload,

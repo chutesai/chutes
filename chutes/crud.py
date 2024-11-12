@@ -19,9 +19,7 @@ chutes_app = typer.Typer(
     help="Manage chutes, e.g. list chutes, delete a chute, etc.",
 )
 images_app = typer.Typer(no_args_is_help=True, name="images", help="Manage images")
-api_keys_app = typer.Typer(
-    no_args_is_help=True, name="keys", help="Manage API keys"
-)
+api_keys_app = typer.Typer(no_args_is_help=True, name="keys", help="Manage API keys")
 
 
 async def _list_objects(
@@ -76,9 +74,7 @@ async def _get_object(object_type: str, name_or_id: str):
             headers=headers,
         ) as resp:
             if resp.status != 200:
-                logger.error(
-                    f"Failed to get {object_type}/{name_or_id}: {await resp.text()}"
-                )
+                logger.error(f"Failed to get {object_type}/{name_or_id}: {await resp.text()}")
                 return
             data = await resp.json()
             singular = object_type.rstrip("s")
@@ -104,9 +100,7 @@ async def _delete_object(object_type: str, name_or_id: str):
             headers=headers,
         ) as resp:
             if resp.status != 200:
-                logger.error(
-                    f"Failed to delete {object_type}/{name_or_id}: {await resp.text()}"
-                )
+                logger.error(f"Failed to delete {object_type}/{name_or_id}: {await resp.text()}")
                 return
             data = await resp.json()
             singular = object_type.rstrip("s")
@@ -129,9 +123,7 @@ def get_chute(name_or_id: str = typer.Argument(..., help="Name or ID of chute to
 
 
 @chutes_app.command(name="delete", help="Delete a chute by name or ID")
-def delete_chute(
-    name_or_id: str = typer.Argument(..., help="Name or ID of chute to delete")
-):
+def delete_chute(name_or_id: str = typer.Argument(..., help="Name or ID of chute to delete")):
     return asyncio.run(_delete_object("chutes", name_or_id))
 
 
@@ -150,9 +142,7 @@ def get_image(name_or_id: str = typer.Argument(..., help="Name or ID of image to
 
 
 @images_app.command(name="delete", help="Delete an image by name or ID")
-def delete_image(
-    name_or_id: str = typer.Argument(..., help="Name or ID of image to delete")
-):
+def delete_image(name_or_id: str = typer.Argument(..., help="Name or ID of image to delete")):
     return asyncio.run(_delete_object("images", name_or_id))
 
 
@@ -166,14 +156,10 @@ def list_api_keys(
 
 
 @api_keys_app.command(name="get", help="Get an API key by name or ID")
-def get_api_key(
-    name_or_id: str = typer.Argument(..., help="Name or ID of API key to get")
-):
+def get_api_key(name_or_id: str = typer.Argument(..., help="Name or ID of API key to get")):
     return asyncio.run(_get_object("api_keys", name_or_id))
 
 
 @api_keys_app.command(name="delete", help="Delete an API key by name or ID")
-def delete_api_key(
-    name_or_id: str = typer.Argument(..., help="Name or ID of API key to delete")
-):
+def delete_api_key(name_or_id: str = typer.Argument(..., help="Name or ID of API key to delete")):
     return asyncio.run(_delete_object("api_keys", name_or_id))

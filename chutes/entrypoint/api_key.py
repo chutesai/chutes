@@ -26,12 +26,8 @@ def create_api_key(
     admin: bool = typer.Option(False, help="Allow any action for this API key"),
     images: bool = typer.Option(False, help="Allow full access to images"),
     chutes: bool = typer.Option(False, help="Allow full access to chutes"),
-    image_ids: list[str] = typer.Option(
-        None, help="Allow access to one or more specific images"
-    ),
-    chute_ids: list[str] = typer.Option(
-        None, help="Allow access to one or more specific chutes"
-    ),
+    image_ids: list[str] = typer.Option(None, help="Allow access to one or more specific images"),
+    chute_ids: list[str] = typer.Option(None, help="Allow access to one or more specific chutes"),
     action: Action = typer.Option(
         default=None,
         help="Specify the verb to apply to all scopes",
@@ -69,12 +65,8 @@ def create_api_key(
                     ("images", image_ids),
                     ("chutes", chute_ids),
                 ):
-                    if (object_type == "images" and images) or (
-                        object_type == "chutes" and chutes
-                    ):
-                        payload["scopes"].append(
-                            {"object_type": object_type, "action": action}
-                        )
+                    if (object_type == "images" and images) or (object_type == "chutes" and chutes):
+                        payload["scopes"].append({"object_type": object_type, "action": action})
                     elif ids:
                         for _id in ids:
                             payload["scopes"].append(

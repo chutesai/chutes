@@ -47,9 +47,7 @@ async def _deploy(chute: Chute, public: bool = False):
             elif response.status == 401:
                 logger.error("Authorization error, please check your credentials.")
             elif response.status != 200:
-                logger.error(
-                    f"Unexpected error deploying chute: {await response.text()}"
-                )
+                logger.error(f"Unexpected error deploying chute: {await response.text()}")
             else:
                 logger.success(
                     f"Successfully deployed chute {chute.name}, invocation will be available soon"
@@ -73,9 +71,7 @@ async def _image_available(image: str | Image, public: bool) -> bool:
                 data = await response.json()
                 if data.get("status") == "built and pushed":
                     if public and not data.get("public"):
-                        logger.error(
-                            "Unable to create public chutes from non-public images"
-                        )
+                        logger.error("Unable to create public chutes from non-public images")
                         return False
                     return True
     return False
@@ -91,9 +87,7 @@ def deploy_chute(
         None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
     ),
     debug: bool = typer.Option(False, help="enable debug logging"),
-    public: bool = typer.Option(
-        False, help="mark an image as public/available to anyone"
-    ),
+    public: bool = typer.Option(False, help="mark an image as public/available to anyone"),
 ):
     """
     Deploy a chute to the platform.

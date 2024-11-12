@@ -127,9 +127,7 @@ async def _build_remote(image, wait=None, public=False):
         # Retrieve the raw bytes of the request body
         raw_data = writer.output.getvalue()
 
-        async with aiohttp.ClientSession(
-            base_url=config.generic.api_base_url
-        ) as session:
+        async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
             headers, payload_string = sign_request(payload=raw_data)
             headers["Content-Type"] = payload.content_type
             headers["Content-Length"] = str(len(raw_data))
@@ -139,7 +137,6 @@ async def _build_remote(image, wait=None, public=False):
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=None),
             ) as response:
-
                 # When the client waits for the image, we just stream the logs.
                 if wait:
                     async for data_enc in response.content:
@@ -147,9 +144,7 @@ async def _build_remote(image, wait=None, public=False):
                         if data and data.strip() and "data: {" in data:
                             data = json.loads(data[6:])
                             log_method = (
-                                logger.info
-                                if data["log_type"] == "stdout"
-                                else logger.warning
+                                logger.info if data["log_type"] == "stdout" else logger.warning
                             )
                             log_method(data["log"].strip())
                         elif data.startswith("DONE"):
@@ -162,9 +157,7 @@ async def _build_remote(image, wait=None, public=False):
                 elif response.status == 401:
                     logger.error("Authorization error, please check your credentials.")
                 elif response.status != 202:
-                    logger.error(
-                        f"Unexpected error uploading image data: {await response.text()}"
-                    )
+                    logger.error(f"Unexpected error uploading image data: {await response.text()}")
                 else:
                     data = await response.json()
                     logger.info(
@@ -200,26 +193,20 @@ def build_image(
     config_path: str = typer.Option(
         None, help="Custom path to the parachutes config (credentials, API URL, etc.)"
     ),
-    local: bool = typer.Option(
-        False, help="build the image locally, useful for testing/debugging"
-    ),
+    local: bool = typer.Option(False, help="build the image locally, useful for testing/debugging"),
     debug: bool = typer.Option(False, help="enable debug logging"),
     include_cwd: bool = typer.Option(
         False, help="include the entire current directory in build context, recursively"
     ),
     wait: bool = typer.Option(False, help="wait for image to be built"),
-    public: bool = typer.Option(
-        False, help="mark an image as public/available to anyone"
-    ),
+    public: bool = typer.Option(False, help="mark an image as public/available to anyone"),
 ):
     """
     Build an image for the parachutes platform.
     """
 
     async def _build_image():
-        chute = load_chute(
-            chute_ref_str=chute_ref_str, config_path=config_path, debug=debug
-        )
+        chute = load_chute(chute_ref_str=chute_ref_str, config_path=config_path, debug=debug)
 
         from chutes.chute import ChutePack
 
@@ -236,9 +223,7 @@ def build_image(
 
         # Check if the image is already built.
         if await _image_exists(image):
-            logger.error(
-                f"Image with name={image.name} and tag={image.tag} already exists!"
-            )
+            logger.error(f"Image with name={image.name} and tag={image.tag} already exists!")
             sys.exit(1)
 
         # Always tack on the final directives, which include installing chutes and adding project files.

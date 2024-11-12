@@ -142,9 +142,7 @@ class Cord:
         async def _call():
             request_payload = {
                 "args": base64.b64encode(gzip.compress(pickle.dumps(args))).decode(),
-                "kwargs": base64.b64encode(
-                    gzip.compress(pickle.dumps(kwargs))
-                ).decode(),
+                "kwargs": base64.b64encode(gzip.compress(pickle.dumps(kwargs))).decode(),
             }
             headers, payload_string = sign_request(payload=request_payload)
             headers.update(
@@ -162,9 +160,7 @@ class Cord:
                     headers=headers,
                 ) as response:
                     if response.status == 503:
-                        logger.warning(
-                            f"Function {self._func.__name__} is still provisioning..."
-                        )
+                        logger.warning(f"Function {self._func.__name__} is still provisioning...")
                         raise StillProvisioning(await response.text())
                     elif response.status != 200:
                         logger.error(

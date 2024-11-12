@@ -6,4 +6,3 @@ AUTHORIZATION_HEADER = "Authorization"
 USER_ID_HEADER = "X-Parachutes-UserID"
 CHUTEID_HEADER = "X-Parachutes-ChuteID"
 FUNCTION_HEADER = "X-Parachutes-Function"
-
