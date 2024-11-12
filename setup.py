@@ -1,3 +1,4 @@
+# NOTE: Should replace with a pyproject.toml
 import os
 from setuptools import setup, find_packages
 
@@ -6,7 +7,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 
 setup(
     name="chutes",
-    version="0.0.19",
+    version="0.0.20",
     description="Chutes development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -27,6 +28,8 @@ setup(
         "fickling==0.1.3",
         "setuptools>=0.75",
         "substrate-interface>=1.7.11",
+        "rich>=13.0.0",
+        "typer>=0.12.5",
     ],
     extras_require={
         "dev": [
@@ -41,5 +44,9 @@ setup(
         "Operating System :: POSIX :: Linux",
         "Programming Language :: Python :: 3.10",
     ],
-    scripts=["bin/chutes"],
+    entry_points={
+        "console_scripts": [
+            "chutes=bin.chutes:app",
+        ],
+    },
 )

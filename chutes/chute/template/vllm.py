@@ -41,6 +41,7 @@ def build_vllm_chute(
                 "multi_step_stream_outputs": True,
                 "max_logprobs": 5,
                 "enforce_eager": False,
+                "enable_chunked_prefill": False,
             }
         )
 
@@ -82,9 +83,7 @@ def build_vllm_chute(
         )
 
     def _parse_stream_chunk(encoded_chunk):
-        chunk = (
-            encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()
-        )
+        chunk = encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()
         if "data: {" in chunk:
             return json.loads(chunk[6:])
         return None

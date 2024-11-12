@@ -7,9 +7,7 @@ from chutes.image.directive import BaseDirective, DirectiveType
 
 # Simple RE-based validation for some of the add options.
 CHECKSUM_RE = re.compile(r"^(?:sha(?:256|384|512)):[a-f0-0]+$")
-CHOWN_RE = re.compile(
-    r"^([a-z_][a-z0-9_-]{0,31}|\d+)(:([a-z_][a-z0-9_-]{0,31}|\d+))?$", re.I
-)
+CHOWN_RE = re.compile(r"^([a-z_][a-z0-9_-]{0,31}|\d+)(:([a-z_][a-z0-9_-]{0,31}|\d+))?$", re.I)
 CHMOD_RE = re.compile(r"^([0-7]{3})$")
 
 
@@ -77,9 +75,7 @@ class ADD(BaseDirective):
             if keep_git_dir:
                 arguments.append("--keep-git-dir=true")
             if checksum:
-                assert CHECKSUM_RE.match(
-                    checksum
-                ), f"Invalid checksum option: {checksum}"
+                assert CHECKSUM_RE.match(checksum), f"Invalid checksum option: {checksum}"
                 arguments.append(f"--checksum={checksum}")
         if chown:
             assert CHOWN_RE.match(chown), f"Invalid chown option: {chown}"
@@ -107,8 +103,7 @@ class ADD(BaseDirective):
             self._build_context = [
                 path
                 for path in positive_patterns
-                if path not in negative_patterns
-                and os.path.abspath(path).startswith(build_dir)
+                if path not in negative_patterns and os.path.abspath(path).startswith(build_dir)
             ]
             assert (
                 self._build_context

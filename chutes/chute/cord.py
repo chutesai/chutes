@@ -11,11 +11,12 @@ from fastapi import Request, HTTPException, status
 from loguru import logger
 from contextlib import asynccontextmanager
 from starlette.responses import StreamingResponse
-from chutes.config import API_BASE_URL
-from chutes.chute.base import Chute
 from chutes.exception import InvalidPath, DuplicatePath, StillProvisioning
 from chutes.util.context import is_local
 from chutes.util.auth import sign_request
+from chutes.config import get_config
+from chutes.constants import CHUTEID_HEADER, FUNCTION_HEADER
+from chutes.chute.base import Chute
 
 # Simple regex to check for custom path overrides.
 PATH_RE = re.compile(r"^(/[a-z0-9]+[a-z0-9-_]*)+$")
@@ -55,6 +56,7 @@ class Cord:
         self._method = method
         self._session_kwargs = session_kwargs
         self._provision_timeout = provision_timeout
+        self._config = get_config()
 
     @property
     def path(self):
@@ -140,19 +142,17 @@ class Cord:
         async def _call():
             request_payload = {
                 "args": base64.b64encode(gzip.compress(pickle.dumps(args))).decode(),
-                "kwargs": base64.b64encode(
-                    gzip.compress(pickle.dumps(kwargs))
-                ).decode(),
+                "kwargs": base64.b64encode(gzip.compress(pickle.dumps(kwargs))).decode(),
             }
             headers, payload_string = sign_request(payload=request_payload)
             headers.update(
                 {
-                    "X-Chutes-ChuteID": self._app.uid,
-                    "X-Chutes-Function": self._func.__name__,
+                    CHUTEID_HEADER: self._app.uid,
+                    FUNCTION_HEADER: self._func.__name__,
                 }
             )
             async with aiohttp.ClientSession(
-                base_url=API_BASE_URL, **self._session_kwargs
+                base_url=self._config.generic.api_base_url, **self._session_kwargs
             ) as session:
                 async with session.post(
                     f"/chutes/{self._app.uid}{self.path}",
@@ -160,9 +160,7 @@ class Cord:
                     headers=headers,
                 ) as response:
                     if response.status == 503:
-                        logger.warning(
-                            f"Function {self._func.__name__} is still provisioning..."
-                        )
+                        logger.warning(f"Function {self._func.__name__} is still provisioning...")
                         raise StillProvisioning(await response.text())
                     elif response.status != 200:
                         logger.error(

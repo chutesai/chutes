@@ -8,10 +8,16 @@ from loguru import logger
 from typing import Any, List, Dict
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict
+from chutes.config import get_config
 from chutes.image import Image
-from chutes.config import USER_ID
 from chutes.util.context import is_remote
 from chutes.chute.node_selector import NodeSelector
+
+# NOTE: Alternative is to combine the modules
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from chutes.chute.cord import Cord
 
 
 async def _pong(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -31,14 +37,15 @@ class Chute(FastAPI):
         **kwargs,
     ):
         super().__init__(**kwargs)
+        _config = get_config()
         self._name = name
-        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{USER_ID}::chute::{name}"))
+        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{_config.auth.user_id}::chute::{name}"))
         self._image = image
         self._standard_template = standard_template
         self._node_selector = node_selector
         self._startup_hooks = []
         self._shutdown_hooks = []
-        self._cords = []
+        self._cords: list[Cord] = []
 
     @property
     def name(self):
@@ -113,9 +120,7 @@ class Chute(FastAPI):
 
         # Add all of the API endpoints.
         for cord in self._cords:
-            self.add_api_route(
-                f"/{self.uid}{cord.path}", cord._request_handler, methods=["POST"]
-            )
+            self.add_api_route(f"/{self.uid}{cord.path}", cord._request_handler, methods=["POST"])
             logger.info(
                 f"Added new API route: /{self.uid}{cord.path} calling {cord._func.__name__}"
             )
