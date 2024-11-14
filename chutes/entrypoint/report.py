@@ -17,12 +17,13 @@ def report_invocation(
     config_path: str = typer.Option(
         None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
-    reason: str | None = typer.Option(None, help="explanation/reason for the report"),
+    reason: str = typer.Option(None, help="explanation/reason for the report"),
 ):
     async def _report_invocation():
         """
         Report an invocation.
         """
+        nonlocal invocation_id, config_path, reason
         config = get_config()
         if config_path:
             os.environ["CHUTES_CONFIG_PATH"] = config_path
@@ -54,4 +55,4 @@ def report_invocation(
                 else:
                     logger.error(await response.json())
 
-    asyncio.run(_report_invocation())
+    return asyncio.run(_report_invocation())
