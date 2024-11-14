@@ -120,14 +120,12 @@ class Chute(FastAPI):
 
         # Add all of the API endpoints.
         for cord in self._cords:
-            self.add_api_route(f"/{self.uid}{cord.path}", cord._request_handler, methods=["POST"])
-            logger.info(
-                f"Added new API route: /{self.uid}{cord.path} calling {cord._func.__name__}"
-            )
+            self.add_api_route(cord.path, cord._request_handler, methods=["POST"])
+            logger.info(f"Added new API route: {cord.path} calling {cord._func.__name__}")
 
         # Add a liveness check endpoint.
-        self.add_api_route(f"/{self.uid}/_ping", _pong, methods=["POST"])
-        logger.info(f"Added healthcheck endpoint: /{self.uid}/_ping")
+        self.add_api_route(f"/_ping", _pong, methods=["POST"])
+        logger.info(f"Added liveness endpoint: /{self.uid}/_ping")
 
     def cord(self, **kwargs):
         """
