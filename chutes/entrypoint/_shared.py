@@ -74,4 +74,4 @@ def load_chute(
         logger.error(f"Unable to find chute '{chute_name}' in module '{module_name}'")
         sys.exit(1)
 
-    return chute
+    return module, chute

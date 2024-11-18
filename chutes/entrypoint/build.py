@@ -206,7 +206,7 @@ def build_image(
     """
 
     async def _build_image():
-        chute = load_chute(chute_ref_str=chute_ref_str, config_path=config_path, debug=debug)
+        _, chute = load_chute(chute_ref_str=chute_ref_str, config_path=config_path, debug=debug)
 
         from chutes.chute import ChutePack
 
