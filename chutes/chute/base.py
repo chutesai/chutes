@@ -124,7 +124,7 @@ class Chute(FastAPI):
             logger.info(f"Added new API route: {cord.path} calling {cord._func.__name__}")
 
         # Add a liveness check endpoint.
-        self.add_api_route(f"/_ping", _pong, methods=["POST"])
+        self.add_api_route("/_ping", _pong, methods=["POST"])
         logger.info(f"Added liveness endpoint: /{self.uid}/_ping")
 
     def cord(self, **kwargs):

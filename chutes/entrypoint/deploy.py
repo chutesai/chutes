@@ -1,8 +1,10 @@
+import os
 import asyncio
 import aiohttp
 import sys
 from loguru import logger
 import typer
+from typing import Any
 from chutes.chute.base import Chute
 from chutes.config import get_config
 from chutes.entrypoint._shared import load_chute
@@ -11,10 +13,19 @@ from chutes.util.auth import sign_request
 from chutes.chute import ChutePack
 
 
-async def _deploy(chute: Chute, public: bool = False):
+async def _deploy(module: Any, chute: Chute, public: bool = False):
     """
     Perform the actual chute deployment.
     """
+    confirm = input(
+        f"\033[1m\033[4mYou are about to upload {module.__file__} and deploy {chute.name}, confirm? (y/n) \033[0m"
+    )
+    if confirm.lower().strip() != "y":
+        logger.error("Aborting!")
+        sys.exit(1)
+
+    with open(module.__file__, "r") as infile:
+        code = infile.read()
     config = get_config()
     request_body = {
         "name": chute.name,
@@ -22,6 +33,8 @@ async def _deploy(chute: Chute, public: bool = False):
         "public": public,
         "standard_template": chute.standard_template,
         "node_selector": chute.node_selector.dict(),
+        "filename": os.path.basename(module.__file__),
+        "code": code,
         "cords": [
             {
                 "method": cord._method,
@@ -42,15 +55,14 @@ async def _deploy(chute: Chute, public: bool = False):
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=None),
         ) as response:
-            if response.status == 409:
-                logger.error(f"Chute with name={chute.name} already exists!")
-            elif response.status == 401:
-                logger.error("Authorization error, please check your credentials.")
+            data = await response.json()
+            if response.status in (409, 401):
+                logger.error(f"{data['detail']}")
             elif response.status != 200:
                 logger.error(f"Unexpected error deploying chute: {await response.text()}")
             else:
                 logger.success(
-                    f"Successfully deployed chute {chute.name}, invocation will be available soon"
+                    f"Successfully deployed chute {chute.name} version={chute.version}, invocation will be available soon"
                 )
 
 
@@ -95,17 +107,18 @@ def deploy_chute(
 
     async def _deploy_chute():
         nonlocal config_path, debug, public, chute_ref_str
-        chute = load_chute(chute_ref_str, config_path=config_path, debug=debug)
+        module, chute = load_chute(chute_ref_str, config_path=config_path, debug=debug)
 
         # Get the image reference from the chute.
         chute = chute.chute if isinstance(chute, ChutePack) else chute
 
         # Ensure the image is ready to be used.
         if not await _image_available(chute.image, public):
-            logger.error(f"Image '{chute.name}' is not available to be used (yet)!")
+            image_id = chute.image if isinstance(chute.image, str) else chute.image.uid
+            logger.error(f"Image '{image_id}' is not available to be used (yet)!")
             sys.exit(1)
 
         # Deploy!
-        return await _deploy(chute, public)
+        return await _deploy(module, chute, public)
 
     return asyncio.run(_deploy_chute())
