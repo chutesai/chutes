@@ -7,7 +7,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 
 setup(
     name="chutes",
-    version="0.0.24",
+    version="0.0.25",
     description="Chutes development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -30,6 +30,7 @@ setup(
         "substrate-interface>=1.7.11",
         "rich>=13.0.0",
         "typer>=0.12.5",
+        "graval==0.0.5",
     ],
     extras_require={
         "dev": [
