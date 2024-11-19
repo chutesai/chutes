@@ -12,7 +12,7 @@ from typing import AsyncIterator
 from uvicorn import Config, Server
 from fastapi import Request, Response, status
 from fastapi.responses import ORJSONResponse, StreamingResponse
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from graval.miner import Miner
 from chutes.entrypoint._shared import load_chute
 from chutes.chute import ChutePack
@@ -152,6 +152,7 @@ def run_chute(
 
         # GraVal enabled?
         if graval_seed is not None:
+            logger.info(f"Initializing graval with {graval_seed=}")
             MINER.initialize(graval_seed)
             MINER._seed = graval_seed
             chute.add_middleware(GraValMiddleware)
