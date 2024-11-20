@@ -3,13 +3,6 @@ from typing import Dict, Any, Callable
 from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
-import torch
-from vllm import AsyncEngineArgs, AsyncLLMEngine
-import vllm.entrypoints.openai.api_server as vllm_api_server
-from vllm.entrypoints.logger import RequestLogger
-from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
-from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
-from vllm.entrypoints.openai.serving_engine import BaseModelPath
 
 
 class VLLMChute(ChutePack):
@@ -48,6 +41,16 @@ def build_vllm_chute(
     async def initialize_vllm(self):
         nonlocal engine_args
         nonlocal model_name
+
+        # Imports here to avoid needing torch/vllm/etc. to just perform inference/build remotely.
+        import torch
+        from vllm import AsyncEngineArgs, AsyncLLMEngine
+        import vllm.entrypoints.openai.api_server as vllm_api_server
+        from vllm.entrypoints.logger import RequestLogger
+        from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
+        from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
+        from vllm.entrypoints.openai.serving_engine import BaseModelPath
+
         engine_args = AsyncEngineArgs(
             model=model_name,
             tensor_parallel_size=torch.cuda.device_count(),
