@@ -8,7 +8,6 @@ from loguru import logger
 import typer
 import pybase64 as base64
 import orjson as json
-from typing import AsyncGenerator
 from uvicorn import Config, Server
 from fastapi import Request, status
 from fastapi.responses import ORJSONResponse
@@ -22,36 +21,6 @@ MINER = Miner()
 
 
 class GraValMiddleware(BaseHTTPMiddleware):
-
-    async def encrypt_chunk(self, chunk: bytes) -> str:
-        """
-        Helper method to encrypt a single chunk of data.
-        """
-        if not chunk or not chunk.strip():
-            return None
-        ciphertext, iv, length = MINER.encrypt(chunk.decode())
-        cipher_payload = {
-            "ciphertext": base64.b64encode(ciphertext).decode(),
-            "iv": iv.hex(),
-            "length": length,
-            "device_id": 0,
-        }
-        return json.dumps(cipher_payload) + b"\n\n"
-
-    async def stream_encrypt(self, iterator: AsyncGenerator) -> AsyncGenerator[bytes, None]:
-        """
-        Encrypt a streaming response.
-        """
-        try:
-            async for chunk in iterator:
-                encrypted = await self.encrypt_chunk(chunk)
-                if encrypted:
-                    yield encrypted
-        except Exception as exc:
-            import traceback
-
-            logger.error(f"Error in stream encryption: {exc} -- {traceback.format_exc()}")
-            return
 
     async def dispatch(self, request: Request, call_next):
         """
@@ -106,31 +75,6 @@ class GraValMiddleware(BaseHTTPMiddleware):
             request.state.decrypted = await request.json()
 
         return await call_next(request)
-
-
-#        response = await call_next(request)
-#
-#        # Encrypt the response(s) if the request was encrypted.
-#        if is_encrypted:
-#            if hasattr(response, "body_iterator"):
-#                original_iterator = response.body_iterator
-#                response.body_iterator = self.stream_encrypt(original_iterator)
-#            else:
-#                try:
-#                    content = response.body.decode()
-#                    if content:
-#                        encrypted_content = await self.encrypt_chunk(content.encode())
-#                        response.body = encrypted_content.strip()
-#                        logger.info(f"Updating response content length from: {response.headers['content-length']} to {len(response.body)}")
-#                        response.headers["Content-Length"] = len(response.body)
-#                except Exception as e:
-#                    logger.error(f"Error encrypting response: {e}")
-#                    return ORJSONResponse(
-#                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#                        content={"detail": "Response encryption failed"},
-#                    )
-#
-#        return response
 
 
 # NOTE: Might want to change the name of this to 'start'.
