@@ -288,7 +288,7 @@ class Cord:
         """
         if self._passthrough_port is None:
             self._passthrough_port = request.url.port
-        request = await request.json()
+        request = request.state.decrypted
         try:
             args = fickling.load(gzip.decompress(base64.b64decode(request["args"])))
             kwargs = fickling.load(gzip.decompress(base64.b64decode(request["kwargs"])))

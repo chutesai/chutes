@@ -8,10 +8,10 @@ from loguru import logger
 import typer
 import pybase64 as base64
 import orjson as json
-from typing import AsyncIterator
+from typing import AsyncGenerator
 from uvicorn import Config, Server
-from fastapi import Request, Response, status
-from fastapi.responses import ORJSONResponse, StreamingResponse
+from fastapi import Request, status
+from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from graval.miner import Miner
 from chutes.entrypoint._shared import load_chute
@@ -27,97 +27,110 @@ class GraValMiddleware(BaseHTTPMiddleware):
         """
         Helper method to encrypt a single chunk of data.
         """
-        if not chunk or not chunk.decode().strip():
+        if not chunk or not chunk.strip():
             return None
-        ciphertext, iv, length = MINER.encrypt(chunk)
+        ciphertext, iv, length = MINER.encrypt(chunk.decode())
         cipher_payload = {
             "ciphertext": base64.b64encode(ciphertext).decode(),
             "iv": iv.hex(),
             "length": length,
             "device_id": 0,
         }
-        return json.dumps(cipher_payload).decode() + "\n\n"
+        return json.dumps(cipher_payload) + b"\n\n"
 
-    async def stream_encrypt(self, iterator: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    async def stream_encrypt(self, iterator: AsyncGenerator) -> AsyncGenerator[bytes, None]:
         """
-        Generator that encrypts each chunk of a stream.
+        Encrypt a streaming response.
         """
-        async for chunk in iterator:
-            if encrypted := await self.encrypt_chunk(chunk):
-                yield encrypted
+        try:
+            async for chunk in iterator:
+                encrypted = await self.encrypt_chunk(chunk)
+                if encrypted:
+                    yield encrypted
+        except Exception as exc:
+            import traceback
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+            logger.error(f"Error in stream encryption: {exc} -- {traceback.format_exc()}")
+            return
+
+    async def dispatch(self, request: Request, call_next):
         """
         Transparently handle decryption from validator and encryption back to validator.
         """
         is_encrypted = request.headers.get("X-Chutes-Encrypted", "false").lower() == "true"
-        if request.method in ("POST", "PUT", "PATCH") and is_encrypted:
-            encrypted_body = await request.json()
+        request.state.decrypted = None
+        if is_encrypted and request.method in ("POST", "PUT", "PATCH"):
+            body_bytes = await request.body()
+            encrypted_body = json.loads(body_bytes)
             required_fields = {"ciphertext", "iv", "length", "device_id", "seed"}
-            if not all(field in encrypted_body for field in required_fields):
-                return ORJSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={
-                        "detail": "Missing one or more required fields for encrypted payloads"
-                    },
-                )
-            if encrypted_body["seed"] != MINER._seed:
-                return ORJSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={"detail": "Provided seed does not match initialization seed!"},
-                )
+            decrypted_body = {}
+            for key in encrypted_body:
+                if not all(field in encrypted_body[key] for field in required_fields):
+                    logger.error(
+                        f"Missing encryption fields: {required_fields - set(encrypted_body[key])}"
+                    )
+                    return ORJSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={
+                            "detail": "Missing one or more required fields for encrypted payloads!"
+                        },
+                    )
+                if encrypted_body[key]["seed"] != MINER._seed:
+                    logger.error(
+                        f"Expecting seed: {MINER._seed}, received {encrypted_body[key]['seed']}"
+                    )
+                    return ORJSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={"detail": "Provided seed does not match initialization seed!"},
+                    )
 
-            try:
-                # Decrypt the request body.
-                ciphertext = base64.b64decode(encrypted_body["ciphertext"].encode())
-                iv = bytes.fromhex(encrypted_body["iv"])
-                decrypted = MINER.decrypt(
-                    ciphertext,
-                    iv,
-                    encrypted_body["length"],
-                    encrypted_body["device_id"],
-                )
+                try:
+                    # Decrypt the request body.
+                    ciphertext = base64.b64decode(encrypted_body[key]["ciphertext"].encode())
+                    iv = bytes.fromhex(encrypted_body[key]["iv"])
+                    decrypted = MINER.decrypt(
+                        ciphertext,
+                        iv,
+                        encrypted_body[key]["length"],
+                        encrypted_body[key]["device_id"],
+                    )
+                    assert decrypted, "Decryption failed!"
+                    decrypted_body[key] = decrypted
+                except Exception as exc:
+                    return ORJSONResponse(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        content={"detail": f"Decryption failed: {exc}"},
+                    )
+            request.state.decrypted = decrypted_body
+        elif request.method in ("POST", "PUT", "PATCH"):
+            request.state.decrypted = await request.json()
 
-                # Create a new request scope with modified body.
-                async def receive():
-                    if hasattr(request.scope, "_body"):
-                        return {"type": "http.request", "body": request.scope._body}
-                    request.scope._body = decrypted
-                    return {"type": "http.request", "body": decrypted}
+        return await call_next(request)
 
-                # Override the receive method to return our decrypted data.
-                request._receive = receive
 
-            except Exception as exc:
-                return ORJSONResponse(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    content={"detail": f"Decryption failed: {exc}"},
-                )
-
-        response = await call_next(request)
-
-        # Encrypt the response(s) if the request was encrypted.
-        if is_encrypted:
-            if isinstance(response, StreamingResponse):
-                return StreamingResponse(
-                    self.stream_encrypt(response.body_iterator),
-                    status_code=response.status_code,
-                )
-            else:
-                body = b""
-                async for chunk in response.body_iterator:
-                    body += chunk
-                ciphertext, iv, length = MINER.encrypt(body)
-                return ORJSONResponse(
-                    {
-                        "ciphertext": base64.b64encode(ciphertext).decode(),
-                        "iv": iv.hex(),
-                        "length": length,
-                        "device_id": 0,
-                    }
-                )
-
-        return response
+#        response = await call_next(request)
+#
+#        # Encrypt the response(s) if the request was encrypted.
+#        if is_encrypted:
+#            if hasattr(response, "body_iterator"):
+#                original_iterator = response.body_iterator
+#                response.body_iterator = self.stream_encrypt(original_iterator)
+#            else:
+#                try:
+#                    content = response.body.decode()
+#                    if content:
+#                        encrypted_content = await self.encrypt_chunk(content.encode())
+#                        response.body = encrypted_content.strip()
+#                        logger.info(f"Updating response content length from: {response.headers['content-length']} to {len(response.body)}")
+#                        response.headers["Content-Length"] = len(response.body)
+#                except Exception as e:
+#                    logger.error(f"Error encrypting response: {e}")
+#                    return ORJSONResponse(
+#                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#                        content={"detail": "Response encryption failed"},
+#                    )
+#
+#        return response
 
 
 # NOTE: Might want to change the name of this to 'start'.

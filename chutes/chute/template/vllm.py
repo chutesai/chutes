@@ -39,9 +39,8 @@ def build_vllm_chute(
             {
                 "num_scheduler_steps": 16,
                 "multi_step_stream_outputs": True,
-                "max_logprobs": 5,
-                "enforce_eager": False,
                 "enable_chunked_prefill": False,
+                "enable_prefix_caching": False,
             }
         )
 
@@ -54,6 +53,9 @@ def build_vllm_chute(
             tensor_parallel_size=torch.cuda.device_count(),
             **engine_args,
         )
+        from loguru import logger
+
+        logger.warning(f"ENGINE ARGS: {engine_args}")
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
         model_config = await self.engine.get_model_config()
         request_logger = RequestLogger(max_log_len=1024)
