@@ -4,7 +4,7 @@ VLLM = "parachutes/vllm:0.6.2"
 # from chutes.image import Image  # noqa: E402
 
 # image = (
-#     Image("vllm-custom", "0.6.2")
+#     Image("username", "vllm-custom", "0.6.2")
 #     .with_python("3.12.7")
 #     .apt_install(["git"])
 #     .run_command("useradd vllm -s /sbin/nologin")

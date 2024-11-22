@@ -14,12 +14,14 @@ class VLLMChute(ChutePack):
 
 
 def build_vllm_chute(
+    username: str,
     model_name: str,
     node_selector: NodeSelector,
     image: str | Image = VLLM,
     engine_args: Dict[str, Any] = {},
 ):
     chute = Chute(
+        username=username,
         name=model_name,
         image=image,
         node_selector=node_selector,

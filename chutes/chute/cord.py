@@ -17,6 +17,7 @@ from chutes.util.auth import sign_request
 from chutes.config import get_config
 from chutes.constants import CHUTEID_HEADER, FUNCTION_HEADER
 from chutes.chute.base import Chute
+import chutes.metrics as metrics
 
 # Simple regex to check for custom path overrides.
 PATH_RE = re.compile(r"^(/[a-z0-9]+[a-z0-9-_]*)+$")
@@ -247,18 +248,39 @@ class Cord:
             f"Received invocation request [{self._func.__name__} passthrough={self._passthrough}]"
         )
         started_at = time.time()
-        if self._passthrough:
-            async with self._passthrough_call(**kwargs) as response:
-                logger.success(
-                    f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
-                )
-                return await response.json()
+        status = 200
+        metrics.last_request_timestamp.labels(
+            chute_id=self._app.uid,
+            function=self._func.__name__,
+        ).set_to_current_time()
+        try:
+            if self._passthrough:
+                async with self._passthrough_call(**kwargs) as response:
+                    logger.success(
+                        f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
+                    )
+                    return await response.json()
 
-        return_value = await self._func(*args, **kwargs)
-        logger.success(
-            f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
-        )
-        return return_value
+            return_value = await self._func(*args, **kwargs)
+            logger.success(
+                f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
+            )
+            return return_value
+        except Exception as exc:
+            logger.error(f"Error performing stream call: {exc}")
+            status = 500
+            raise
+        finally:
+            metrics.total_requests.labels(
+                chute_id=self._app.uid,
+                function=self._func.__name__,
+                status=status,
+            ).inc()
+            metrics.request_duration.labels(
+                chute_id=self._app.uid,
+                function=self._func.__name__,
+                status=status,
+            ).observe(time.time() - started_at)
 
     async def _remote_stream_call(self, *args, **kwargs):
         """
@@ -266,21 +288,42 @@ class Cord:
         runs on the miner's deployment.
         """
         logger.info(f"Received streaming invocation request [{self._func.__name__}]")
+        status = 200
         started_at = time.time()
-        if self._passthrough:
-            async with self._passthrough_call(**kwargs) as response:
-                async for content in response.content:
-                    yield content
-            logger.success(
-                f"Completed request [{self._func.__name__} (passthrough)] in {time.time() - started_at} seconds"
-            )
-            return
+        metrics.last_request_timestamp.labels(
+            chute_id=self._app.uid,
+            function=self._func.__name__,
+        ).set_to_current_time()
+        try:
+            if self._passthrough:
+                async with self._passthrough_call(**kwargs) as response:
+                    async for content in response.content:
+                        yield content
+                logger.success(
+                    f"Completed request [{self._func.__name__} (passthrough)] in {time.time() - started_at} seconds"
+                )
+                return
 
-        async for data in self._func(*args, **kwargs):
-            yield data
-        logger.success(
-            f"Completed request [{self._func.__name__}] in {time.time() - started_at} seconds"
-        )
+            async for data in self._func(*args, **kwargs):
+                yield data
+            logger.success(
+                f"Completed request [{self._func.__name__}] in {time.time() - started_at} seconds"
+            )
+        except Exception as exc:
+            logger.error(f"Error performing stream call: {exc}")
+            status = 500
+            raise
+        finally:
+            metrics.total_requests.labels(
+                chute_id=self._app.uid,
+                function=self._func.__name__,
+                status=status,
+            ).inc()
+            metrics.request_duration.labels(
+                chute_id=self._app.uid,
+                function=self._func.__name__,
+                status=status,
+            ).observe(time.time() - started_at)
 
     async def _request_handler(self, request: Request):
         """

@@ -8,7 +8,6 @@ from loguru import logger
 from typing import Any, List, Dict
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict
-from chutes.config import get_config
 from chutes.image import Image
 from chutes.util.context import is_remote
 from chutes.chute.node_selector import NodeSelector
@@ -30,6 +29,7 @@ async def _pong(request: Dict[str, Any]) -> Dict[str, Any]:
 class Chute(FastAPI):
     def __init__(
         self,
+        username: str,
         name: str,
         image: str | Image,
         standard_template: str = None,
@@ -37,9 +37,9 @@ class Chute(FastAPI):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        _config = get_config()
+        self._username = username
         self._name = name
-        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{_config.auth.user_id}::chute::{name}"))
+        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{username}::chute::{name}"))
         self._image = image
         self._standard_template = standard_template
         self._node_selector = node_selector
@@ -123,9 +123,14 @@ class Chute(FastAPI):
             self.add_api_route(cord.path, cord._request_handler, methods=["POST"])
             logger.info(f"Added new API route: {cord.path} calling {cord._func.__name__}")
 
-        # Add a liveness check endpoint.
+        # Add a ping endpoint for validators to use.
         self.add_api_route("/_ping", _pong, methods=["POST"])
         logger.info(f"Added liveness endpoint: /{self.uid}/_ping")
+        logger.info("Added ping endpoint: /_ping")
+
+        # Add a k8s liveness check endpoint.
+        self.add_api_route("/_alive", lambda: {"alive": True}, methods=["GET"])
+        logger.info("Added liveness endpoint: /_alive")
 
     def cord(self, **kwargs):
         """
