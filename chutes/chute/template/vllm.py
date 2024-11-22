@@ -36,6 +36,7 @@ def build_vllm_chute(
                 "multi_step_stream_outputs": True,
                 "enable_chunked_prefill": False,
                 "enable_prefix_caching": False,
+                "disable_log_stats": True,
             }
         )
 

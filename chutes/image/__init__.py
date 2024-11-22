@@ -23,6 +23,7 @@ class Image:
         self._tag = None
         self.name = name
         self.tag = tag
+        self.username = username
         self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{username}/{self.name}:{self.tag}"))
         self._directives = [
             FROM(self.default_base_image),

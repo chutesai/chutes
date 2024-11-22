@@ -92,6 +92,7 @@ async def _build_remote(image, wait=None, public=False):
         logger.info(f"Created the build package: {output_path}, uploading...")
 
         form_data = aiohttp.FormData()
+        form_data.add_field("username", image.username)
         form_data.add_field("name", image.name)
         form_data.add_field("tag", image.tag)
         form_data.add_field("dockerfile", str(image))
