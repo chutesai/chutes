@@ -46,6 +46,8 @@ class Chute(FastAPI):
         self._startup_hooks = []
         self._shutdown_hooks = []
         self._cords: list[Cord] = []
+        self.docs_url = None
+        self.redoc_url = None
 
     @property
     def name(self):
