@@ -9,9 +9,10 @@ import typer
 import pybase64 as base64
 import orjson as json
 from uvicorn import Config, Server
-from fastapi import Request, status
+from fastapi import Request, Response, status
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from graval.miner import Miner
 from chutes.entrypoint._shared import load_chute
 from chutes.chute import ChutePack
@@ -89,7 +90,6 @@ def run_chute(
     port: int | None = typer.Option(None, help="port to listen on"),
     host: str | None = typer.Option(None, help="host to bind to"),
     graval_seed: int | None = typer.Option(None, help="graval seed for encryption/decryption"),
-    uds: str | None = typer.Option(None, help="unix domain socket path"),
     debug: bool = typer.Option(False, help="enable debug logging"),
 ):
     """
@@ -114,8 +114,14 @@ def run_chute(
             MINER._seed = graval_seed
             chute.add_middleware(GraValMiddleware)
 
+        # Metrics endpoint.
+        async def _metrics():
+            return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+        chute.add_api_route("/_metrics", _metrics)
+
         await chute.initialize()
-        config = Config(app=chute, host=host, port=port, uds=uds)
+        config = Config(app=chute, host=host, port=port)
         server = Server(config)
         await server.serve()
 

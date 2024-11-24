@@ -13,7 +13,7 @@ from chutes.util.auth import sign_request
 from chutes.chute import ChutePack
 
 
-async def _deploy(module: Any, chute: Chute, public: bool = False):
+async def _deploy(ref_str: str, module: Any, chute: Chute, public: bool = False):
     """
     Perform the actual chute deployment.
     """
@@ -34,6 +34,7 @@ async def _deploy(module: Any, chute: Chute, public: bool = False):
         "standard_template": chute.standard_template,
         "node_selector": chute.node_selector.dict(),
         "filename": os.path.basename(module.__file__),
+        "ref_str": ref_str,
         "code": code,
         "cords": [
             {
@@ -119,6 +120,6 @@ def deploy_chute(
             sys.exit(1)
 
         # Deploy!
-        return await _deploy(module, chute, public)
+        return await _deploy(chute_ref_str, module, chute, public)
 
     return asyncio.run(_deploy_chute())

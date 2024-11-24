@@ -163,6 +163,7 @@ def register(
                             f"base_url = {generic_config.api_base_url}",
                             "",
                             "[auth]",
+                            f"username = {username}",
                             f"user_id = {data['user_id']}",
                             f"hotkey_seed = {secret_seed}",
                             f"hotkey_name = {hotkey}",

@@ -1,7 +1,6 @@
 import re
 import uuid
 from typing import List
-from chutes.config import get_config
 from chutes.image.directive.base_image import FROM
 from chutes.image.directive.apt import APT
 from chutes.image.directive.add import ADD
@@ -16,18 +15,16 @@ from chutes.image.directive.entrypoint import ENTRYPOINT
 class Image:
     default_base_image = "nvidia/cuda:12.6.1-cudnn-devel-ubuntu24.04"
 
-    def __init__(self, name: str, tag: str):
+    def __init__(self, username: str, name: str, tag: str):
         """
         Semi-useless constructor - don't try to pass args here, use the provided methods.
         """
-        _config = get_config()
         self._name = None
         self._tag = None
         self.name = name
         self.tag = tag
-        self._uid = str(
-            uuid.uuid5(uuid.NAMESPACE_OID, f"{_config.auth.user_id}/{self.name}:{self.tag}")
-        )
+        self.username = username
+        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{username}/{self.name}:{self.tag}"))
         self._directives = [
             FROM(self.default_base_image),
         ]

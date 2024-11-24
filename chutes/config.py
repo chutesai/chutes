@@ -16,6 +16,7 @@ ALLOW_MISSING = os.getenv("CHUTES_ALLOW_MISSING", "false").lower() == "true"
 @dataclass
 class AuthConfig:
     user_id: str | None
+    username: str | None
     hotkey_seed: str | None
     hotkey_name: str | None
     hotkey_ss58address: str | None
@@ -58,6 +59,7 @@ def get_config() -> Config:
             try:
                 auth_config = AuthConfig(
                     user_id=raw_config.get("auth", "user_id"),
+                    username=raw_config.get("auth", "username"),
                     hotkey_seed=raw_config.get("auth", "hotkey_seed"),
                     hotkey_name=raw_config.get("auth", "hotkey_name"),
                     hotkey_ss58address=raw_config.get("auth", "hotkey_ss58address"),
