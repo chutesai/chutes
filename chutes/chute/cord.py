@@ -57,7 +57,7 @@ class Cord:
         self._method = method
         self._session_kwargs = session_kwargs
         self._provision_timeout = provision_timeout
-        self._config = get_config()
+        self._config = None
 
     @property
     def path(self):
@@ -65,6 +65,16 @@ class Cord:
         URL path getter.
         """
         return self._path
+
+    @property
+    def config(self):
+        """
+        Lazy config getter.
+        """
+        if self._config:
+            return self._config
+        self._config = get_config()
+        return self._config
 
     @path.setter
     def path(self, path: str):
@@ -153,7 +163,7 @@ class Cord:
                 }
             )
             async with aiohttp.ClientSession(
-                base_url=self._config.generic.api_base_url, **self._session_kwargs
+                base_url=self.config.generic.api_base_url, **self._session_kwargs
             ) as session:
                 async with session.post(
                     f"/chutes/{self._app.uid}{self.path}",
