@@ -340,7 +340,7 @@ class Cord:
         Decode/deserialize incoming request and call the appropriate function.
         """
         if self._passthrough_port is None:
-            self._passthrough_port = request.url.port
+            self._passthrough_port = 8000
         request = request.state.decrypted
         try:
             args = fickling.load(gzip.decompress(base64.b64decode(request["args"])))
