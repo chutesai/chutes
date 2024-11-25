@@ -4,15 +4,19 @@ Run a chute, automatically handling encryption/decryption via GraVal.
 
 import asyncio
 import sys
+import time
+import hashlib
 from loguru import logger
 import typer
 import pybase64 as base64
 import orjson as json
+from ipaddress import ip_address
 from uvicorn import Config, Server
 from fastapi import Request, Response, status
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from substrateinterface import Keypair, KeypairType
 from graval.miner import Miner
 from chutes.entrypoint._shared import load_chute
 from chutes.chute import ChutePack
@@ -25,12 +29,64 @@ class GraValMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         """
-        Transparently handle decryption from validator and encryption back to validator.
+        Transparently handle decryption and verification.
         """
+        if request.client.host == "127.0.0.1":
+            return await call_next(request)
+
+        # Internal endpoints.
+        if request.scope.get("path", "").endswith(("/_alive", "/_metrics")):
+            ip = ip_address(request.client.host)
+            is_private = (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip.is_unspecified
+            )
+            if not is_private:
+                return ORJSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "go away (internal)"},
+                )
+            else:
+                return await call_next(request)
+
+        # Verify the signature.
+        miner_hotkey = request.headers.get("X-Chutes-Miner")
+        validator_hotkey = request.headers.get("X-Chutes-Validator")
+        nonce = request.headers.get("X-Chutes-Nonce")
+        signature = request.headers.get("X-Chutes-Signature")
+        if (
+            any(not v for v in [miner_hotkey, validator_hotkey, nonce, signature])
+            or validator_hotkey != MINER._validator_ss58
+            or miner_hotkey != MINER._miner_ss58
+            or int(time.time()) - int(nonce) >= 30
+        ):
+            logger.warning(f"Missing auth data: {request.headers}")
+            return ORJSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "go away (missing)"}
+            )
+        body_bytes = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
+        payload_string = hashlib.sha256(body_bytes).hexdigest() if body_bytes else "chutes"
+        signature_string = ":".join(
+            [
+                miner_hotkey,
+                validator_hotkey,
+                nonce,
+                payload_string,
+            ]
+        )
+        if not MINER._keypair.verify(signature_string, bytes.fromhex(signature)):
+            return ORJSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "go away (sig)"}
+            )
+
+        # Decrypt the payload.
         is_encrypted = request.headers.get("X-Chutes-Encrypted", "false").lower() == "true"
         request.state.decrypted = None
-        if is_encrypted and request.method in ("POST", "PUT", "PATCH"):
-            body_bytes = await request.body()
+        if is_encrypted and body_bytes:
             encrypted_body = json.loads(body_bytes)
             required_fields = {"ciphertext", "iv", "length", "device_id", "seed"}
             decrypted_body = {}
@@ -84,9 +140,8 @@ def run_chute(
     chute_ref_str: str = typer.Argument(
         ..., help="chute to run, in the form [module]:[app_name], similar to uvicorn"
     ),
-    config_path: str = typer.Option(
-        None, help="Custom path to the chutes config (credentials, API URL, etc.)"
-    ),
+    miner_ss58: str = typer.Option(help="miner hotkey ss58 address"),
+    validator_ss58: str = typer.Option(help="validator hotkey ss58 address"),
     port: int | None = typer.Option(None, help="port to listen on"),
     host: str | None = typer.Option(None, help="host to bind to"),
     graval_seed: int | None = typer.Option(None, help="graval seed for encryption/decryption"),
@@ -97,9 +152,7 @@ def run_chute(
     """
 
     async def _run_chute():
-        # How to get the chute ref string?
-        _, chute = load_chute(chute_ref_str=chute_ref_str, config_path=config_path, debug=debug)
-
+        _, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
         if is_local():
             logger.error("Cannot run chutes in local context!")
             sys.exit(1)
@@ -112,7 +165,10 @@ def run_chute(
             logger.info(f"Initializing graval with {graval_seed=}")
             MINER.initialize(graval_seed)
             MINER._seed = graval_seed
-            chute.add_middleware(GraValMiddleware)
+        chute.add_middleware(GraValMiddleware)
+        MINER._miner_ss58 = miner_ss58
+        MINER._validator_ss58 = validator_ss58
+        MINER._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
         # Metrics endpoint.
         async def _metrics():
