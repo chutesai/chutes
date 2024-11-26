@@ -10,6 +10,7 @@ from loguru import logger
 import typer
 import pybase64 as base64
 import orjson as json
+from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
 from fastapi import Request, Response, status
@@ -23,6 +24,12 @@ from chutes.chute import ChutePack
 from chutes.util.context import is_local
 
 MINER = Miner()
+
+
+class FSChallenge(BaseModel):
+    filename: str
+    length: int
+    offset: int
 
 
 class GraValMiddleware(BaseHTTPMiddleware):
@@ -150,6 +157,9 @@ def run_chute(
     """
     Run the chute (uvicorn server).
     """
+    import torch.multiprocessing as mp
+
+    mp.set_start_method("spawn", force=True)
 
     async def _run_chute():
         _, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
@@ -170,13 +180,39 @@ def run_chute(
         MINER._validator_ss58 = validator_ss58
         MINER._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
+        # Run initialization code.
+        await chute.initialize()
+
         # Metrics endpoint.
         async def _metrics():
             return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-        chute.add_api_route("/_metrics", _metrics)
+        chute.add_api_route("/_metrics", _metrics, methods=["GET"])
+        logger.info("Added liveness endpoint: /_metrics")
 
-        await chute.initialize()
+        # Device info challenge endpoint.
+        async def _device_challenge(request: Request, challenge: str):
+            return Response(
+                content=MINER.process_device_info_challenge(challenge), media_type="text/plain"
+            )
+
+        chute.add_api_route("/_device_challenge", _device_challenge, methods=["GET"])
+        logger.info("Added device challenge endpoint: /_device_challenge")
+
+        # Filesystem challenge endpoint.
+        async def _fs_challenge(request: Request, challenge: FSChallenge):
+            return Response(
+                content=MINER.process_filesystem_challenge(
+                    filename=challenge.filename,
+                    offset=challenge.offset,
+                    length=challenge.length,
+                ),
+                media_type="text/plain",
+            )
+
+        chute.add_api_route("/_fs_challenge", _fs_challenge, methods=["POST"])
+        logger.info("Added filesystem challenge endpoint: /_fs_challenge")
+
         config = Config(app=chute, host=host, port=port)
         server = Server(config)
         await server.serve()
