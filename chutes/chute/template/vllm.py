@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Dict, Any, Callable
 from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
@@ -28,7 +29,7 @@ def build_vllm_chute(
         standard_template="vllm",
     )
 
-    # Semi-optimized defaults.
+    # Semi-optimized defaults
     if not engine_args:
         engine_args.update(
             {
@@ -37,6 +38,7 @@ def build_vllm_chute(
                 "enable_chunked_prefill": False,
                 "enable_prefix_caching": False,
                 "disable_log_stats": True,
+                "disable_custom_all_reduce": True,
             }
         )
 
@@ -47,6 +49,7 @@ def build_vllm_chute(
 
         # Imports here to avoid needing torch/vllm/etc. to just perform inference/build remotely.
         import torch
+        import multiprocessing
         from vllm import AsyncEngineArgs, AsyncLLMEngine
         import vllm.entrypoints.openai.api_server as vllm_api_server
         from vllm.entrypoints.logger import RequestLogger
@@ -54,18 +57,29 @@ def build_vllm_chute(
         from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
         from vllm.entrypoints.openai.serving_engine import BaseModelPath
 
+        # Reset torch.
+        torch.cuda.empty_cache()
+        torch.cuda.init()
+        torch.cuda.set_device(0)
+        multiprocessing.set_start_method("spawn", force=True)
+
+        # Configure engine arguments
+        gpu_count = int(os.getenv("CUDA_DEVICE_COUNT", str(torch.cuda.device_count())))
         engine_args = AsyncEngineArgs(
             model=model_name,
-            tensor_parallel_size=torch.cuda.device_count(),
+            tensor_parallel_size=gpu_count,
             **engine_args,
         )
 
+        # Initialize engine directly in the main process
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
         model_config = await self.engine.get_model_config()
+
         request_logger = RequestLogger(max_log_len=1024)
         base_model_paths = [
             BaseModelPath(name=chute.name, model_path=chute.name),
         ]
+
         self.include_router(vllm_api_server.router)
         vllm_api_server.chat = lambda s: OpenAIServingChat(
             self.engine,

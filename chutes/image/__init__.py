@@ -13,7 +13,7 @@ from chutes.image.directive.entrypoint import ENTRYPOINT
 
 
 class Image:
-    default_base_image = "nvidia/cuda:12.6.1-cudnn-devel-ubuntu24.04"
+    default_base_image = "nvidia/cuda:12.2.2-devel-ubuntu22.04"
 
     def __init__(self, username: str, name: str, tag: str):
         """
