@@ -157,9 +157,6 @@ def run_chute(
     """
     Run the chute (uvicorn server).
     """
-    import torch.multiprocessing as mp
-
-    mp.set_start_method("spawn", force=True)
 
     async def _run_chute():
         _, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
