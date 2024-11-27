@@ -7,7 +7,6 @@ from chutes.constants import CHUTES_DIR
 from chutes.exception import AuthenticationRequired, NotConfigured
 from dataclasses import dataclass
 
-os.makedirs(os.path.join(Path.home(), CHUTES_DIR), exist_ok=True)
 CONFIG_PATH = os.getenv("CHUTES_CONFIG_PATH") or os.path.join(Path.home(), CHUTES_DIR, "config.ini")
 ALLOW_MISSING = os.getenv("CHUTES_ALLOW_MISSING", "false").lower() == "true"
 
@@ -47,6 +46,7 @@ def get_config() -> Config:
     if _config is None:
         # def load_config(self):
         if not os.path.exists(CONFIG_PATH):
+            os.makedirs(os.path.dirname(os.path.abspath(CONFIG_PATH)), exist_ok=True)
             if not ALLOW_MISSING:
                 raise NotConfigured(
                     f"Please set either populate {CONFIG_PATH} or set CHUTES_CONFIG_PATH to alternative/valid config path!"
