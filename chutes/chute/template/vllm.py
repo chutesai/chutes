@@ -29,18 +29,19 @@ def build_vllm_chute(
         standard_template="vllm",
     )
 
-    # Semi-optimized defaults
-    if not engine_args:
-        engine_args.update(
-            {
-                "num_scheduler_steps": 16,
-                "multi_step_stream_outputs": True,
-                "enable_chunked_prefill": False,
-                "enable_prefix_caching": False,
-                "disable_log_stats": True,
-                "disable_custom_all_reduce": True,
-            }
-        )
+    # Semi-optimized defaults for code starts (but not overall perf once hot).
+    defaults = {
+        "enforce_eager": True,
+        "num_scheduler_steps": 1,
+        "multi_step_stream_outputs": True,
+        "enable_chunked_prefill": False,
+        "enable_prefix_caching": False,
+        "disable_log_stats": True,
+        "disable_custom_all_reduce": True,
+    }
+    for key, value in defaults.items():
+        if key not in engine_args:
+            engine_args[key] = value
 
     @chute.on_startup()
     async def initialize_vllm(self):
