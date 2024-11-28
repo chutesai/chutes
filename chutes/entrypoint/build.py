@@ -18,7 +18,7 @@ from chutes.config import get_config
 from chutes.image import Image
 from chutes.image.directive.add import ADD
 from chutes.image.directive.generic_run import RUN
-from chutes.entrypoint._shared import load_chute
+from chutes.entrypoint._shared import load_chute, FakeStreamWriter, upload_logo
 from chutes.util.auth import sign_request
 
 
@@ -78,7 +78,7 @@ def _build_local(image):
         )
 
 
-async def _build_remote(image, wait=None, public=False):
+async def _build_remote(image, wait=None, public: bool = False, logo_id: str = None):
     """
     Build an image remotely, that is, package up the build context and ship it
     off to the chutes API to have it built.
@@ -95,8 +95,10 @@ async def _build_remote(image, wait=None, public=False):
         form_data.add_field("username", image.username)
         form_data.add_field("name", image.name)
         form_data.add_field("tag", image.tag)
+        form_data.add_field("readme", image.readme or "")
         form_data.add_field("dockerfile", str(image))
         form_data.add_field("public", str(public))
+        form_data.add_field("logo_id", str(logo_id) if logo_id else "__none__")
         form_data.add_field("wait", str(wait))
         form_data.add_field("image", base64.b64encode(pickle.dumps(image)).decode())
         with open(os.path.join(build_directory, "chute.zip"), "rb") as infile:
@@ -106,19 +108,6 @@ async def _build_remote(image, wait=None, public=False):
                 filename="chute.zip",
                 content_type="application/zip",
             )
-
-        class FakeStreamWriter:
-            def __init__(self):
-                self.output = BytesIO()
-
-            async def write(self, chunk):
-                self.output.write(chunk)
-
-            async def drain(self):
-                pass
-
-            async def write_eof(self):
-                pass
 
         # Get the payload and write it to the custom writer
         payload = form_data()
@@ -134,7 +123,7 @@ async def _build_remote(image, wait=None, public=False):
             headers["Content-Length"] = str(len(raw_data))
             async with session.post(
                 "/images/",
-                data=raw_data,  # form_data, #payload_string,
+                data=raw_data,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=None),
             ) as response:
@@ -194,6 +183,10 @@ def build_image(
     config_path: str = typer.Option(
         None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
+    logo: str = typer.Option(
+        None,
+        help="Path to the logo to use for this image.",
+    ),
     local: bool = typer.Option(False, help="build the image locally, useful for testing/debugging"),
     debug: bool = typer.Option(False, help="enable debug logging"),
     include_cwd: bool = typer.Option(
@@ -226,6 +219,11 @@ def build_image(
         if await _image_exists(image):
             logger.error(f"Image with name={image.name} and tag={image.tag} already exists!")
             sys.exit(1)
+
+        # Upload the logo, if any.
+        logo_id = None
+        if logo and not local:
+            logo_id = await upload_logo(logo)
 
         # Always tack on the final directives, which include installing chutes and adding project files.
         image._directives.append(RUN("pip install chutes --upgrade"))
@@ -274,6 +272,6 @@ def build_image(
             return _build_local(image)
 
         # Package up the context and ship it off for building.
-        return await _build_remote(image, wait=wait, public=public)
+        return await _build_remote(image, wait=wait, public=public, logo_id=logo_id)
 
     return asyncio.run(_build_image())

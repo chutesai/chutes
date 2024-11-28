@@ -73,7 +73,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
         ):
             logger.warning(f"Missing auth data: {request.headers}")
             return ORJSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "go away (missing)"}
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "go away (missing)"},
             )
         body_bytes = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
         payload_string = hashlib.sha256(body_bytes).hexdigest() if body_bytes else "chutes"
@@ -87,7 +88,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
         )
         if not MINER._keypair.verify(signature_string, bytes.fromhex(signature)):
             return ORJSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "go away (sig)"}
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "go away (sig)"},
             )
 
         # Decrypt the payload.
@@ -190,7 +192,8 @@ def run_chute(
         # Device info challenge endpoint.
         async def _device_challenge(request: Request, challenge: str):
             return Response(
-                content=MINER.process_device_info_challenge(challenge), media_type="text/plain"
+                content=MINER.process_device_info_challenge(challenge),
+                media_type="text/plain",
             )
 
         chute.add_api_route("/_device_challenge", _device_challenge, methods=["GET"])

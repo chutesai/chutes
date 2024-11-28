@@ -15,7 +15,7 @@ from chutes.image.directive.entrypoint import ENTRYPOINT
 class Image:
     default_base_image = "nvidia/cuda:12.2.2-devel-ubuntu22.04"
 
-    def __init__(self, username: str, name: str, tag: str):
+    def __init__(self, username: str, name: str, tag: str, readme: str = ""):
         """
         Semi-useless constructor - don't try to pass args here, use the provided methods.
         """
@@ -23,6 +23,7 @@ class Image:
         self._tag = None
         self.name = name
         self.tag = tag
+        self.readme = readme
         self.username = username
         self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{username}/{self.name}:{self.tag}"))
         self._directives = [

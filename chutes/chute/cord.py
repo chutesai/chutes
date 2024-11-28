@@ -7,6 +7,7 @@ import orjson as json
 import fickling
 import pickle
 import pybase64 as base64
+from typing import Optional, Dict, Any
 from fastapi import Request, HTTPException, status
 from loguru import logger
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from starlette.responses import StreamingResponse
 from chutes.exception import InvalidPath, DuplicatePath, StillProvisioning
 from chutes.util.context import is_local
 from chutes.util.auth import sign_request
+from chutes.util.schema import SchemaExtractor
 from chutes.config import get_config
 from chutes.constants import CHUTEID_HEADER, FUNCTION_HEADER
 from chutes.chute.base import Chute
@@ -35,6 +37,9 @@ class Cord:
         public_api_method: str = "POST",
         method: str = "GET",
         provision_timeout: int = 180,
+        input_schema: Optional[Any] = None,
+        output_schema: Optional[Any] = None,
+        minimal_input_schema: Optional[Any] = None,
         **session_kwargs,
     ):
         """
@@ -58,6 +63,18 @@ class Cord:
         self._session_kwargs = session_kwargs
         self._provision_timeout = provision_timeout
         self._config = None
+        self.input_schema = None
+        self.output_schema = None
+        self.input_schema = (
+            SchemaExtractor.get_minimal_schema(input_schema) if input_schema else None
+        )
+        self.output_schema = None
+        self.minimal_input_schema = (
+            SchemaExtractor.get_minimal_schema(minimal_input_schema)
+            if minimal_input_schema
+            else None
+        )
+        self.output_schema: Optional[Dict[str, Any]] = None
 
     @property
     def path(self):
@@ -362,6 +379,11 @@ class Cord:
             self.path = func.__name__
         if not self._passthrough_path:
             self.passthrough_path = func.__name__
+        in_schema, out_schema = SchemaExtractor.extract_schemas(func)
+        if not self.input_schema:
+            self.input_schema = in_schema
+        if not self.output_schema:
+            self.output_schema = out_schema
         if is_local():
             return self._local_call if not self._stream else self._local_stream_call
         return self._remote_call if not self._stream else self._remote_stream_call

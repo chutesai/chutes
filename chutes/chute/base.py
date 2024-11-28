@@ -32,6 +32,7 @@ class Chute(FastAPI):
         username: str,
         name: str,
         image: str | Image,
+        readme: str = "",
         standard_template: str = None,
         node_selector: NodeSelector = None,
         **kwargs,
@@ -39,6 +40,7 @@ class Chute(FastAPI):
         super().__init__(**kwargs)
         self._username = username
         self._name = name
+        self._readme = readme
         self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{username}::chute::{name}"))
         self._image = image
         self._standard_template = standard_template
@@ -52,6 +54,10 @@ class Chute(FastAPI):
     @property
     def name(self):
         return self._name
+
+    @property
+    def readme(self):
+        return self._readme
 
     @property
     def uid(self):
@@ -124,6 +130,9 @@ class Chute(FastAPI):
         for cord in self._cords:
             self.add_api_route(cord.path, cord._request_handler, methods=["POST"])
             logger.info(f"Added new API route: {cord.path} calling {cord._func.__name__}")
+            logger.debug(f"  {cord.input_schema=}")
+            logger.debug(f"  {cord.output_schema=}")
+            logger.debug(f"  {cord.minimal_input_schema=}")
 
         # Add a ping endpoint for validators to use.
         self.add_api_route("/_ping", _pong, methods=["POST"])

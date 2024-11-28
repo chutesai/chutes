@@ -7,13 +7,15 @@ import typer
 from typing import Any
 from chutes.chute.base import Chute
 from chutes.config import get_config
-from chutes.entrypoint._shared import load_chute
+from chutes.entrypoint._shared import load_chute, upload_logo
 from chutes.image import Image
 from chutes.util.auth import sign_request
 from chutes.chute import ChutePack
 
 
-async def _deploy(ref_str: str, module: Any, chute: Chute, public: bool = False):
+async def _deploy(
+    ref_str: str, module: Any, chute: Chute, public: bool = False, logo_id: str = None
+):
     """
     Perform the actual chute deployment.
     """
@@ -27,8 +29,11 @@ async def _deploy(ref_str: str, module: Any, chute: Chute, public: bool = False)
     with open(module.__file__, "r") as infile:
         code = infile.read()
     config = get_config()
+    print(f"README HERE: {chute.readme}")
     request_body = {
         "name": chute.name,
+        "readme": chute.readme,
+        "logo_id": logo_id,
         "image": chute.image if isinstance(chute.image, str) else chute.image.uid,
         "public": public,
         "standard_template": chute.standard_template,
@@ -44,6 +49,9 @@ async def _deploy(ref_str: str, module: Any, chute: Chute, public: bool = False)
                 "public_api_method": cord._public_api_method,
                 "stream": cord._stream,
                 "function": cord._func.__name__,
+                "input_schema": cord.input_schema,
+                "output_schema": cord.output_schema,
+                "minimal_input_schema": cord.minimal_input_schema,
             }
             for cord in chute._cords
         ],
@@ -99,6 +107,10 @@ def deploy_chute(
     config_path: str = typer.Option(
         None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
+    logo: str = typer.Option(
+        None,
+        help="Optional path to a logo to use for the chute",
+    ),
     debug: bool = typer.Option(False, help="enable debug logging"),
     public: bool = typer.Option(False, help="mark an image as public/available to anyone"),
 ):
@@ -107,7 +119,7 @@ def deploy_chute(
     """
 
     async def _deploy_chute():
-        nonlocal config_path, debug, public, chute_ref_str
+        nonlocal config_path, debug, public, chute_ref_str, logo
         module, chute = load_chute(chute_ref_str, config_path=config_path, debug=debug)
 
         # Get the image reference from the chute.
@@ -119,7 +131,12 @@ def deploy_chute(
             logger.error(f"Image '{image_id}' is not available to be used (yet)!")
             sys.exit(1)
 
+        # Upload logo, if any.
+        logo_id = None
+        if logo:
+            logo_id = await upload_logo(logo)
+
         # Deploy!
-        return await _deploy(chute_ref_str, module, chute, public)
+        return await _deploy(chute_ref_str, module, chute, public, logo_id)
 
     return asyncio.run(_deploy_chute())

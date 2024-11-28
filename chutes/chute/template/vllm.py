@@ -1,9 +1,179 @@
 import json
 import os
-from typing import Dict, Any, Callable
+from pydantic import BaseModel, Field
+from typing import Dict, Any, Callable, Literal, Optional, Union, List
 from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class Logprob(BaseModel):
+    logprob: float
+    rank: Optional[int] = None
+    decoded_token: Optional[str] = None
+
+
+class ResponseFormat(BaseModel):
+    type: Literal["text", "json_object", "json_schema"]
+    json_schema: Optional[Dict] = None
+
+
+class BaseRequest(BaseModel):
+    model: str
+    frequency_penalty: Optional[float] = 0.0
+    logit_bias: Optional[Dict[str, float]] = None
+    logprobs: Optional[bool] = False
+    top_logprobs: Optional[int] = 0
+    max_tokens: Optional[int] = None
+    presence_penalty: Optional[float] = 0.0
+    response_format: Optional[ResponseFormat] = None
+    seed: Optional[int] = Field(None, ge=0, le=9223372036854775807)
+    stop: Optional[Union[str, List[str]]] = Field(default_factory=list)
+    stream: Optional[bool] = False
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 1.0
+    best_of: Optional[int] = None
+    use_beam_search: bool = False
+    top_k: int = -1
+    min_p: float = 0.0
+    repetition_penalty: float = 1.0
+    length_penalty: float = 1.0
+    stop_token_ids: Optional[List[int]] = Field(default_factory=list)
+    include_stop_str_in_output: bool = False
+    ignore_eos: bool = False
+    min_tokens: int = 0
+    skip_special_tokens: bool = True
+    spaces_between_special_tokens: bool = True
+    prompt_logprobs: Optional[int] = None
+
+
+class UsageInfo(BaseModel):
+    prompt_tokens: int = 0
+    total_tokens: int = 0
+    completion_tokens: Optional[int] = 0
+
+
+class ChatCompletionRequest(BaseRequest):
+    messages: List[ChatMessage]
+
+
+class CompletionRequest(BaseRequest):
+    prompt: str
+
+
+class ChatCompletionLogProb(BaseModel):
+    token: str
+    logprob: float = -9999.0
+    bytes: Optional[List[int]] = None
+
+
+class ChatCompletionLogProbsContent(ChatCompletionLogProb):
+    top_logprobs: List[ChatCompletionLogProb] = Field(default_factory=list)
+
+
+class ChatCompletionLogProbs(BaseModel):
+    content: Optional[List[ChatCompletionLogProbsContent]] = None
+
+
+class ChatCompletionResponseChoice(BaseModel):
+    index: int
+    message: ChatMessage
+    logprobs: Optional[ChatCompletionLogProbs] = None
+    finish_reason: Optional[str] = "stop"
+    stop_reason: Optional[Union[int, str]] = None
+
+
+class ChatCompletionResponse(BaseModel):
+    id: str
+    object: Literal["chat.completion"] = "chat.completion"
+    created: int
+    model: str
+    choices: List[ChatCompletionResponseChoice]
+    usage: UsageInfo
+    prompt_logprobs: Optional[List[Optional[Dict[int, Logprob]]]] = None
+
+
+class DeltaMessage(BaseModel):
+    role: Optional[str] = None
+    content: Optional[str] = None
+
+
+class ChatCompletionResponseStreamChoice(BaseModel):
+    index: int
+    delta: DeltaMessage
+    logprobs: Optional[ChatCompletionLogProbs] = None
+    finish_reason: Optional[str] = None
+    stop_reason: Optional[Union[int, str]] = None
+
+
+class ChatCompletionStreamResponse(BaseModel):
+    id: str
+    object: Literal["chat.completion.chunk"] = "chat.completion.chunk"
+    created: int
+    model: str
+    choices: List[ChatCompletionResponseStreamChoice]
+    usage: Optional[UsageInfo] = Field(default=None)
+
+
+class CompletionLogProbs(BaseModel):
+    text_offset: List[int] = Field(default_factory=list)
+    token_logprobs: List[Optional[float]] = Field(default_factory=list)
+    tokens: List[str] = Field(default_factory=list)
+    top_logprobs: List[Optional[Dict[str, float]]] = Field(default_factory=list)
+
+
+class CompletionResponseChoice(BaseModel):
+    index: int
+    text: str
+    logprobs: Optional[CompletionLogProbs] = None
+    finish_reason: Optional[str] = None
+    stop_reason: Optional[Union[int, str]] = Field(
+        default=None,
+        description=(
+            "The stop string or token id that caused the completion "
+            "to stop, None if the completion finished for some other reason "
+            "including encountering the EOS token"
+        ),
+    )
+    prompt_logprobs: Optional[List[Optional[Dict[int, Logprob]]]] = None
+
+
+class CompletionResponse(BaseModel):
+    id: str
+    object: str = "text_completion"
+    created: int
+    model: str
+    choices: List[CompletionResponseChoice]
+    usage: UsageInfo
+
+
+class CompletionResponseStreamChoice(BaseModel):
+    index: int
+    text: str
+    logprobs: Optional[CompletionLogProbs] = None
+    finish_reason: Optional[str] = None
+    stop_reason: Optional[Union[int, str]] = Field(
+        default=None,
+        description=(
+            "The stop string or token id that caused the completion "
+            "to stop, None if the completion finished for some other reason "
+            "including encountering the EOS token"
+        ),
+    )
+
+
+class CompletionStreamResponse(BaseModel):
+    id: str
+    object: str
+    created: int
+    model: str
+    choices: List[CompletionResponseStreamChoice]
+    usage: Optional[UsageInfo] = Field(default=None)
 
 
 class VLLMChute(ChutePack):
@@ -115,8 +285,9 @@ def build_vllm_chute(
         method="POST",
         passthrough=True,
         stream=True,
+        input_schema=ChatCompletionRequest,
     )
-    async def chat_stream(encoded_chunk):
+    async def chat_stream(encoded_chunk) -> ChatCompletionStreamResponse:
         return _parse_stream_chunk(encoded_chunk)
 
     @chute.cord(
@@ -124,8 +295,9 @@ def build_vllm_chute(
         public_api_path="/v1/chat/completions",
         method="POST",
         passthrough=True,
+        input_schema=ChatCompletionRequest,
     )
-    async def chat(data):
+    async def chat(data) -> ChatCompletionResponse:
         return data
 
     @chute.cord(
@@ -134,8 +306,9 @@ def build_vllm_chute(
         method="POST",
         passthrough=True,
         stream=True,
+        input_schema=CompletionRequest,
     )
-    async def completion_stream(encoded_chunk):
+    async def completion_stream(encoded_chunk) -> CompletionStreamResponse:
         return _parse_stream_chunk(encoded_chunk)
 
     @chute.cord(
@@ -143,8 +316,9 @@ def build_vllm_chute(
         public_api_path="/v1/completions",
         method="POST",
         passthrough=True,
+        input_schema=CompletionRequest,
     )
-    async def completion(data):
+    async def completion(data) -> CompletionResponse:
         return data
 
     @chute.cord(

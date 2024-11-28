@@ -1,13 +1,68 @@
 import os
 import re
 import sys
+import aiohttp
 import argparse
+import mimetypes
 import importlib
 import importlib.util
+from io import BytesIO
 from loguru import logger
 from typing import List, Dict, Any, Tuple
+from chutes.config import get_config
+from chutes.util.auth import sign_request
 
 CHUTE_REF_RE = re.compile(r"^[a-z0-9][a-z0-9_/]*:[a-z][a-z0-9_]+$", re.I)
+
+
+class FakeStreamWriter:
+    """
+    Helper class for calculating sha256 for multi-part form posts (used in signature).
+    """
+
+    def __init__(self):
+        self.output = BytesIO()
+
+    async def write(self, chunk):
+        self.output.write(chunk)
+
+    async def drain(self):
+        pass
+
+    async def write_eof(self):
+        pass
+
+
+async def upload_logo(logo_path: str) -> str:
+    """
+    Upload a logo.
+    """
+    form_data = aiohttp.FormData()
+    with open(logo_path, "rb") as infile:
+        form_data.add_field(
+            "logo",
+            BytesIO(infile.read()),
+            filename=os.path.basename(logo_path),
+            content_type=mimetypes.guess_type(logo_path)[0] or "image/png",
+        )
+    payload = form_data()
+    writer = FakeStreamWriter()
+    await payload.write(writer)
+
+    # Retrieve the raw bytes of the request body
+    raw_data = writer.output.getvalue()
+    async with aiohttp.ClientSession(
+        base_url=get_config().generic.api_base_url, raise_for_status=True
+    ) as session:
+        headers, payload_string = sign_request(payload=raw_data)
+        headers["Content-Type"] = payload.content_type
+        headers["Content-Length"] = str(len(raw_data))
+        async with session.post(
+            "/logos/",
+            data=raw_data,
+            headers=headers,
+        ) as response:
+            return (await response.json())["logo_id"]
 
 
 def parse_args(args: List[Any], args_config: Dict[str, Any]):
