@@ -174,7 +174,7 @@ def run_chute(
             logger.info(f"Initializing graval with {graval_seed=}")
             MINER.initialize(graval_seed)
             MINER._seed = graval_seed
-        chute.add_middleware(GraValMiddleware)
+        # chute.add_middleware(GraValMiddleware)
         MINER._miner_ss58 = miner_ss58
         MINER._validator_ss58 = validator_ss58
         MINER._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)

@@ -139,6 +139,10 @@ class SchemaExtractor:
         }
         output_schema = None
         if return_type:
-            type_schema = cls._get_schema_for_type(return_type, definitions)
-            output_schema = {**type_schema, "definitions": definitions}
+            output_schema = cls._get_schema_for_type(return_type, definitions)
+            if "$ref" in output_schema:
+                output_schema = {
+                    **{"type": "object"},
+                    **definitions[output_schema["$ref"].split("/")[-1]],
+                }
         return input_schema, output_schema

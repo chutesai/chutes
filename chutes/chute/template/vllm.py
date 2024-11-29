@@ -189,11 +189,13 @@ def build_vllm_chute(
     model_name: str,
     node_selector: NodeSelector,
     image: str | Image = VLLM,
+    readme: str = "",
     engine_args: Dict[str, Any] = {},
 ):
     chute = Chute(
         username=username,
         name=model_name,
+        readme=readme,
         image=image,
         node_selector=node_selector,
         standard_template="vllm",

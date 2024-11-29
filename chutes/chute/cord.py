@@ -38,8 +38,9 @@ class Cord:
         method: str = "GET",
         provision_timeout: int = 180,
         input_schema: Optional[Any] = None,
-        output_schema: Optional[Any] = None,
         minimal_input_schema: Optional[Any] = None,
+        output_content_type: Optional[str] = None,
+        output_schema: Optional[Dict] = None,
         **session_kwargs,
     ):
         """
@@ -63,18 +64,16 @@ class Cord:
         self._session_kwargs = session_kwargs
         self._provision_timeout = provision_timeout
         self._config = None
-        self.input_schema = None
-        self.output_schema = None
         self.input_schema = (
             SchemaExtractor.get_minimal_schema(input_schema) if input_schema else None
         )
-        self.output_schema = None
         self.minimal_input_schema = (
             SchemaExtractor.get_minimal_schema(minimal_input_schema)
             if minimal_input_schema
             else None
         )
-        self.output_schema: Optional[Dict[str, Any]] = None
+        self.output_content_type = output_content_type
+        self.output_schema = output_schema
 
     @property
     def path(self):
@@ -384,6 +383,12 @@ class Cord:
             self.input_schema = in_schema
         if not self.output_schema:
             self.output_schema = out_schema
+        if not self.output_content_type:
+            if isinstance(out_schema, dict):
+                if out_schema.get("type") == "object":
+                    self.output_content_type = "application/json"
+                else:
+                    self.output_content_type = "text/plain"
         if is_local():
             return self._local_call if not self._stream else self._local_stream_call
         return self._remote_call if not self._stream else self._remote_stream_call

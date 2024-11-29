@@ -29,7 +29,6 @@ async def _deploy(
     with open(module.__file__, "r") as infile:
         code = infile.read()
     config = get_config()
-    print(f"README HERE: {chute.readme}")
     request_body = {
         "name": chute.name,
         "readme": chute.readme,
@@ -51,6 +50,7 @@ async def _deploy(
                 "function": cord._func.__name__,
                 "input_schema": cord.input_schema,
                 "output_schema": cord.output_schema,
+                "output_content_type": cord.output_content_type,
                 "minimal_input_schema": cord.minimal_input_schema,
             }
             for cord in chute._cords

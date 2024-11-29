@@ -131,8 +131,9 @@ class Chute(FastAPI):
             self.add_api_route(cord.path, cord._request_handler, methods=["POST"])
             logger.info(f"Added new API route: {cord.path} calling {cord._func.__name__}")
             logger.debug(f"  {cord.input_schema=}")
-            logger.debug(f"  {cord.output_schema=}")
             logger.debug(f"  {cord.minimal_input_schema=}")
+            logger.debug(f"  {cord.output_content_type=}")
+            logger.debug(f"  {cord.output_schema=}")
 
         # Add a ping endpoint for validators to use.
         self.add_api_route("/_ping", _pong, methods=["POST"])
