@@ -85,12 +85,19 @@ async def _build_remote(image, wait=None, public: bool = False, logo_id: str = N
     """
     config = get_config()
     with temporary_build_directory(image) as build_directory:
-        logger.info(f"Packaging up the build directory to upload: {build_directory}")
-        output_path = shutil.make_archive(
-            os.path.join(build_directory, "chute"), "zip", build_directory
-        )
-        logger.info(f"Created the build package: {output_path}, uploading...")
+        temp_zip = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tf:
+                temp_zip = tf.name
+            logger.info(f"Packaging up the build directory to upload: {build_directory}")
+            output_path = shutil.make_archive(temp_zip[:-4], "zip", build_directory)
+            final_path = os.path.join(build_directory, "chute.zip")
+            shutil.move(output_path, final_path)
+        finally:
+            if os.path.exists(temp_zip):
+                os.remove(temp_zip)
 
+        logger.info(f"Created the build package: {output_path}, uploading...")
         form_data = aiohttp.FormData()
         form_data.add_field("username", image.username)
         form_data.add_field("name", image.name)
