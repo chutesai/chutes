@@ -30,6 +30,7 @@ class ChuteTable:
         "chutes": [
             ("ID", "chute_id"),
             ("Name", "name"),
+            ("Status", lambda item: "hot" if item["hot"] else "cold"),
             ("Slug", "slug"),
             ("Created", "created_at"),
             (
