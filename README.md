@@ -206,3 +206,43 @@ For a cord to be available from the public, subdomain based API, you need to spe
 You can also spin up completely arbitrary webservers and do "passthrough" cords which pass along the request to the underlying webserver. This would be useful for things like using a webserver written in a different programming language, for example.
 
 To see an example of passthrough functions and more complex functionality, see the [vllm template chute/helper](https://github.com/rayonlabs/chutes/blob/main/chutes/chute/template/vllm.py)
+
+## Local testing
+
+If you'd like to test your image/chute before actually deploying onto the platform, you can build the images with `--local`, then run in dev mode:
+```bash
+chutes build llama1b:chute --local
+```
+
+Then, you can start a container with that image:
+```bash
+docker run --rm -it -e CHUTES_EXECUTIION_CONTEXT=REMOTE -p 8000:8000 vllm:0.6.3 chutes run llama1b:chute --port 8000 --dev
+```
+
+Then, you can actually invoke your functions by setting the `CHUTES_DEV_URL` environment variable, e.g., supposing you add the following to `llama1b.py`:
+```python
+async def main():
+    request = {
+        "json": {
+            "model": "unsloth/Llama-3.2-1B-Instruct",
+            "messages": [{"role": "user", "content": "Give me a spicy mayo recipe."}],
+            "temperature": 0.7,
+            "seed": 42,
+            "max_tokens": 3,
+            "stream": True,
+            "logprobs": True,
+        }
+    }
+    async for data in chute.chat_stream(**request):
+        if not data:
+            continue
+        print(json.dumps(data, indent=2))
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+You can call the `chute.chat_stream(..)` function running on your local instance with:
+```bash
+CHUTES_DEV_URL=http://127.0.0.1:8000 python llama1b.py
+```
