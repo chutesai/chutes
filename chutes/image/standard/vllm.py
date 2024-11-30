@@ -1,4 +1,4 @@
-VLLM = "parachutes/vllm:0.6.2"
+VLLM = "chutes/vllm:0.6.3"
 
 # To build this yourself, you can use something like:
 # from chutes.image import Image  # noqa: E402
