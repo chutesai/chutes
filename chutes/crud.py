@@ -92,6 +92,7 @@ async def _list_objects(
     name: str = None,
     limit: int = 25,
     page: int = 0,
+    **params,
 ):
     """
     List objects of a particular type, paginated.
@@ -100,15 +101,17 @@ async def _list_objects(
     config = get_config()
     headers, _ = sign_request(purpose=object_type)
     async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
-        params = {
-            key: value
-            for key, value in {
-                "name": name,
-                "limit": str(limit),
-                "page": str(page),
-            }.items()
-            if value is not None
-        }
+        params.update(
+            {
+                key: value
+                for key, value in {
+                    "name": name,
+                    "limit": str(limit),
+                    "page": str(page),
+                }.items()
+                if value is not None
+            }
+        )
         async with session.get(
             f"/{object_type}/",
             headers=headers,
@@ -179,8 +182,13 @@ def list_chutes(
     name: str | None = typer.Option(None, help="Name of chute to filter by"),
     limit: int = typer.Option(25, help="Number of chutes to display per page"),
     page: int = typer.Option(0, help="The page number to display"),
+    include_public: bool = typer.Option(False, help="Include public chutes"),
 ):
-    return asyncio.run(_list_objects("chutes", name=name, limit=limit, page=page))
+    return asyncio.run(
+        _list_objects(
+            "chutes", name=name, limit=limit, page=page, include_public=str(include_public)
+        )
+    )
 
 
 @chutes_app.command(name="get", help="Get a chute by name or ID")
@@ -198,8 +206,13 @@ def list_images(
     name: str | None = typer.Option(None, help="Name of image to filter by"),
     limit: int = typer.Option(25, help="Number of images to display per page"),
     page: int = typer.Option(0, help="The page number to display"),
+    include_public: bool = typer.Option(False, help="Include public chutes"),
 ):
-    return asyncio.run(_list_objects("images", name=name, limit=limit, page=page))
+    return asyncio.run(
+        _list_objects(
+            "images", name=name, limit=limit, page=page, include_public=str(include_public)
+        )
+    )
 
 
 @images_app.command(name="get", help="Get an image by name or ID")
