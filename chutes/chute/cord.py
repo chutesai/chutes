@@ -1,3 +1,4 @@
+import os
 import aiohttp
 import re
 import backoff
@@ -171,18 +172,23 @@ class Cord:
                 "args": base64.b64encode(gzip.compress(pickle.dumps(args))).decode(),
                 "kwargs": base64.b64encode(gzip.compress(pickle.dumps(kwargs))).decode(),
             }
-            headers, payload_string = sign_request(payload=request_payload)
+            dev_url = os.getenv("CHUTES_DEV_URL")
+            headers, payload_string = {}, None
+            if dev_url:
+                payload_string = json.dumps(request_payload)
+            else:
+                headers, payload_string = sign_request(payload=request_payload)
             headers.update(
                 {
                     CHUTEID_HEADER: self._app.uid,
                     FUNCTION_HEADER: self._func.__name__,
                 }
             )
-            async with aiohttp.ClientSession(
-                base_url=self.config.generic.api_base_url, **self._session_kwargs
-            ) as session:
+            base_url = dev_url or self.config.generic.api_base_url
+            path = f"/chutes/{self._app.uid}{self.path}" if not dev_url else self.path
+            async with aiohttp.ClientSession(base_url=base_url, **self._session_kwargs) as session:
                 async with session.post(
-                    f"/chutes/{self._app.uid}{self.path}",
+                    path,
                     data=payload_string,
                     headers=headers,
                 ) as response:
@@ -207,6 +213,9 @@ class Cord:
         """
         Call the function from the local context, i.e. make an API request.
         """
+        if os.getenv("CHUTES_DEV_URL"):
+            async with self._local_call_base(*args, **kwargs) as response:
+                return await response.read()
         result = None
         async for item in self._local_stream_call(*args, **kwargs):
             result = item
@@ -220,9 +229,9 @@ class Cord:
         """
         async with self._local_call_base(*args, **kwargs) as response:
             async for encoded_content in response.content:
-                content = encoded_content.decode()
-                if not content or not content.strip() or "data: {" not in content:
+                if not encoded_content or not encoded_content.strip() or not encoded_content.startswith(b"data: {"):
                     continue
+                content = encoded_content.decode()
                 data = json.loads(content[6:])
                 if data.get("trace"):
                     message = "".join(

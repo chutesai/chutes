@@ -32,6 +32,18 @@ class FSChallenge(BaseModel):
     offset: int
 
 
+class DevMiddleware(BaseHTTPMiddleware):
+
+    async def dispatch(self, request: Request, call_next):
+        """
+        Dev/dummy dispatch.
+        """
+        request.state.decrypted = (
+            await request.json() if request.method in ("POST", "PUT", "PATCH") else None
+        )
+        return await call_next(request)
+
+
 class GraValMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
@@ -149,12 +161,13 @@ def run_chute(
     chute_ref_str: str = typer.Argument(
         ..., help="chute to run, in the form [module]:[app_name], similar to uvicorn"
     ),
-    miner_ss58: str = typer.Option(help="miner hotkey ss58 address"),
-    validator_ss58: str = typer.Option(help="validator hotkey ss58 address"),
+    miner_ss58: str = typer.Option(None, help="miner hotkey ss58 address"),
+    validator_ss58: str = typer.Option(None, help="validator hotkey ss58 address"),
     port: int | None = typer.Option(None, help="port to listen on"),
     host: str | None = typer.Option(None, help="host to bind to"),
     graval_seed: int | None = typer.Option(None, help="graval seed for encryption/decryption"),
     debug: bool = typer.Option(False, help="enable debug logging"),
+    dev: bool = typer.Option(False, help="dev/local mode"),
 ):
     """
     Run the chute (uvicorn server).
@@ -170,14 +183,17 @@ def run_chute(
         chute = chute.chute if isinstance(chute, ChutePack) else chute
 
         # GraVal enabled?
-        if graval_seed is not None:
-            logger.info(f"Initializing graval with {graval_seed=}")
-            MINER.initialize(graval_seed)
-            MINER._seed = graval_seed
-        chute.add_middleware(GraValMiddleware)
-        MINER._miner_ss58 = miner_ss58
-        MINER._validator_ss58 = validator_ss58
-        MINER._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
+        if dev:
+            chute.add_middleware(DevMiddleware)
+        else:
+            if graval_seed is not None:
+                logger.info(f"Initializing graval with {graval_seed=}")
+                MINER.initialize(graval_seed)
+                MINER._seed = graval_seed
+            chute.add_middleware(GraValMiddleware)
+            MINER._miner_ss58 = miner_ss58
+            MINER._validator_ss58 = validator_ss58
+            MINER._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
         # Run initialization code.
         await chute.initialize()
