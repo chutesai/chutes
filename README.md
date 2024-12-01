@@ -108,6 +108,21 @@ To use the same example `llama1b.py` file outlined in the image building section
 chutes deploy llama1b:chute --public
 ```
 
+Be sure to carefully craft the `node_selector` option within the chute, to ensure the code runs on GPUs appropriate to the task.
+```python
+node_selector=NodeSelector(
+    gpu_count=1,
+    # All options.
+    # gpu_count: int = Field(1, ge=1, le=8)
+    # min_vram_gb_per_gpu: int = Field(16, ge=16, le=80)
+    # require_sxm: bool = False
+    # include: Optional[List[str]] = None
+    # exclude: Optional[List[str]] = None
+),
+```
+
+The most important fields are `gpu_count` and `min_vram_gb_per_gpu`.  If you wish to include specific GPUs, you can do so, where the `include` (or `exclude`) fields are the short identifier per model, e.g. `"a6000"`, `"a100"`, etc.  [All supported GPUs and their short identifiers](https://github.com/rayonlabs/chutes-api/blob/c0df10cff794c17684be9cf1111c00d84eb015b0/api/gpu.py#L17)
+
 ## Building custom/non-vllm chutes
 
 Chutes are in fact completely arbitrary, so you can customize to your heart's content.
