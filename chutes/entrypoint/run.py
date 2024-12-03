@@ -10,6 +10,7 @@ from loguru import logger
 import typer
 import pybase64 as base64
 import orjson as json
+from functools import lru_cache
 from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
@@ -18,12 +19,16 @@ from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
-from graval.miner import Miner
 from chutes.entrypoint._shared import load_chute
 from chutes.chute import ChutePack
 from chutes.util.context import is_local
 
-MINER = Miner()
+
+@lru_cache(maxsize=1)
+def miner():
+    from graval import Miner
+
+    return Miner()
 
 
 class FSChallenge(BaseModel):
@@ -79,8 +84,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
         signature = request.headers.get("X-Chutes-Signature")
         if (
             any(not v for v in [miner_hotkey, validator_hotkey, nonce, signature])
-            or validator_hotkey != MINER._validator_ss58
-            or miner_hotkey != MINER._miner_ss58
+            or validator_hotkey != miner()._validator_ss58
+            or miner_hotkey != miner()._miner_ss58
             or int(time.time()) - int(nonce) >= 30
         ):
             logger.warning(f"Missing auth data: {request.headers}")
@@ -98,7 +103,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 payload_string,
             ]
         )
-        if not MINER._keypair.verify(signature_string, bytes.fromhex(signature)):
+        if not miner()._keypair.verify(signature_string, bytes.fromhex(signature)):
             return ORJSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "go away (sig)"},
@@ -122,9 +127,9 @@ class GraValMiddleware(BaseHTTPMiddleware):
                             "detail": "Missing one or more required fields for encrypted payloads!"
                         },
                     )
-                if encrypted_body[key]["seed"] != MINER._seed:
+                if encrypted_body[key]["seed"] != miner()._seed:
                     logger.error(
-                        f"Expecting seed: {MINER._seed}, received {encrypted_body[key]['seed']}"
+                        f"Expecting seed: {miner()._seed}, received {encrypted_body[key]['seed']}"
                     )
                     return ORJSONResponse(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -135,7 +140,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     # Decrypt the request body.
                     ciphertext = base64.b64decode(encrypted_body[key]["ciphertext"].encode())
                     iv = bytes.fromhex(encrypted_body[key]["iv"])
-                    decrypted = MINER.decrypt(
+                    decrypted = miner().decrypt(
                         ciphertext,
                         iv,
                         encrypted_body[key]["length"],
@@ -188,12 +193,12 @@ def run_chute(
         else:
             if graval_seed is not None:
                 logger.info(f"Initializing graval with {graval_seed=}")
-                MINER.initialize(graval_seed)
-                MINER._seed = graval_seed
+                miner().initialize(graval_seed)
+                miner()._seed = graval_seed
             chute.add_middleware(GraValMiddleware)
-            MINER._miner_ss58 = miner_ss58
-            MINER._validator_ss58 = validator_ss58
-            MINER._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
+            miner()._miner_ss58 = miner_ss58
+            miner()._validator_ss58 = validator_ss58
+            miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
         # Run initialization code.
         await chute.initialize()
@@ -208,7 +213,7 @@ def run_chute(
         # Device info challenge endpoint.
         async def _device_challenge(request: Request, challenge: str):
             return Response(
-                content=MINER.process_device_info_challenge(challenge),
+                content=miner().process_device_info_challenge(challenge),
                 media_type="text/plain",
             )
 
@@ -218,7 +223,7 @@ def run_chute(
         # Filesystem challenge endpoint.
         async def _fs_challenge(request: Request, challenge: FSChallenge):
             return Response(
-                content=MINER.process_filesystem_challenge(
+                content=miner().process_filesystem_challenge(
                     filename=challenge.filename,
                     offset=challenge.offset,
                     length=challenge.length,

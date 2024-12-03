@@ -229,7 +229,11 @@ class Cord:
         """
         async with self._local_call_base(*args, **kwargs) as response:
             async for encoded_content in response.content:
-                if not encoded_content or not encoded_content.strip() or not encoded_content.startswith(b"data: {"):
+                if (
+                    not encoded_content
+                    or not encoded_content.strip()
+                    or not encoded_content.startswith(b"data: {")
+                ):
                     continue
                 content = encoded_content.decode()
                 data = json.loads(content[6:])
