@@ -138,7 +138,9 @@ async def _build_remote(image, wait=None, public: bool = False, logo_id: str = N
                 if wait:
                     async for data_enc in response.content:
                         data = data_enc.decode()
-                        if data and data.strip() and "data: {" in data:
+                        if not data or not data.strip():
+                            continue
+                        if data.startswith("data: {"):
                             data = json.loads(data[6:])
                             log_method = (
                                 logger.info if data["log_type"] == "stdout" else logger.warning
@@ -146,6 +148,8 @@ async def _build_remote(image, wait=None, public: bool = False, logo_id: str = N
                             log_method(data["log"].strip())
                         elif data.startswith("DONE"):
                             break
+                        else:
+                            logger.error(data)
                     return
                 if response.status == 409:
                     logger.error(
@@ -223,7 +227,7 @@ def build_image(
             sys.exit(1)
 
         # Check if the image is already built.
-        if await _image_exists(image):
+        if not local and await _image_exists(image):
             logger.error(f"Image with name={image.name} and tag={image.tag} already exists!")
             sys.exit(1)
 

@@ -47,6 +47,7 @@ class ChuteTable:
             ("ID", "image_id"),
             ("Name", "name"),
             ("Tag", "tag"),
+            ("Status", "status"),
             ("Created", "created_at"),
         ],
         "api_keys": [
