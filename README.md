@@ -14,6 +14,8 @@ Images must meet two requirements:
 - Containt a cuda installation, preferably version 12.2-12.6
 - Contain a python 3.10+ installation, where `python` and `pip` are contained within the executable path `PATH`
 
+__*Highly recommend you start with our base image: parachutes/base-python:3.12.7*__
+
 ### chute
 
 A chute is essentially an application that runs on top of an image, within the platform.  Think of a chute as a single FastAPI application.
