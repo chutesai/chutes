@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from loguru import logger
 from typing import Any, List, Dict
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel, ConfigDict
 from chutes.image import Image
 from chutes.util.context import is_remote
@@ -19,11 +19,11 @@ if TYPE_CHECKING:
     from chutes.chute.cord import Cord
 
 
-async def _pong(request: Dict[str, Any]) -> Dict[str, Any]:
+async def _pong(request: Request) -> Dict[str, Any]:
     """
     Echo incoming request as a liveness check.
     """
-    return request
+    return request.state.decrypted
 
 
 class Chute(FastAPI):
