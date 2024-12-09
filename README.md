@@ -147,6 +147,7 @@ chute = Chute(
     name="example",
     readme="## Example Chute\n\n### Foo.\n\n```python\nprint('foo')```",
     image=image,
+    concurrency=4,
     node_selector=NodeSelector(
         gpu_count=1,
         # All options.
@@ -221,6 +222,8 @@ For a cord to be available from the public, subdomain based API, you need to spe
 You can also spin up completely arbitrary webservers and do "passthrough" cords which pass along the request to the underlying webserver. This would be useful for things like using a webserver written in a different programming language, for example.
 
 To see an example of passthrough functions and more complex functionality, see the [vllm template chute/helper](https://github.com/rayonlabs/chutes/blob/main/chutes/chute/template/vllm.py)
+
+It is also very important to specify `concurrency=N` in your `Chute(..)` constructor.  In may cases, e.g. vllm, this can be fairly high (based on max sequences), where in other cases without data parallelism or other cases with contention, you may wish to leave it at the default of 1.
 
 ## Local testing
 

@@ -14,7 +14,7 @@ from functools import lru_cache
 from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
-from fastapi import Request, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -51,7 +51,16 @@ class DevMiddleware(BaseHTTPMiddleware):
 
 class GraValMiddleware(BaseHTTPMiddleware):
 
-    async def dispatch(self, request: Request, call_next):
+    def __init__(self, app: FastAPI, concurrency: int = 1):
+        """
+        Initialize a semaphore for concurrency control/limits.
+        """
+        super().__init__(app)
+        self.concurrency = concurrency
+        self.rate_limiter = asyncio.Semaphore(concurrency)
+        self.lock = asyncio.Lock()
+
+    async def _dispatch(self, request: Request, call_next):
         """
         Transparently handle decryption and verification.
         """
@@ -159,6 +168,25 @@ class GraValMiddleware(BaseHTTPMiddleware):
 
         return await call_next(request)
 
+    async def dispatch(self, request: Request, call_next):
+        """
+        Rate-limiting wrapper around the actual dispatch function.
+        """
+        async with self.lock:
+            if self.rate_limiter.locked():
+                return ORJSONResponse(
+                    status_code=429,
+                    content={
+                        "error": "RateLimitExceeded",
+                        "detail": "Max concurrency exceeded: {self.concurrency}, try again later.",
+                    },
+                )
+            await self.rate_limiter.acquire()
+        try:
+            return await self._dispatch(request, call_next)
+        finally:
+            self.semaphore.release()
+
 
 # NOTE: Might want to change the name of this to 'start'.
 # So `run` means an easy way to perform inference on a chute (pull the cord :P)
@@ -195,7 +223,7 @@ def run_chute(
                 logger.info(f"Initializing graval with {graval_seed=}")
                 miner().initialize(graval_seed)
                 miner()._seed = graval_seed
-            chute.add_middleware(GraValMiddleware)
+            chute.add_middleware(GraValMiddleware, concurrency=chute.concurrency)
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58
             miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)

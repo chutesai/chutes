@@ -190,6 +190,7 @@ def build_vllm_chute(
     node_selector: NodeSelector,
     image: str | Image = VLLM,
     readme: str = "",
+    concurrency: int = 32,
     engine_args: Dict[str, Any] = {},
 ):
     chute = Chute(
@@ -198,6 +199,7 @@ def build_vllm_chute(
         readme=readme,
         image=image,
         node_selector=node_selector,
+        concurrency=concurrency,
         standard_template="vllm",
     )
 
