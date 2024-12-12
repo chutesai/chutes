@@ -11,11 +11,10 @@ import time
 import aiohttp
 from loguru import logger
 from pathlib import Path
-import rich
 from substrateinterface import Keypair
 import typer
 from chutes.config import get_generic_config
-from rich import print
+from rich import print as rprint
 from chutes.constants import HOTKEY_HEADER, NONCE_HEADER, SIGNATURE_HEADER
 from chutes.util.auth import get_signing_message
 from chutes.util.user import validate_the_username
@@ -83,9 +82,9 @@ def register(
             if len(available_wallets) == 0:
                 logger.error("No wallets found in the wallets path!")
                 sys.exit(1)
-            print("Wallets available (commissions soon\u2122):")
+            rprint("Wallets available (commissions soon\u2122):")
             for idx in range(len(available_wallets)):
-                print(f"[{idx:2d}] {available_wallets[idx]}")
+                rprint(f"[{idx:2d}] {available_wallets[idx]}")
             choice = input("Enter your choice (number, not name): ")
             if not choice.isdigit() or not 0 <= int(choice) < len(available_wallets):
                 logger.error("Bad choice!")
@@ -105,9 +104,9 @@ def register(
                     if os.path.isfile(item)
                 ]
             )
-            print(f"Hotkeys available for {wallet}:")
+            rprint(f"Hotkeys available for {wallet}:")
             for idx in range(len(available_hotkeys)):
-                print(f"[{idx:2d}] {available_hotkeys[idx]}")
+                rprint(f"[{idx:2d}] {available_hotkeys[idx]}")
             choice = input("Enter your choice (number, not name): ")
             if not choice.isdigit() or not 0 <= int(choice) < len(available_hotkeys):
                 logger.error("Bad choice!")
@@ -117,7 +116,7 @@ def register(
             logger.error(f"No hotkey found: {hotkey_path}")
             sys.exit(1)
 
-        rich.print(
+        rprint(
             f"\nAttempting to register the user {username} with the wallet located at {os.path.join(wallets_path, wallet, 'hotkeys', hotkey)}.\n"
         )
 
@@ -171,6 +170,7 @@ def register(
                             "",
                             "[payment]",
                             f"address = {data['payment_address']}",
+                            f"developer_payment_address = {data['developer_payment_address']}",
                         ]
                     )
                     print(updated_config + "\n\n")
@@ -178,10 +178,28 @@ def register(
                     if save.strip().lower() == "y":
                         with open(CONFIG_PATH, "w") as outfile:
                             outfile.write(updated_config + "\n")
+
+                    # Try to get developer pricing.
+                    deposit_message = ""
+                    try:
+                        async with session.get("/developer_deposit") as resp:
+                            deposit_info = await resp.json()
+                            tao, usd = deposit_info["tao_estimate"], deposit_info["usd"]
+                            deposit_message = f"\n  Deposit mount is set to ${usd} USD, which is approximately {tao} tao."
+                    except Exception as price_exc:
+                        logger.warning(f"Unable to fetch developer deposit amount: {price_exc}")
                     logger.success(
-                        f"Successfully registered username={data['username']}, with fingerprint {data['fingerprint']}. "
-                        "Keep the fingerprint safe as this is account login credentials - do not lose or share it! "
-                        f"To add balance for your account, send tao to {data['payment_address']}."
+                        "\n".join(
+                            [
+                                "\n",
+                                "*" * 80,
+                                f"Successfully registered username={data['username']}, with fingerprint {data['fingerprint']}.",
+                                "Keep the fingerprint safe as this is account login credentials - do not lose or share it!",
+                                f"  To add balance for your account, send tao to: {data['payment_address']}",
+                                f"  To enable development (create images/chutes), send tao to: {data['developer_payment_address']}{deposit_message}",
+                                "*" * 80,
+                            ]
+                        )
                     )
                 else:
                     logger.error(await response.json())
