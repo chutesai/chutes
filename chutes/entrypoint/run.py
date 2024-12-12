@@ -185,7 +185,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
         try:
             return await self._dispatch(request, call_next)
         finally:
-            self.semaphore.release()
+            self.rate_limiter.release()
 
 
 # NOTE: Might want to change the name of this to 'start'.
