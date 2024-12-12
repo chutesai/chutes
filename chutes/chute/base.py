@@ -35,6 +35,7 @@ class Chute(FastAPI):
         readme: str = "",
         standard_template: str = None,
         node_selector: NodeSelector = None,
+        concurrency: int = 1,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -48,6 +49,7 @@ class Chute(FastAPI):
         self._startup_hooks = []
         self._shutdown_hooks = []
         self._cords: list[Cord] = []
+        self.concurrency = concurrency
         self.docs_url = None
         self.redoc_url = None
 

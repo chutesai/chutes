@@ -1,10 +1,16 @@
 import json
 import os
+from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Callable, Literal, Optional, Union, List
 from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
+
+
+class DefaultRole(Enum):
+    user = "user"
+    assistant = "assistant"
 
 
 class ChatMessage(BaseModel):
@@ -217,6 +223,34 @@ def build_vllm_chute(
         if key not in engine_args:
             engine_args[key] = value
 
+    # Minimal input schema with defaults.
+    class MinifiedMessage(BaseModel):
+        role: DefaultRole = DefaultRole.user
+        content: str = Field("")
+
+    class MinifiedStreamChatCompletion(BaseModel):
+        messages: List[MinifiedMessage] = [MinifiedMessage()]
+        temperature: float = Field(0.7)
+        seed: int = Field(42)
+        stream: bool = Field(True)
+        max_tokens: int = Field(1024)
+        model: str = Field(model_name)
+
+    class MinifiedChatCompletion(MinifiedStreamChatCompletion):
+        stream: bool = Field(False)
+
+    # Minimal completion input.
+    class MinifiedStreamCompletion(BaseModel):
+        prompt: str
+        temperature: float = Field(0.7)
+        seed: int = Field(42)
+        stream: bool = Field(True)
+        max_tokens: int = Field(1024)
+        model: str = Field(model_name)
+
+    class MinifiedCompletion(MinifiedStreamCompletion):
+        stream: bool = Field(False)
+
     @chute.on_startup()
     async def initialize_vllm(self):
         nonlocal engine_args
@@ -290,8 +324,21 @@ def build_vllm_chute(
         passthrough=True,
         stream=True,
         input_schema=ChatCompletionRequest,
+        minimal_input_schema=MinifiedStreamChatCompletion,
     )
     async def chat_stream(encoded_chunk) -> ChatCompletionStreamResponse:
+        return _parse_stream_chunk(encoded_chunk)
+
+    @chute.cord(
+        passthrough_path="/v1/completions",
+        public_api_path="/v1/completions",
+        method="POST",
+        passthrough=True,
+        stream=True,
+        input_schema=CompletionRequest,
+        minimal_input_schema=MinifiedStreamCompletion,
+    )
+    async def completion_stream(encoded_chunk) -> CompletionStreamResponse:
         return _parse_stream_chunk(encoded_chunk)
 
     @chute.cord(
@@ -300,6 +347,7 @@ def build_vllm_chute(
         method="POST",
         passthrough=True,
         input_schema=ChatCompletionRequest,
+        minimal_input_schema=MinifiedChatCompletion,
     )
     async def chat(data) -> ChatCompletionResponse:
         return data
@@ -309,18 +357,8 @@ def build_vllm_chute(
         public_api_path="/v1/completions",
         method="POST",
         passthrough=True,
-        stream=True,
         input_schema=CompletionRequest,
-    )
-    async def completion_stream(encoded_chunk) -> CompletionStreamResponse:
-        return _parse_stream_chunk(encoded_chunk)
-
-    @chute.cord(
-        passthrough_path="/v1/completions",
-        public_api_path="/v1/completions",
-        method="POST",
-        passthrough=True,
-        input_schema=CompletionRequest,
+        minimal_input_schema=MinifiedCompletion,
     )
     async def completion(data) -> CompletionResponse:
         return data
