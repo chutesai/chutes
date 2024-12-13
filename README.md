@@ -69,12 +69,16 @@ curl -s https://api.chutes.ai/developer_deposit | jq .
 
 The developer deposit address should be in your `~/chutes/config.ini` file, or you can get your information from the `/users/me` endpoint, e.g.:
 ```bash
-curl -s https://api.chutes.ai/users/me -H 'authorization: cpk_...'
+curl -s https://api.chutes.ai/users/me \
+  -H 'authorization: cpk_...'
 ```
 
 To get your deposit back, you must wait at least 7 days since the transfer was made, then POST to the `/return_developer_deposit` endpoint, e.g.:
 ```bash
-curl -XPOST https://api.chutes.ai/return_developer_deposit -H 'content-type: application/json' -H 'authorization: cpk_...' -d '{"address": "5EcZsewZSTxUaX8gwyHzkKsqT3NwLP1n2faZPyjttCeaPdYe"}'
+curl -XPOST https://api.chutes.ai/return_developer_deposit \
+  -H 'content-type: application/json' \
+  -H 'authorization: cpk_...' \
+  -d '{"address": "5EcZsewZSTxUaX8gwyHzkKsqT3NwLP1n2faZPyjttCeaPdYe"}'
 ```
 
 ## Building an image
