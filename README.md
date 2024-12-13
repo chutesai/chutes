@@ -58,6 +58,25 @@ CHUTES_API_URL=https://api.chutes.dev chutes register
 
 Once you've completed the registration process, you'll have a file in `~/.chutes/config.ini` which contains the configuration for using chutes.
 
+## Enable developer role
+
+To help reduce spam/abuse on the platform, you must deposit tao in your account before you can create images/chutes.  This is fully refundable (minus the bittensor chain transaction fees).
+
+The API lists the current developer deposit amount from the `/developer_deposit` endpoint, e.g.:
+```bash
+curl -s https://api.chutes.ai/developer_deposit | jq .
+```
+
+The developer deposit address should be in your `~/chutes/config.ini` file, or you can get your information from the `/users/me` endpoint, e.g.:
+```bash
+curl -s https://api.chutes.ai/users/me -H 'authorization: cpk_...'
+```
+
+To get your deposit back, you must wait at least 7 days since the transfer was made, then POST to the `/return_developer_deposit` endpoint, e.g.:
+```bash
+curl -XPOST https://api.chutes.ai/return_developer_deposit -H 'content-type: application/json' -H 'authorization: cpk_...' -d '{"address": "5EcZsewZSTxUaX8gwyHzkKsqT3NwLP1n2faZPyjttCeaPdYe"}'
+```
+
 ## Building an image
 
 The first step in getting an application onto the chutes platform is to build an image.
