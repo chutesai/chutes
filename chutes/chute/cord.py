@@ -42,6 +42,7 @@ class Cord:
         minimal_input_schema: Optional[Any] = None,
         output_content_type: Optional[str] = None,
         output_schema: Optional[Dict] = None,
+        pass_chute: Optional[bool] = False,
         **session_kwargs,
     ):
         """
