@@ -66,15 +66,14 @@ def _build_local(image):
     """
     Build an image locally, directly with docker (for testing purposes).
     """
-    with temporary_build_directory(image) as build_directory:
-        dockerfile_path = os.path.join(build_directory, "Dockerfile")
-        with open(dockerfile_path, "w") as outfile:
-            outfile.write(str(image))
-        logger.info(f"Starting build of {dockerfile_path}...")
-        os.chdir(build_directory)
+    with tempfile.NamedTemporaryFile() as tmp:
+        tmp.write(str(image).encode())
+        tmp.flush()
+        tmp.seek(0)
+        logger.info(f"Starting build of {tmp.name}...")
         os.execv(
             "/usr/bin/docker",
-            ["/usr/bin/docker", "build", "-t", f"{image.name}:{image.tag}", "."],
+            ["/usr/bin/docker", "build", "-t", f"{image.name}:{image.tag}", ".", "-f", tmp.name],
         )
 
 
@@ -266,7 +265,7 @@ def build_image(
                 f
                 for f in imported_files
                 if f.startswith(current_directory)
-                and not re.search(r"(site|dist)-packages", f)
+                and not re.search(r"(site|dist)-packages|bin/chutes|^\.local", f)
                 and f != os.path.abspath(module.__file__)
             ]
             for path in imported_files:
