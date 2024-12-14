@@ -55,7 +55,7 @@ def temporary_build_directory(image):
     _clean_path = lambda in_: in_[len(os.getcwd()) + 1 :]  # noqa: E731
     with tempfile.TemporaryDirectory() as tempdir:
         for path in all_input_files:
-            temp_path = os.path.join(tempdir, _clean_path(path))
+            temp_path = os.path.join(tempdir, _clean_path(os.path.abspath(path)))
             os.makedirs(os.path.dirname(temp_path), exist_ok=True)
             logger.debug(f"Copying {path} to {temp_path}")
             shutil.copy(path, temp_path)

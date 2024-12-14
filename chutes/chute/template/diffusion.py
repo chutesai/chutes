@@ -1,7 +1,7 @@
 import os
 import uuid
 from io import BytesIO
-from fastapi.responses import FileResponse
+from fastapi import Response
 from pydantic import BaseModel, Field
 from typing import Callable, Optional, Union
 from chutes.chute import Chute, ChutePack, NodeSelector
@@ -105,7 +105,7 @@ def build_diffusion_chute(
         output_content_type="image/jpeg",
         pass_chute=True,
     )
-    async def generate(self, params: GenerationInput) -> FileResponse:
+    async def generate(self, params: GenerationInput) -> Response:
         """
         Generate an image.
         """
@@ -127,7 +127,11 @@ def build_diffusion_chute(
         buffer = BytesIO()
         image.save(buffer, format="JPEG", quality=85)
         buffer.seek(0)
-        return FileResponse(buffer, media_type="image/jpeg", filename=f"{uuid.uuid4()}.jpg")
+        return Response(
+            content=buffer.getvalue(),
+            media_type="image/jpeg",
+            headers={"Content-Disposition": f'attachment; filename="{uuid.uuid4()}.jpg"'},
+        )
 
     return DiffusionChute(
         chute=chute,
