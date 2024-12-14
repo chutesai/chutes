@@ -67,5 +67,4 @@ def sign_request(payload: Dict[str, Any] | str | None = None, purpose: str = Non
     logger.debug(f"Signing message: {signature_string}")
     keypair = Keypair.create_from_seed(seed_hex=config.auth.hotkey_seed)
     headers[SIGNATURE_HEADER] = keypair.sign(signature_string.encode()).hex()
-    print(headers[SIGNATURE_HEADER])
     return headers, payload_string
