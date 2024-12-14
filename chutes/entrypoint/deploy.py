@@ -52,6 +52,7 @@ async def _deploy(
                 "output_schema": cord.output_schema,
                 "output_content_type": cord.output_content_type,
                 "minimal_input_schema": cord.minimal_input_schema,
+                "passthrough": cord._passthrough,
             }
             for cord in chute._cords
         ],
