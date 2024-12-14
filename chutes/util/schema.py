@@ -146,3 +146,23 @@ class SchemaExtractor:
                     **definitions[output_schema["$ref"].split("/")[-1]],
                 }
         return input_schema, output_schema
+
+    @classmethod
+    def extract_models(cls, func) -> List[Type[BaseModel]]:
+        """
+        Extract pydantic models from function signature.
+        """
+        models = []
+        sig = inspect.signature(func)
+        hints = get_type_hints(func)
+        params = list(sig.parameters.items())
+        if params and (params[0][0] == "self" or params[0][0] not in hints):
+            params = params[1:]
+        for param_name, _ in params:
+            if param_name not in hints:
+                return None
+            type_hint = hints[param_name]
+            if not (inspect.isclass(type_hint) and issubclass(type_hint, BaseModel)):
+                return None
+            models.append(type_hint)
+        return models

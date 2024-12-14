@@ -34,6 +34,7 @@ def build_diffusion_chute(
     image: Union[str, Image],
     readme: str = "",
     xl: Optional[bool] = True,
+    pipeline_args: Optional[dict] = {},
 ):
     chute = Chute(
         username=username,
@@ -90,7 +91,9 @@ def build_diffusion_chute(
         # Initialize the pipeline.
         pipeline_class = StableDiffusionXLPipeline if xl else StableDiffusionPipeline
         self.pipeline = pipeline_class.from_pretrained(
-            model_identifier, torch_dtype=torch.float16, safety_checker=None, use_safetensors=True
+            model_identifier,
+            torch_dtype=torch.float16,
+            **pipeline_args,
         )
         self.pipeline.to("cuda")
 

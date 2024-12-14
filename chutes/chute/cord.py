@@ -65,6 +65,9 @@ class Cord:
         self._session_kwargs = session_kwargs
         self._provision_timeout = provision_timeout
         self._config = None
+        self.input_models = (
+            [input_schema] if input_schema and hasattr(input_schema, "__fields__") else None
+        )
         self.input_schema = (
             SchemaExtractor.get_minimal_schema(input_schema) if input_schema else None
         )
@@ -381,6 +384,8 @@ class Cord:
                 status_code=status.HTTP_401_FORBIDDEN,
                 detail=message,
             )
+        if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
+            args = [self.input_models[idx](**args[idx]) for idx in range(len(self.input_models))]
         if self._stream:
             return StreamingResponse(self._remote_stream_call(*args, **kwargs))
         return await self._remote_call(*args, **kwargs)
@@ -391,6 +396,8 @@ class Cord:
             self.path = func.__name__
         if not self._passthrough_path:
             self.passthrough_path = func.__name__
+        if not self.input_models:
+            self.input_models = SchemaExtractor.extract_models(func)
         in_schema, out_schema = SchemaExtractor.extract_schemas(func)
         if not self.input_schema:
             self.input_schema = in_schema
