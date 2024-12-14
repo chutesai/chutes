@@ -265,12 +265,12 @@ async def initialize(self):
 
 
 @chute.cord(minimal_input_schema=MicroArgs)
-async def echo(input_args: FullArgs) -> str:
-    return f"{chute.billygoat} says: {input_args}"
+async def echo(self, input_args: FullArgs) -> str:
+    return f"{self.billygoat} says: {input_args}"
 
 
 @chute.cord()
-async def complex(input_args: MicroArgs) -> ExampleOutput:
+async def complex(self, input_args: MicroArgs) -> ExampleOutput:
     return ExampleOutput(foo=input_args.foo, bar=input_args.bar, baz=input_args.baz)
 
 
@@ -279,7 +279,7 @@ async def complex(input_args: MicroArgs) -> ExampleOutput:
     public_api_path="/image",
     public_api_method="GET",
 )
-async def image() -> FileResponse:
+async def image(self) -> FileResponse:
     return FileResponse("parachute.png", media_type="image/png")
 
 

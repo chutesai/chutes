@@ -172,6 +172,10 @@ class GraValMiddleware(BaseHTTPMiddleware):
         """
         Rate-limiting wrapper around the actual dispatch function.
         """
+        if request.scope.get("path", "").endswith(
+            ("/_fs_challenge", "/_alive", "/_metrics", "/_ping", "/_device_challenge")
+        ):
+            return await self._dispatch(request, call_next)
         async with self.lock:
             if self.rate_limiter.locked():
                 return ORJSONResponse(

@@ -42,7 +42,6 @@ class Cord:
         minimal_input_schema: Optional[Any] = None,
         output_content_type: Optional[str] = None,
         output_schema: Optional[Dict] = None,
-        pass_chute: Optional[bool] = False,
         **session_kwargs,
     ):
         """
@@ -301,7 +300,7 @@ class Cord:
                     )
                     return await response.json()
 
-            return_value = await self._func(*args, **kwargs)
+            return_value = await self._func(self._app, *args, **kwargs)
             logger.success(
                 f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
             )
@@ -344,7 +343,7 @@ class Cord:
                 )
                 return
 
-            async for data in self._func(*args, **kwargs):
+            async for data in self._func(self._app, *args, **kwargs):
                 yield data
             logger.success(
                 f"Completed request [{self._func.__name__}] in {time.time() - started_at} seconds"

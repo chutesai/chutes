@@ -41,6 +41,7 @@ def build_diffusion_chute(
         readme=readme,
         image=image,
         node_selector=node_selector,
+        standard_template="diffusion",
         concurrency=1,
     )
 
