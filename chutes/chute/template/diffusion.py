@@ -72,6 +72,7 @@ def build_diffusion_chute(
 
         # Handle civitai models/cache.
         model_identifier = model_name_or_url
+        single_file = False
         if model_name_or_url.lower().startswith("https://civitai.com"):
             model_id = urlparse(model_name_or_url).path.rstrip("/").split("/")[-1]
             api_url = f"https://civitai.com/api/v1/models/{model_id}"
@@ -81,6 +82,7 @@ def build_diffusion_chute(
                     download_url = model_info["modelVersions"][0]["downloadUrl"]
                     model_path = os.path.join(civitai_home, f"{model_id}.safetensors")
                     model_identifier = model_path
+                    single_file = True
                 if not os.path.exists(model_path):
                     print(f"Downloading model: {download_url}")
                     async with session.get(download_url) as response:
@@ -90,7 +92,8 @@ def build_diffusion_chute(
 
         # Initialize the pipeline.
         pipeline_class = StableDiffusionXLPipeline if xl else StableDiffusionPipeline
-        self.pipeline = pipeline_class.from_pretrained(
+        method = "from_pretrained" if not single_file else "from_single_file"
+        self.pipeline = getattr(pipeline_class, method)(
             model_identifier,
             torch_dtype=torch.float16,
             **pipeline_args,
@@ -111,7 +114,7 @@ def build_diffusion_chute(
         """
         generator = None
         if params.seed is not None:
-            generator = self.torch.Generator(device=self.device).manual_seed(params.seed)
+            generator = self.torch.Generator(device="cuda").manual_seed(params.seed)
         with self.torch.inference_mode():
             result = self.pipeline(
                 prompt=params.prompt,
