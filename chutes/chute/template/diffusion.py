@@ -39,7 +39,11 @@ def single_file_pipeline(model_path, model_type="auto"):
         AutoencoderKL,
         UNet2DConditionModel,
     )
-    from transformers import CLIPTextModel, CLIPTextModelWithProjection
+    from transformers import (
+        CLIPTextModel,
+        CLIPTextModelWithProjection,
+        CLIPTokenizer,
+    )
 
     if model_type == "auto":
         try:
@@ -67,6 +71,12 @@ def single_file_pipeline(model_path, model_type="auto"):
                 variant="fp16",
             )
             if model_type == "sdxl":
+                components["tokenizer"] = CLIPTokenizer.from_pretrained(
+                    base_model, subfolder="tokenizer"
+                )
+                components["tokenizer_2"] = CLIPTokenizer.from_pretrained(
+                    base_model, subfolder="tokenizer_2"
+                )
                 components["text_encoder"] = CLIPTextModel.from_pretrained(
                     base_model, subfolder="text_encoder", torch_dtype=torch.float16
                 )
@@ -74,6 +84,9 @@ def single_file_pipeline(model_path, model_type="auto"):
                     base_model, subfolder="text_encoder_2", torch_dtype=torch.float16
                 )
             else:
+                components["tokenizer"] = CLIPTokenizer.from_pretrained(
+                    base_model, subfolder="tokenizer"
+                )
                 components["text_encoder"] = CLIPTextModel.from_pretrained(
                     base_model, subfolder="text_encoder", torch_dtype=torch.float16
                 )
