@@ -34,6 +34,7 @@ def build_diffusion_chute(
     image: Union[str, Image],
     readme: str = "",
     xl: Optional[bool] = True,
+    version: Optional[str] = None,
     pipeline_args: Optional[dict] = {},
 ):
     chute = Chute(
@@ -73,21 +74,36 @@ def build_diffusion_chute(
         # Handle civitai models/cache.
         model_identifier = model_name_or_url
         single_file = False
-        if model_name_or_url.lower().startswith("https://civitai.com"):
-            model_id = urlparse(model_name_or_url).path.rstrip("/").split("/")[-1]
-            api_url = f"https://civitai.com/api/v1/models/{model_id}"
-            async with aiohttp.ClientSession(raise_for_status=True) as session:
-                async with session.get(api_url) as resp:
-                    model_info = await resp.json()
-                    download_url = model_info["modelVersions"][0]["downloadUrl"]
-                    model_path = os.path.join(civitai_home, f"{model_id}.safetensors")
-                    model_identifier = model_path
-                    single_file = True
-                if not os.path.exists(model_path):
-                    print(f"Downloading model: {download_url}")
-                    async with session.get(download_url) as response:
+        if model_name_or_url.lower().startswith("https://civitai.com/"):
+            download_url = "https://civitai.com/api/download/models/{version}?type=Model&format=SafeTensor"
+            path_match = re.search(r"^(.+)?/models/([0-9]+)/?.*", urlparse(model_name_or_url).path)
+            if not path_match:
+                raise Exception("Invalid civitai.com URL!")
+            model_id = path_match.group(2)
+            if version:
+                download_url = download_url.format(version=version)
+            else:
+                if path_match.group(1) and path_match.group(1).lower().endswith("download"):
+                    download_url = download_url.format(version=str(model_id))
+                else:
+                    # Need to get the actual download link from API.
+                    async with aiohttp.ClientSession(raise_for_status=True) as session:
+                        async with session.get(f"https://civitai.com/api/v1/models/{model_id}") as resp:
+                            try:
+                                data = await resp.json()
+                            except Exception:
+                                data = json.loads(await resp.text())
+                            download_url = download_url.format(version=str(data["modelVersions"][0]["id"]))
+
+            # Now do the actual download.
+            model_path = os.path.join(civitai_home, f"{model_id}.safetensors")
+            model_identifier = model_path
+            single_file = True
+            if not os.path.exists(model_path):
+                async with aiohttp.ClientSession(raise_for_status=True) as session:
+                    async with session.get(download_url) as resp:
                         with open(model_path, "wb") as outfile:
-                            while chunk := await response.content.read(8192):
+                            while chunk := await resp.content.read(8192):
                                 outfile.write(chunk)
 
         # Initialize the pipeline.
