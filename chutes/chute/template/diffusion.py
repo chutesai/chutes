@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import json
 from io import BytesIO
 from fastapi import Response
 from pydantic import BaseModel, Field
@@ -27,6 +28,71 @@ class DiffusionChute(ChutePack):
     generate: Callable
 
 
+def single_file_pipeline(model_path, model_type="auto"):
+    """
+    Load either SD or SDXL models with fallback components.
+    """
+    import torch
+    from diffusers import (
+        StableDiffusionPipeline,
+        StableDiffusionXLPipeline,
+        AutoencoderKL,
+        UNet2DConditionModel,
+    )
+    from transformers import CLIPTextModel, CLIPTextModelWithProjection
+
+    if model_type == "auto":
+        try:
+            return single_file_pipeline(model_path, "sdxl")
+        except Exception:
+            return single_file_pipeline(model_path, "sd")
+
+    pipeline_class = StableDiffusionXLPipeline if model_type == "sdxl" else StableDiffusionPipeline
+    base_model = (
+        "stabilityai/stable-diffusion-xl-base-1.0"
+        if model_type == "sdxl"
+        else "runwayml/stable-diffusion-v1-5"
+    )
+    try:
+        pipeline = pipeline_class.from_single_file(
+            model_path, torch_dtype=torch.float16, use_safetensors=True
+        )
+    except Exception:
+        try:
+            components = {}
+            components["unet"] = UNet2DConditionModel.from_pretrained(
+                base_model,
+                subfolder="unet",
+                torch_dtype=torch.float16,
+                variant="fp16",
+            )
+            if model_type == "sdxl":
+                components["text_encoder"] = CLIPTextModel.from_pretrained(
+                    base_model, subfolder="text_encoder", torch_dtype=torch.float16
+                )
+                components["text_encoder_2"] = CLIPTextModelWithProjection.from_pretrained(
+                    base_model, subfolder="text_encoder_2", torch_dtype=torch.float16
+                )
+            else:
+                components["text_encoder"] = CLIPTextModel.from_pretrained(
+                    base_model, subfolder="text_encoder", torch_dtype=torch.float16
+                )
+            pipeline = pipeline_class.from_single_file(
+                model_path, **components, torch_dtype=torch.float16, use_safetensors=True
+            )
+        except Exception:
+            vae_model = (
+                "madebyollin/sdxl-vae-fp16-fix"
+                if model_type == "sdxl"
+                else "stabilityai/sd-vae-ft-mse"
+            )
+            components["vae"] = AutoencoderKL.from_pretrained(vae_model, torch_dtype=torch.float16)
+            pipeline = pipeline_class.from_single_file(
+                model_path, **components, torch_dtype=torch.float16, use_safetensors=True
+            )
+    return pipeline.to("cuda")
+
+
 def build_diffusion_chute(
     username: str,
     name: str,
@@ -34,7 +100,6 @@ def build_diffusion_chute(
     node_selector: NodeSelector,
     image: Union[str, Image],
     readme: str = "",
-    xl: Optional[bool] = True,
     version: Optional[str] = None,
     pipeline_args: Optional[dict] = {},
 ):
@@ -76,7 +141,9 @@ def build_diffusion_chute(
         model_identifier = model_name_or_url
         single_file = False
         if model_name_or_url.lower().startswith("https://civitai.com/"):
-            download_url = "https://civitai.com/api/download/models/{version}?type=Model&format=SafeTensor"
+            download_url = (
+                "https://civitai.com/api/download/models/{version}?type=Model&format=SafeTensor"
+            )
             path_match = re.search(r"^(.+)?/models/([0-9]+)/?.*", urlparse(model_name_or_url).path)
             if not path_match:
                 raise Exception("Invalid civitai.com URL!")
@@ -89,12 +156,16 @@ def build_diffusion_chute(
                 else:
                     # Need to get the actual download link from API.
                     async with aiohttp.ClientSession(raise_for_status=True) as session:
-                        async with session.get(f"https://civitai.com/api/v1/models/{model_id}") as resp:
+                        async with session.get(
+                            f"https://civitai.com/api/v1/models/{model_id}"
+                        ) as resp:
                             try:
                                 data = await resp.json()
                             except Exception:
                                 data = json.loads(await resp.text())
-                            download_url = download_url.format(version=str(data["modelVersions"][0]["id"]))
+                            download_url = download_url.format(
+                                version=str(data["modelVersions"][0]["id"])
+                            )
 
             # Now do the actual download.
             model_path = os.path.join(civitai_home, f"{model_id}.safetensors")
@@ -108,14 +179,22 @@ def build_diffusion_chute(
                                 outfile.write(chunk)
 
         # Initialize the pipeline.
-        pipeline_class = StableDiffusionXLPipeline if xl else StableDiffusionPipeline
-        method = "from_pretrained" if not single_file else "from_single_file"
-        self.pipeline = getattr(pipeline_class, method)(
-            model_identifier,
-            torch_dtype=torch.float16,
-            **pipeline_args,
-        )
-        self.pipeline.to("cuda")
+        if single_file:
+            self.pipeline = single_file_pipeline(model_identifier)
+        else:
+            # Assume SDXL, fallback to SD
+            try:
+                self.pipeline = StableDiffusionXLPipeline.from_pretrained(
+                    model_identifier,
+                    torch_dtype=torch.float16,
+                    **pipeline_args,
+                ).to("cuda")
+            except Exception:
+                self.pipeline = StableDiffusionPipeline.from_pretrained(
+                    model_identifier,
+                    torch_dtype=torch.float16,
+                    **pipeline_args,
+                ).to("cuda")
 
     @chute.cord(
         public_api_path="/generate",
