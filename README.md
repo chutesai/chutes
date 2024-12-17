@@ -37,8 +37,8 @@ Currently, to become a user on the chutes platform, you must have a bittensor wa
 Once you are registered, you can create API keys that can be used with a simple "Authorization" header in your requests.
 
 If you don't already have a wallet, you can create one by installing one of two packages:
-1. `bittensor-wallet` in an unsensible twist of fate, you would need to first install rust to use this library, which is insane `brew install rust`
-2. `bittensor<8` the good ole faithful all-in-one-package that doesn't require rust
+1. `pip install bittensor<8` the good ole faithful all-in-one-package that doesn't require rust
+2. `pip install bittensor-wallet` in an unsensible twist of fate, you would need to first install rust to use this library, which is insane `brew install rust` or equivalent on other OSs.
 
 Then, create a coldkey and hotkey according to the library you installed, e.g. with `pip install 'bittensor<8'`, you'd just run:
 ```bash
