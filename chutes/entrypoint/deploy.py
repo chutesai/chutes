@@ -72,7 +72,7 @@ async def _deploy(
                 logger.error(f"Unexpected error deploying chute: {await response.text()}")
             else:
                 logger.success(
-                    f"Successfully deployed chute {chute.name} version={chute.version}, invocation will be available soon"
+                    f"Successfully deployed chute {chute.name} version={data['version']}, invocation will be available soon"
                 )
 
 

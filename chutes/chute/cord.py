@@ -384,8 +384,11 @@ class Cord:
                 status_code=status.HTTP_401_FORBIDDEN,
                 detail=message,
             )
-        if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
-            args = [self.input_models[idx](**args[idx]) for idx in range(len(self.input_models))]
+        if not self._passthrough:
+            if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
+                args = [
+                    self.input_models[idx](**args[idx]) for idx in range(len(self.input_models))
+                ]
         if self._stream:
             return StreamingResponse(self._remote_stream_call(*args, **kwargs))
         return await self._remote_call(*args, **kwargs)

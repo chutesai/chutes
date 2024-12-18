@@ -176,6 +176,7 @@ def register(
                     print(updated_config + "\n\n")
                     save = input(f"Save to {CONFIG_PATH} (y/n): ")
                     if save.strip().lower() == "y":
+                        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
                         with open(CONFIG_PATH, "w") as outfile:
                             outfile.write(updated_config + "\n")
 
