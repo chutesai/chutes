@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from typing import Callable, Optional, Union
 from chutes.chute import Chute, ChutePack, NodeSelector
 from chutes.image import Image
-from chutes.image.template.diffusion import DIFFUSION
+from chutes.image.standard.diffusion import DIFFUSION
 
 
 class GenerationInput(BaseModel):
