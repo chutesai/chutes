@@ -5,7 +5,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from typing import List, Union, Optional, Callable
 from chutes.image import Image
-from chutes.image.template.tei import TEI
+from chutes.image.standard.tei import TEI
 from chutes.chute import Chute, ChutePack, NodeSelector
 
 
@@ -97,10 +97,10 @@ def build_tei_chute(
         cmd = [
             "text-embeddings-router",
             "--model-id",
-            self.model_name,
+            model_name,
         ]
         if revision:
-            cmd += ["--revision", self.revision]
+            cmd += ["--revision", revision]
         cmd += ["--port", "8881"]
         self.process = await asyncio.create_subprocess_exec(*cmd, stdout=None, stderr=None)
         started_at = time.time()
@@ -111,7 +111,7 @@ def build_tei_chute(
                 self.running = True
                 break
             logger.info(f"TEI server still not running after {int(delta)} seconds...")
-            await asyncio.wait(5)
+            await asyncio.sleep(5)
         if not self.running:
             raise RuntimeError(f"TEI server failed to start after {int(delta)} seconds!")
 
@@ -147,3 +147,10 @@ def build_tei_chute(
     )
     async def predict(data) -> PredictResponse:
         return data
+
+    return TEIChute(
+        chute=chute,
+        embed=embed,
+        rerank=rerank,
+        predict=predict,
+    )
