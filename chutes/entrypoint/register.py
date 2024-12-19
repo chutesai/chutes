@@ -25,7 +25,7 @@ async def _ping_api(base_url: str):
     logger.info(f"Pinging API at {base_url}")
     try:
         async with aiohttp.ClientSession(
-            base_url=base_url, timeout=aiohttp.ClientTimeout(total=2)
+            base_url=base_url, timeout=aiohttp.ClientTimeout(total=12)
         ) as session:
             async with session.get("/ping") as response:
                 response.raise_for_status()

@@ -34,6 +34,7 @@ class Cord:
         path: str = None,
         passthrough_path: str = None,
         passthrough: bool = False,
+        passthrough_port: int = None,
         public_api_path: str = None,
         public_api_method: str = "POST",
         method: str = "GET",
@@ -58,7 +59,7 @@ class Cord:
         if public_api_path:
             self.public_api_path = public_api_path
         self._public_api_method = public_api_method
-        self._passthrough_port = None
+        self._passthrough_port = passthrough_port
         self._stream = stream
         self._passthrough = passthrough
         self._method = method
