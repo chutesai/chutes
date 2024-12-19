@@ -10,6 +10,7 @@ from chutes.image.directive.env import ENV
 from chutes.image.directive.user import USER
 from chutes.image.directive.maintainer import MAINTAINER
 from chutes.image.directive.entrypoint import ENTRYPOINT
+from chutes.util.context import is_remote
 
 
 class Image:
@@ -196,6 +197,9 @@ class Image:
         """
         Helper to add files to the image.
         """
+        print(f"IS REMOTE: {is_remote()}")
+        if is_remote():
+            return self
         self._directives += [
             ADD(*args, **kwargs),
         ]

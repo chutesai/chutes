@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from typing import Callable, Optional, Union
 from chutes.chute import Chute, ChutePack, NodeSelector
 from chutes.image import Image
+from chutes.image.standard.diffusion import DIFFUSION
 
 
 class GenerationInput(BaseModel):
@@ -111,9 +112,9 @@ def build_diffusion_chute(
     name: str,
     model_name_or_url: str,
     node_selector: NodeSelector,
-    image: Union[str, Image],
     readme: str = "",
     version: Optional[str] = None,
+    image: Optional[Union[str, Image]] = DIFFUSION,
     pipeline_args: Optional[dict] = {},
 ):
     chute = Chute(
