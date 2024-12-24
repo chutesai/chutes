@@ -2,11 +2,11 @@
 
 This package provides the command line interface and development kit for use with the chutes.ai platform.
 
-## Glossary
+## 📚 Glossary
 
 Before getting into the weeds, it might be useful to understand the terminology.
 
-### image
+### 🐳 image
 
 Images are simply docker images that all chutes (applications) will run on within the platform.
 
@@ -16,22 +16,22 @@ Images must meet two requirements:
 
 __*Highly recommend you start with our base image: parachutes/base-python:3.12.7*__
 
-### chute
+### 🪂 chute
 
 A chute is essentially an application that runs on top of an image, within the platform.  Think of a chute as a single FastAPI application.
 
-### cord
+### λ cord
 
 A cord is a single function within the chute.  In the FastAPI analogy, this would be a single route & method.
 
-### graval
+### ✅ graval
 
 GraVal is the graphics card validation library used to help ensure the GPUs that miners claim to be running are authentic/correct.
 The library performs VRAM capacity checks, matrix multiplications seeded by device information, etc.
 
 You don't really need to know anything about graval, except that it runs as middleware within the chute to decrypt traffic from the validator and perform additional validation steps (filesystem checks, device info challenges, pings, etc.)
 
-## Register
+## 🔐 Register
 
 Currently, to become a user on the chutes platform, you must have a bittensor wallet and hotkey, as authentication is perform via bittensor hotkey signatures.
 Once you are registered, you can create API keys that can be used with a simple "Authorization" header in your requests.
@@ -56,7 +56,7 @@ CHUTES_API_URL=https://api.chutes.dev chutes register
 
 Once you've completed the registration process, you'll have a file in `~/.chutes/config.ini` which contains the configuration for using chutes.
 
-## Create API keys
+## 🔑 Create API keys
 
 You can create API keys, optionally limiting the scope of each key, with the `chutes keys` subcommand, e.g.:
 
@@ -75,7 +75,7 @@ Access to a single chute.
 chutes keys create --name foo-key --chute-ids 5eda1993-9f4b-5426-972c-61c33dbaf541
 ```
 
-### Validators and subnet owners
+### ⭐ Validators and subnet owners
 
 If you are a validator or subnet owner on bittensor, you can link your validator/owner hotkey to a chutes account, which will grant free access AND the developer role (without deposit, so you can skip the step below).
 
@@ -114,7 +114,7 @@ curl -XGET \
 ```
 In this example, the authorization Bearer token value is an API key created from the previous step with `--admin` specified.
 
-## Enable developer role
+## 👨‍💻 Enable developer role
 
 To help reduce spam/abuse on the platform, you must deposit tao in your account before you can create images/chutes.  This is fully refundable (minus the bittensor chain transaction fees).
 
@@ -137,7 +137,7 @@ curl -XPOST https://api.chutes.ai/return_developer_deposit \
   -d '{"address": "5EcZsewZSTxUaX8gwyHzkKsqT3NwLP1n2faZPyjttCeaPdYe"}'
 ```
 
-## Building an image
+## 🛠️ Building an image
 
 The first step in getting an application onto the chutes platform is to build an image.
 This SDK includes an image creation helper library as well, and we have a recommended base image which includes python 3.12.7 and all necessary cuda packages: `parachutes/base-python:3.12.7`
@@ -180,7 +180,7 @@ Explanation of the flags:
 - `--wait` means we want to stream the docker build logs back to the command line.  All image builds occur remotely on our platform, so without the `--wait` flag you just have to wait for the image to become available, whereas with this flag you can see real-time logs/status.
 - `--debug` additional debug logging
 
-## Deploying a chute
+## 🚀 Deploying a chute
 
 Once you have an image that is built and pushed and ready for use (see above), you can deploy applications on top of those.
 
@@ -203,7 +203,7 @@ node_selector=NodeSelector(
 
 The most important fields are `gpu_count` and `min_vram_gb_per_gpu`.  If you wish to include specific GPUs, you can do so, where the `include` (or `exclude`) fields are the short identifier per model, e.g. `"a6000"`, `"a100"`, etc.  [All supported GPUs and their short identifiers](https://github.com/rayonlabs/chutes-api/blob/c0df10cff794c17684be9cf1111c00d84eb015b0/api/gpu.py#L17)
 
-## Building custom/non-vllm chutes
+## ⚙️ Building custom/non-vllm chutes
 
 Chutes are in fact completely arbitrary, so you can customize to your heart's content.
 
@@ -304,7 +304,7 @@ To see an example of passthrough functions and more complex functionality, see t
 
 It is also very important to specify `concurrency=N` in your `Chute(..)` constructor.  In may cases, e.g. vllm, this can be fairly high (based on max sequences), where in other cases without data parallelism or other cases with contention, you may wish to leave it at the default of 1.
 
-## Local testing
+## 🧪 Local testing
 
 If you'd like to test your image/chute before actually deploying onto the platform, you can build the images with `--local`, then run in dev mode:
 ```bash
