@@ -2,6 +2,8 @@
 
 This package provides the command line interface and development kit for use with the chutes.ai platform.
 
+The miner code is available [here](https://github.com/rayonlabs/chutes-miner), and validator/API code [here](https://github.com/rayonlabs/chutes-api).
+
 ## 📚 Glossary
 
 Before getting into the weeds, it might be useful to understand the terminology.
