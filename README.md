@@ -51,7 +51,9 @@ Once you have your hotkey, just run:
 chutes register
 ```
 
-To use the development environment, simply set the `CHUTES_API_URL` environment variable accordingly, e.g.:
+*__Don't override CHUTES_API_URL unless you are develping chutes, you can just stop here!__*
+
+To use a development environment, simply set the `CHUTES_API_URL` environment variable accordingly to whatever your dev environment endpoint is, e.g.:
 ```bash
 CHUTES_API_URL=https://api.chutes.dev chutes register
 ```
