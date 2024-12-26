@@ -262,7 +262,6 @@ def build_vllm_chute(
         import multiprocessing
         from vllm import AsyncEngineArgs, AsyncLLMEngine
         import vllm.entrypoints.openai.api_server as vllm_api_server
-        from vllm.entrypoints.logger import RequestLogger
         from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
         from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
         from vllm.entrypoints.openai.serving_engine import BaseModelPath
@@ -286,7 +285,6 @@ def build_vllm_chute(
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
         model_config = await self.engine.get_model_config()
 
-        request_logger = RequestLogger(max_log_len=1024)
         base_model_paths = [
             BaseModelPath(name=chute.name, model_path=chute.name),
         ]
@@ -300,8 +298,9 @@ def build_vllm_chute(
             response_role="assistant",
             lora_modules=[],
             prompt_adapters=[],
-            request_logger=request_logger,
+            request_logger=None,
             return_tokens_as_token_ids=True,
+            chat_template_content_format=None,
         )
         vllm_api_server.completion = lambda s: OpenAIServingCompletion(
             self.engine,
@@ -309,7 +308,7 @@ def build_vllm_chute(
             base_model_paths=base_model_paths,
             lora_modules=[],
             prompt_adapters=[],
-            request_logger=request_logger,
+            request_logger=None,
             return_tokens_as_token_ids=True,
         )
         vllm_api_server.tokenization = lambda s: OpenAIServingTokenization(
@@ -317,7 +316,7 @@ def build_vllm_chute(
             model_config,
             base_model_paths,
             lora_modules=[],
-            request_logger=request_logger,
+            request_logger=None,
             chat_template=None,
             chat_template_content_format=None,
         )
@@ -326,7 +325,7 @@ def build_vllm_chute(
             model_config,
             base_model_paths,
             lora_modules=[],
-            request_logger=request_logger,
+            request_logger=None,
             chat_template=None,
             chat_template_content_format=None,
         )
