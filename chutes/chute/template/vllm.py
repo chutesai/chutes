@@ -215,9 +215,10 @@ def build_vllm_chute(
         "num_scheduler_steps": 1,
         "multi_step_stream_outputs": True,
         "enable_chunked_prefill": False,
-        "enable_prefix_caching": False,
+        "enable_prefix_caching": True,
         "disable_log_stats": True,
         "disable_custom_all_reduce": True,
+        "disable_log_requests": True,
     }
     for key, value in defaults.items():
         if key not in engine_args:
@@ -265,6 +266,7 @@ def build_vllm_chute(
         from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
         from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
         from vllm.entrypoints.openai.serving_engine import BaseModelPath
+        from vllm.entrypoints.openai.serving_tokenization import OpenAIServingTokenization
 
         # Reset torch.
         torch.cuda.empty_cache()
@@ -309,6 +311,24 @@ def build_vllm_chute(
             prompt_adapters=[],
             request_logger=request_logger,
             return_tokens_as_token_ids=True,
+        )
+        vllm_api_server.tokenization = lambda s: OpenAIServingTokenization(
+            self.engine,
+            model_config,
+            base_model_paths,
+            lora_modules=[],
+            request_logger=request_logger,
+            chat_template=None,
+            chat_template_content_format=None,
+        )
+        self.state.openai_serving_tokenization = OpenAIServingTokenization(
+            self.engine,
+            model_config,
+            base_model_paths,
+            lora_modules=[],
+            request_logger=request_logger,
+            chat_template=None,
+            chat_template_content_format=None,
         )
 
     def _parse_stream_chunk(encoded_chunk):

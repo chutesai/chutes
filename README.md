@@ -317,7 +317,7 @@ chutes build llama1b:chute --local
 
 Then, you can start a container with that image:
 ```bash
-docker run --rm -it -e CHUTES_EXECUTIION_CONTEXT=REMOTE -p 8000:8000 vllm:0.6.3 chutes run llama1b:chute --port 8000 --dev
+docker run --rm -it -e CHUTES_EXECUTION_CONTEXT=REMOTE -p 8000:8000 vllm:0.6.3 chutes run llama1b:chute --port 8000 --dev
 ```
 
 Then, you can actually invoke your functions by setting the `CHUTES_DEV_URL` environment variable, e.g., supposing you add the following to `llama1b.py`:
