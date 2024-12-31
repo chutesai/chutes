@@ -112,6 +112,7 @@ def build_diffusion_chute(
     name: str,
     model_name_or_url: str,
     node_selector: NodeSelector,
+    tagline: str = "",
     readme: str = "",
     version: Optional[str] = None,
     image: Optional[Union[str, Image]] = DIFFUSION,
@@ -120,6 +121,7 @@ def build_diffusion_chute(
     chute = Chute(
         username=username,
         name=name,
+        tagline=tagline,
         readme=readme,
         image=image,
         node_selector=node_selector,

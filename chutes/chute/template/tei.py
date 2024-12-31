@@ -69,6 +69,7 @@ def build_tei_chute(
     endpoints: list[str],
     node_selector: NodeSelector,
     image: str | Image = TEI,
+    tagline: str = "",
     readme: str = "",
     concurrency: int = 32,
     revision: Optional[str] = None,
@@ -76,6 +77,7 @@ def build_tei_chute(
     chute = Chute(
         username=username,
         name=model_name,
+        tagline=tagline,
         readme=readme,
         image=image,
         node_selector=node_selector,

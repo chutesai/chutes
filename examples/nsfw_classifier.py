@@ -22,6 +22,7 @@ image = (
 chute = Chute(
     username="chutes",
     name="nsfw-classifier",
+    tagline="NSFW check for images and text",
     readme="## NSFW Classifier\n\nThis is an NSFW classifier for both images (via Falconsai/nsfw_image_detection) and text (via detoxify)",
     image=image,
     node_selector=NodeSelector(gpu_count=1),

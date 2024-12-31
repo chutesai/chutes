@@ -31,6 +31,7 @@ async def _deploy(
     config = get_config()
     request_body = {
         "name": chute.name,
+        "tagline": chute.tagline,
         "readme": chute.readme,
         "logo_id": logo_id,
         "image": chute.image if isinstance(chute.image, str) else chute.image.uid,

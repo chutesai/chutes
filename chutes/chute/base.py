@@ -32,6 +32,7 @@ class Chute(FastAPI):
         username: str,
         name: str,
         image: str | Image,
+        tagline: str = "",
         readme: str = "",
         standard_template: str = None,
         node_selector: NodeSelector = None,
@@ -42,6 +43,7 @@ class Chute(FastAPI):
         self._username = username
         self._name = name
         self._readme = readme
+        self._tagline = tagline
         self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{username}::chute::{name}"))
         self._image = image
         self._standard_template = standard_template
@@ -60,6 +62,10 @@ class Chute(FastAPI):
     @property
     def readme(self):
         return self._readme
+
+    @property
+    def tagline(self):
+        return self._tagline
 
     @property
     def uid(self):
