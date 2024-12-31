@@ -58,14 +58,15 @@ class PredictResponse(BaseModel):
 
 
 class TEIChute(ChutePack):
-    embed: Callable
-    rerank: Callable
-    predict: Callable
+    embed: Optional[Callable] = None
+    rerank: Optional[Callable] = None
+    predict: Optional[Callable] = None
 
 
 def build_tei_chute(
     username: str,
     model_name: str,
+    endpoints: list[str],
     node_selector: NodeSelector,
     image: str | Image = TEI,
     readme: str = "",
@@ -115,42 +116,50 @@ def build_tei_chute(
         if not self.running:
             raise RuntimeError(f"TEI server failed to start after {int(delta)} seconds!")
 
-    @chute.cord(
-        public_api_path="/embed",
-        method="POST",
-        input_schema=EmbeddingRequest,
-        passthrough=True,
-        passthrough_path="/embed",
-        passthrough_port=8881,
-    )
-    async def embed(data) -> EmbeddingData:
-        return data
+    cords = {}
+    if "embed" in endpoints:
 
-    @chute.cord(
-        public_api_path="/rerank",
-        method="POST",
-        input_schema=RerankRequest,
-        passthrough=True,
-        passthrough_path="/rerank",
-        passthrough_port=8881,
-    )
-    async def rerank(data) -> RerankResponse:
-        return data
+        @chute.cord(
+            public_api_path="/embed",
+            method="POST",
+            input_schema=EmbeddingRequest,
+            passthrough=True,
+            passthrough_path="/embed",
+            passthrough_port=8881,
+        )
+        async def embed(data) -> EmbeddingData:
+            return data
 
-    @chute.cord(
-        public_api_path="/predict",
-        method="POST",
-        input_schema=PredictRequest,
-        passthrough=True,
-        passthrough_path="/rerank",
-        passthrough_port=8881,
-    )
-    async def predict(data) -> PredictResponse:
-        return data
+        cords["embed"] = embed
 
-    return TEIChute(
-        chute=chute,
-        embed=embed,
-        rerank=rerank,
-        predict=predict,
-    )
+    if "rerank" in endpoints:
+
+        @chute.cord(
+            public_api_path="/rerank",
+            method="POST",
+            input_schema=RerankRequest,
+            passthrough=True,
+            passthrough_path="/rerank",
+            passthrough_port=8881,
+        )
+        async def rerank(data) -> RerankResponse:
+            return data
+
+        cords["rerank"] = rerank
+
+    if "predict" in endpoints:
+
+        @chute.cord(
+            public_api_path="/predict",
+            method="POST",
+            input_schema=PredictRequest,
+            passthrough=True,
+            passthrough_path="/predict",
+            passthrough_port=8881,
+        )
+        async def predict(data) -> PredictResponse:
+            return data
+
+        cords["predict"] = predict
+
+    return TEIChute(chute=chute, **cords)

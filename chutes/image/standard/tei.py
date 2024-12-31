@@ -1,11 +1,15 @@
 TEI = "chutes/tei:1.6.0"
 
-# To build this yourself, you can use something like:
-# from chutes.image import Image  # noqa: E402
+# The "parachutes/tei:1.6.0" base image dockerfile is as follows:
+# FROM ghcr.io/huggingface/text-embeddings-inference:1.6 AS tei
+# FROM parachutes/base-python:3.12.7
+# COPY --from=tei /usr/local/bin/text-embeddings-router /usr/local/bin/text-embeddings-router
+
+# That image is then used when creating the chutes image (which is the same, plus chutes SDK):
+# from chutes.image import Image
 # image = (
 #     Image(
-#         username="chutes", name="text-embeddings-inference", tag="1.6.0"
+#         username="chutes", name="tei", tag="1.6.0"
 #     )
-#     .from_base("ghcr.io/huggingface/text-embeddings-inference:1.6")
-#     .run_command("apt update && apt -y install python3 python3-venv python3-pip")
+#     .from_base("parachutes/tei:1.6.0")
 # )
