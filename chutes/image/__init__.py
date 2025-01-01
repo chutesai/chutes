@@ -197,7 +197,6 @@ class Image:
         """
         Helper to add files to the image.
         """
-        print(f"IS REMOTE: {is_remote()}")
         if is_remote():
             return self
         self._directives += [

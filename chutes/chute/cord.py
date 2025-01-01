@@ -37,7 +37,7 @@ class Cord:
         passthrough_port: int = None,
         public_api_path: str = None,
         public_api_method: str = "POST",
-        method: str = "GET",
+        method: str = "POST",
         provision_timeout: int = 180,
         input_schema: Optional[Any] = None,
         minimal_input_schema: Optional[Any] = None,
