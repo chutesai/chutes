@@ -217,7 +217,7 @@ def build_vllm_chute(
         "num_scheduler_steps": 1,
         "multi_step_stream_outputs": True,
         "enable_chunked_prefill": False,
-        "enable_prefix_caching": True,
+        "enable_prefix_caching": False,
         "disable_log_stats": True,
         "disable_custom_all_reduce": True,
         "disable_log_requests": True,
