@@ -45,12 +45,32 @@ def single_file_pipeline(model_path, model_type="auto"):
         CLIPTextModelWithProjection,
         CLIPTokenizer,
     )
+    import safetensors.torch
+
+    # Load model metadata to check architecture
+    primary = "sdxl"
+    secondary = "sd"
+    if model_type == "auto":
+        try:
+            tensors = safetensors.torch.load_file(model_path, device="cpu")
+            if (
+                model_type == "auto"
+                and any(k.startswith("conditioner.embedders.1") for k in tensors.keys())
+                or any("text_model_2" in k for k in tensors.keys())
+            ):
+                print("Appears to be SDXL architecture.")
+                ...
+            else:
+                primary, secondary = "sd", "sdxl"
+                print("Appears to be SD architecture.")
+        except Exception:
+            ...
 
     if model_type == "auto":
         try:
-            return single_file_pipeline(model_path, "sdxl")
+            return single_file_pipeline(model_path, primary)
         except Exception:
-            return single_file_pipeline(model_path, "sd")
+            return single_file_pipeline(model_path, secondary)
 
     pipeline_class = StableDiffusionXLPipeline if model_type == "sdxl" else StableDiffusionPipeline
     base_model = (
