@@ -35,7 +35,7 @@ You don't really need to know anything about graval, except that it runs as midd
 
 ## 🔐 Register
 
-Currently, to become a user on the chutes platform, you must have a bittensor wallet and hotkey, as authentication is perform via bittensor hotkey signatures.
+Currently, to become a user on the chutes platform, you must have a Bittensor wallet and hotkey, as authentication is performed via Bittensor hotkey signatures.
 Once you are registered, you can create API keys that can be used with a simple "Authorization" header in your requests.
 
 If you don't already have a wallet, you can create one by installing `bittensor<8`, e.g. `pip install 'bittensor<8'`  _note: you can use the newer bittensor-wallet package but it requires rust, which is absurd_
@@ -51,7 +51,7 @@ Once you have your hotkey, just run:
 chutes register
 ```
 
-*__Don't override CHUTES_API_URL unless you are develping chutes, you can just stop here!__*
+*__Don't override CHUTES_API_URL unless you are developing chutes, you can just stop here!__*
 
 To use a development environment, simply set the `CHUTES_API_URL` environment variable accordingly to whatever your dev environment endpoint is, e.g.:
 ```bash
@@ -81,7 +81,7 @@ chutes keys create --name foo-key --chute-ids 5eda1993-9f4b-5426-972c-61c33dbaf5
 
 ### ⭐ Validators and subnet owners
 
-If you are a validator or subnet owner on bittensor, you can link your validator/owner hotkey to a chutes account, which will grant free access AND the developer role (without deposit, so you can skip the step below).
+If you are a validator or subnet owner on Bittensor, you can link your validator/owner hotkey to a chutes account, which will grant free access AND the developer role (without deposit, so you can skip the step below).
 
 #### Provided entrypoint
 
@@ -120,7 +120,7 @@ In this example, the authorization Bearer token value is an API key created from
 
 ## 👨‍💻 Enable developer role
 
-To help reduce spam/abuse on the platform, you must deposit tao in your account before you can create images/chutes.  This is fully refundable (minus the bittensor chain transaction fees).
+To help reduce spam/abuse on the platform, you must deposit tao in your account before you can create images/chutes.  This is fully refundable (minus the Bittensor chain transaction fees).
 
 The API lists the current developer deposit amount from the `/developer_deposit` endpoint, e.g.:
 ```bash
