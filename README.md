@@ -81,7 +81,7 @@ chutes keys create --name foo-key --chute-ids 5eda1993-9f4b-5426-972c-61c33dbaf5
 
 ### ⭐ Validators and subnet owners
 
-If you are a validator or subnet owner on Bittensor, you can link your validator/owner hotkey to a chutes account, which will grant free access AND the developer role (without deposit, so you can skip the step below).
+If you are a validator or subnet owner on Bittensor, you can link your validator/owner key to a chutes account, which will grant free access AND the developer role (without deposit, so you can skip the step below).
 
 #### Provided entrypoint
 
@@ -93,11 +93,13 @@ chutes link \
 ```
 Change `hotkey_type` to validator if you are a validator.
 
+*__Ignore the fact that subnet owners and coldkeys, it's just easier to use hotkey param names consistently!__*
+
 #### Manually
 
 If you do not wish to link the account using the CLI, you can do so directly with http requests.
 
-First, you need to create a signature with your subnet owner/validator hotkey of the string "{hotkey ss58}:{chutes username}", e.g. in python this would be something like
+First, you need to create a signature with your subnet owner/validator key of the string "{hotkey/owner key ss58}:{chutes username}", e.g. in python this would be something like
 
 ```python
 from substrateinterface import Keypair
@@ -117,6 +119,8 @@ curl -XGET \
   'https://api.chutes.ai/users/link_validator?hotkey=5Dt7...&signature=9c4e...'
 ```
 In this example, the authorization Bearer token value is an API key created from the previous step with `--admin` specified.
+
+*Again, ignore the fact that subnet owners are coldkeys and use the hotkey= param.*
 
 ## 👨‍💻 Enable developer role
 
