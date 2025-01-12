@@ -128,6 +128,8 @@ async def _list_objects(
             if not data["total"]:
                 return
             for item in data["items"]:
+                if object_type == "chutes":
+                    item["cords"] = data.get("cord_refs", {}).get(item["cord_ref_id"], [])
                 table.add_row(item)
             table.show()
 
