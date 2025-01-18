@@ -8,6 +8,7 @@ import orjson as json
 import fickling
 import pickle
 import pybase64 as base64
+from pydantic import ValidationError
 from typing import Optional, Dict, Any
 from fastapi import Request, HTTPException, status
 from loguru import logger
@@ -387,9 +388,15 @@ class Cord:
             )
         if not self._passthrough:
             if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
-                args = [
-                    self.input_models[idx](**args[idx]) for idx in range(len(self.input_models))
-                ]
+                try:
+                    args = [
+                        self.input_models[idx](**args[idx]) for idx in range(len(self.input_models))
+                    ]
+                except ValidationError:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid input parameters"
+                    )
+
         if self._stream:
             return StreamingResponse(self._remote_stream_call(*args, **kwargs))
         return await self._remote_call(*args, **kwargs)

@@ -13,7 +13,7 @@ class GenerationInput(BaseModel):
     prompt: str
     height: int = Field(default=1024, ge=128, le=2048)
     width: int = Field(default=1024, ge=128, le=2048)
-    num_inference_steps: int = Field(default=10, ge=1, le=30)
+    num_inference_steps: int = Field(default=10, ge=1, le=50)
     guidance_scale: float = Field(default=7.5, ge=1.0, le=20.0)
     seed: Optional[int] = Field(default=None, ge=0, le=2**32 - 1)
 
@@ -37,7 +37,7 @@ chute = Chute(
     username="chutes",
     name="FLUX.1-schnell",
     readme=readme,
-    image="chutes/diffusion:0.31.0",
+    image="chutes/diffusion:0.32.1.post1",
     # This model is quite large, so we'll require GPUs with at least 48GB VRAM to run it.
     node_selector=NodeSelector(
         gpu_count=1,

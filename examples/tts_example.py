@@ -11,7 +11,7 @@ image = (
     Image(
         username="chutes",
         name="f5-tts",
-        tag="0.0.1",
+        tag="0.0.2",
         readme="## Text-to-speech using F5-TTS",
     )
     .from_base("parachutes/base-python:3.12.7")
