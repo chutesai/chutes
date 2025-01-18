@@ -191,7 +191,9 @@ def build_diffusion_chute(
                     download_url = download_url.format(version=str(model_id))
                 else:
                     # Need to get the actual download link from API.
-                    async with aiohttp.ClientSession(raise_for_status=True) as session:
+                    async with aiohttp.ClientSession(
+                        raise_for_status=True, trust_env=True
+                    ) as session:
                         async with session.get(
                             f"https://civitai.com/api/v1/models/{model_id}"
                         ) as resp:
@@ -208,7 +210,7 @@ def build_diffusion_chute(
             model_identifier = model_path
             single_file = True
             if not os.path.exists(model_path):
-                async with aiohttp.ClientSession(raise_for_status=True) as session:
+                async with aiohttp.ClientSession(raise_for_status=True, trust_env=True) as session:
                     async with session.get(download_url) as resp:
                         with open(model_path, "wb") as outfile:
                             while chunk := await resp.content.read(8192):
