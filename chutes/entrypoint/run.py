@@ -6,8 +6,10 @@ import asyncio
 import sys
 import time
 import hashlib
+import gzip
 from loguru import logger
 import typer
+import pickle
 import pybase64 as base64
 import orjson as json
 from functools import lru_cache
@@ -43,9 +45,11 @@ class DevMiddleware(BaseHTTPMiddleware):
         """
         Dev/dummy dispatch.
         """
-        request.state.decrypted = (
-            await request.json() if request.method in ("POST", "PUT", "PATCH") else None
-        )
+        args = await request.json() if request.method in ("POST", "PUT", "PATCH") else None
+        request.state.decrypted = {
+            "args": base64.b64encode(gzip.compress(pickle.dumps([]))).decode(),
+            "kwargs": base64.b64encode(gzip.compress(pickle.dumps({"json": args}))).decode(),
+        }
         return await call_next(request)
 
 
