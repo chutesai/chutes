@@ -2,21 +2,23 @@
 Run a chute, automatically handling encryption/decryption via GraVal.
 """
 
+import os
 import asyncio
 import sys
 import time
 import hashlib
-import gzip
 from loguru import logger
 import typer
-import pickle
+import psutil
 import pybase64 as base64
 import orjson as json
+from typing import Optional
+from datetime import datetime
 from functools import lru_cache
 from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -24,6 +26,57 @@ from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import load_chute
 from chutes.chute import ChutePack
 from chutes.util.context import is_local
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import padding
+
+
+def get_all_process_info():
+    """
+    Return running process info.
+    """
+    processes = {}
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "open_files", "create_time"]):
+        try:
+            info = proc.info
+            info["open_files"] = [f.path for f in proc.open_files()]
+            info["create_time"] = datetime.fromtimestamp(proc.create_time()).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            processes[str(proc.pid)] = info
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return Response(
+        content=json.dumps(processes).decode(),
+        media_type="application/json",
+    )
+
+
+class Slurp(BaseModel):
+    path: str
+    start_byte: Optional[int] = 0
+    end_byte: Optional[int] = None
+
+
+def handle_slurp(slurp: Slurp):
+    """
+    Read part or all of a file.
+    """
+    if not os.path.isfile(slurp.path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Path not found: {slurp.path}"
+        )
+    response_bytes = None
+    with open(slurp.path, "rb") as f:
+        f.seek(slurp.start_byte)
+        if slurp.end_byte is None:
+            response_bytes = f.read()
+        else:
+            response_bytes = f.read(slurp.end_byte - slurp.start_byte)
+    return Response(
+        content=base64.b64encode(response_bytes).decode(),
+        media_type="text/plain",
+    )
 
 
 @lru_cache(maxsize=1)
@@ -46,10 +99,8 @@ class DevMiddleware(BaseHTTPMiddleware):
         Dev/dummy dispatch.
         """
         args = await request.json() if request.method in ("POST", "PUT", "PATCH") else None
-        request.state.decrypted = {
-            "args": base64.b64encode(gzip.compress(pickle.dumps([]))).decode(),
-            "kwargs": base64.b64encode(gzip.compress(pickle.dumps({"json": args}))).decode(),
-        }
+        request.state.serialized = False
+        request.state.decrypted = args
         return await call_next(request)
 
 
@@ -63,16 +114,19 @@ class GraValMiddleware(BaseHTTPMiddleware):
         self.concurrency = concurrency
         self.rate_limiter = asyncio.Semaphore(concurrency)
         self.lock = asyncio.Lock()
+        self.symmetric_key = None
+        self.app = app
 
     async def _dispatch(self, request: Request, call_next):
         """
         Transparently handle decryption and verification.
         """
-        if request.client.host == "127.0.0.1":
+        if request.client.host == "127.0.0.1" and False:
             return await call_next(request)
 
         # Internal endpoints.
-        if request.scope.get("path", "").endswith(("/_alive", "/_metrics")):
+        path = request.scope.get("path", "")
+        if path.endswith(("/_alive", "/_metrics")):
             ip = ip_address(request.client.host)
             is_private = (
                 ip.is_private
@@ -123,9 +177,15 @@ class GraValMiddleware(BaseHTTPMiddleware):
             )
 
         # Decrypt the payload.
-        is_encrypted = request.headers.get("X-Chutes-Encrypted", "false").lower() == "true"
-        request.state.decrypted = None
-        if is_encrypted and body_bytes:
+        if not self.symmetric_key and path != "/_exchange":
+            logger.warning("Received a request but we need the symmetric key first!")
+            return ORJSONResponse(
+                status_code=status.HTTP_426_UPGRADE_REQUIRED,
+                content={"detail": "Exchange a symmetric key via GraVal first."},
+            )
+        elif path == "/_exchange":
+
+            # Initial GraVal payload that contains the symmetric key, encrypted with GraVal.
             encrypted_body = json.loads(body_bytes)
             required_fields = {"ciphertext", "iv", "length", "device_id", "seed"}
             decrypted_body = {}
@@ -166,9 +226,52 @@ class GraValMiddleware(BaseHTTPMiddleware):
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         content={"detail": f"Decryption failed: {exc}"},
                     )
-            request.state.decrypted = decrypted_body
-        elif request.method in ("POST", "PUT", "PATCH"):
-            request.state.decrypted = await request.json()
+
+            # Extract our symmetric key.
+            secret = decrypted_body.get("symmetric_key")
+            if not secret:
+                return ORJSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"detail": "Exchange request must contain symmetric key!"},
+                )
+            self.symmetric_key = bytes.fromhex(secret)
+            return ORJSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={"ok": True},
+            )
+
+        # Decrypt using the symmetric key we exchanged via GraVal.
+        if request.method in ("POST", "PUT", "PATCH"):
+            iv = bytes.fromhex(body_bytes[:32].decode())
+            cipher = Cipher(
+                algorithms.AES(self.symmetric_key),
+                modes.CBC(iv),
+                backend=default_backend(),
+            )
+            unpadder = padding.PKCS7(128).unpadder()
+            decryptor = cipher.decryptor()
+            decrypted_data = (
+                decryptor.update(base64.b64decode(body_bytes[32:])) + decryptor.finalize()
+            )
+            unpadded_data = unpadder.update(decrypted_data) + unpadder.finalize()
+            request.state.decrypted = json.loads(unpadded_data)
+            request.state.iv = iv
+
+            def _encrypt(plaintext: bytes):
+                if isinstance(plaintext, str):
+                    plaintext = plaintext.encode()
+                padder = padding.PKCS7(128).padder()
+                cipher = Cipher(
+                    algorithms.AES(self.symmetric_key),
+                    modes.CBC(iv),
+                    backend=default_backend(),
+                )
+                padded_data = padder.update(plaintext) + padder.finalize()
+                encryptor = cipher.encryptor()
+                encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+                return base64.b64encode(encrypted_data).decode()
+
+            request.state._encrypt = _encrypt
 
         return await call_next(request)
 
@@ -176,14 +279,23 @@ class GraValMiddleware(BaseHTTPMiddleware):
         """
         Rate-limiting wrapper around the actual dispatch function.
         """
+        request.state.serialized = request.headers.get("X-Chutes-Serialized") is not None
         if request.scope.get("path", "").endswith(
-            ("/_fs_challenge", "/_alive", "/_metrics", "/_ping", "/_device_challenge")
+            (
+                "/_fs_challenge",
+                "/_alive",
+                "/_metrics",
+                "/_ping",
+                "/_device_challenge",
+                "/_procs",
+                "/_slurp",
+            )
         ):
             return await self._dispatch(request, call_next)
         async with self.lock:
             if self.rate_limiter.locked():
                 return ORJSONResponse(
-                    status_code=429,
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     content={
                         "error": "RateLimitExceeded",
                         "detail": "Max concurrency exceeded: {self.concurrency}, try again later.",
@@ -245,6 +357,11 @@ def run_chute(
 
         chute.add_api_route("/_metrics", _metrics, methods=["GET"])
         logger.info("Added liveness endpoint: /_metrics")
+
+        # Slurps and processes.
+        chute.add_api_route("/_slurp", handle_slurp, methods=["POST"])
+        chute.add_api_route("/_procs", get_all_process_info)
+        logger.info("Added slurp and proc endpoints: /_slurp, /_procs")
 
         # Device info challenge endpoint.
         async def _device_challenge(request: Request, challenge: str):
