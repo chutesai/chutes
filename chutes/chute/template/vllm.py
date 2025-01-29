@@ -258,15 +258,21 @@ def build_vllm_chute(
     async def initialize_vllm(self):
         nonlocal engine_args
         nonlocal model_name
+        nonlocal image
 
         # Imports here to avoid needing torch/vllm/etc. to just perform inference/build remotely.
         import torch
         import multiprocessing
+        from chutes.image import Image
         from vllm import AsyncEngineArgs, AsyncLLMEngine
         import vllm.entrypoints.openai.api_server as vllm_api_server
         from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
         from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
-        from vllm.entrypoints.openai.serving_engine import BaseModelPath
+
+        try:
+            from vllm.entrypoints.openai.serving_engine import BaseModelPath
+        except Exception:
+            from vllm.entrypoints.openai.serving_models import BaseModelPath
         from vllm.entrypoints.openai.serving_tokenization import OpenAIServingTokenization
 
         # Reset torch.
@@ -292,44 +298,55 @@ def build_vllm_chute(
         ]
 
         self.include_router(vllm_api_server.router)
+        extra_args = {}
+        extra_token_args = {}
+        old_vllm = False
+        if isinstance(image, Image):
+            if image.tag and image.tag <= "0.6.":
+                old_vllm = True
+        elif isinstance(image, str):
+            if ".".join(image.split(":")[-1].split(".")[:2]) < "0.7":
+                old_vllm = True
+        if old_vllm:
+            extra_args["lora_modules"] = []
+            extra_args["prompt_adapters"] = []
+            extra_token_args["lora_modules"] = []
         vllm_api_server.chat = lambda s: OpenAIServingChat(
             self.engine,
             model_config=model_config,
             base_model_paths=base_model_paths,
             chat_template=None,
             response_role="assistant",
-            lora_modules=[],
-            prompt_adapters=[],
             request_logger=None,
             return_tokens_as_token_ids=True,
             chat_template_content_format=None,
+            **extra_args,
         )
         vllm_api_server.completion = lambda s: OpenAIServingCompletion(
             self.engine,
             model_config=model_config,
             base_model_paths=base_model_paths,
-            lora_modules=[],
-            prompt_adapters=[],
             request_logger=None,
             return_tokens_as_token_ids=True,
+            **extra_args,
         )
         vllm_api_server.tokenization = lambda s: OpenAIServingTokenization(
             self.engine,
             model_config,
             base_model_paths,
-            lora_modules=[],
             request_logger=None,
             chat_template=None,
             chat_template_content_format=None,
+            **extra_token_args,
         )
         self.state.openai_serving_tokenization = OpenAIServingTokenization(
             self.engine,
             model_config,
             base_model_paths,
-            lora_modules=[],
             request_logger=None,
             chat_template=None,
             chat_template_content_format=None,
+            **extra_token_args,
         )
 
     def _parse_stream_chunk(encoded_chunk):
