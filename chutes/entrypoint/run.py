@@ -208,7 +208,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 return response
             return response
         finally:
-            if not hasattr(response, "body_iterator"):
+            if not response or not hasattr(response, "body_iterator"):
                 self.rate_limiter.release()
 
 
