@@ -270,7 +270,7 @@ def run_chute(
         chute.add_api_route("/_fs_challenge", _fs_challenge, methods=["POST"])
         logger.info("Added filesystem challenge endpoint: /_fs_challenge")
 
-        config = Config(app=chute, host=host, port=port)
+        config = Config(app=chute, host=host, port=port, limit_concurrency=1000)
         server = Server(config)
         await server.serve()
 
