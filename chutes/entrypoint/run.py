@@ -186,14 +186,30 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     status_code=429,
                     content={
                         "error": "RateLimitExceeded",
-                        "detail": "Max concurrency exceeded: {self.concurrency}, try again later.",
+                        "detail": f"Max concurrency exceeded: {self.concurrency}, try again later.",
                     },
                 )
             await self.rate_limiter.acquire()
+
+        # Handle the rate limit semaphore release properly for streaming responses.
         try:
-            return await self._dispatch(request, call_next)
+            response = await self._dispatch(request, call_next)
+            if hasattr(response, "body_iterator"):
+                original_iterator = response.body_iterator
+
+                async def wrapped_iterator():
+                    try:
+                        async for chunk in original_iterator:
+                            yield chunk
+                    finally:
+                        self.rate_limiter.release()
+
+                response.body_iterator = wrapped_iterator()
+                return response
+            return response
         finally:
-            self.rate_limiter.release()
+            if not hasattr(response, "body_iterator"):
+                self.rate_limiter.release()
 
 
 # NOTE: Might want to change the name of this to 'start'.
