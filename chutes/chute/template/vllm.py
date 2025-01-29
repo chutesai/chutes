@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Callable, Literal, Optional, Union, List
@@ -272,7 +273,7 @@ def build_vllm_chute(
         try:
             from vllm.entrypoints.openai.serving_engine import BaseModelPath
         except Exception:
-            from vllm.entrypoints.openai.serving_models import BaseModelPath
+            from vllm.entrypoints.openai.serving_models import BaseModelPath, OpenAIServingModels
         from vllm.entrypoints.openai.serving_tokenization import OpenAIServingTokenization
 
         # Reset torch.
@@ -302,19 +303,27 @@ def build_vllm_chute(
         extra_token_args = {}
         old_vllm = False
         if isinstance(image, Image):
-            if image.tag and image.tag <= "0.6.":
+            if image.tag and re.search(r"^0\.[0-6]\.", image.tag):
                 old_vllm = True
         elif isinstance(image, str):
-            if ".".join(image.split(":")[-1].split(".")[:2]) < "0.7":
+            if re.search(r":0\.[0-6]", image):
                 old_vllm = True
         if old_vllm:
             extra_args["lora_modules"] = []
             extra_args["prompt_adapters"] = []
             extra_token_args["lora_modules"] = []
+            extra_args["base_model_paths"] = base_model_paths
+        else:
+            extra_args["models"] = OpenAIServingModels(
+                engine_client=self.engine,
+                model_config=model_config,
+                base_model_paths=base_model_paths,
+                lora_modules=[],
+                prompt_adapters=[],
+            )
         vllm_api_server.chat = lambda s: OpenAIServingChat(
             self.engine,
             model_config=model_config,
-            base_model_paths=base_model_paths,
             chat_template=None,
             response_role="assistant",
             request_logger=None,
@@ -325,7 +334,6 @@ def build_vllm_chute(
         vllm_api_server.completion = lambda s: OpenAIServingCompletion(
             self.engine,
             model_config=model_config,
-            base_model_paths=base_model_paths,
             request_logger=None,
             return_tokens_as_token_ids=True,
             **extra_args,
