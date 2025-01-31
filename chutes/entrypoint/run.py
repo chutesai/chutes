@@ -298,14 +298,30 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     content={
                         "error": "RateLimitExceeded",
-                        "detail": "Max concurrency exceeded: {self.concurrency}, try again later.",
+                        "detail": f"Max concurrency exceeded: {self.concurrency}, try again later.",
                     },
                 )
             await self.rate_limiter.acquire()
+
+        # Handle the rate limit semaphore release properly for streaming responses.
         try:
-            return await self._dispatch(request, call_next)
+            response = await self._dispatch(request, call_next)
+            if hasattr(response, "body_iterator"):
+                original_iterator = response.body_iterator
+
+                async def wrapped_iterator():
+                    try:
+                        async for chunk in original_iterator:
+                            yield chunk
+                    finally:
+                        self.rate_limiter.release()
+
+                response.body_iterator = wrapped_iterator()
+                return response
+            return response
         finally:
-            self.rate_limiter.release()
+            if not response or not hasattr(response, "body_iterator"):
+                self.rate_limiter.release()
 
 
 # NOTE: Might want to change the name of this to 'start'.
@@ -387,7 +403,7 @@ def run_chute(
         chute.add_api_route("/_fs_challenge", _fs_challenge, methods=["POST"])
         logger.info("Added filesystem challenge endpoint: /_fs_challenge")
 
-        config = Config(app=chute, host=host, port=port)
+        config = Config(app=chute, host=host, port=port, limit_concurrency=1000)
         server = Server(config)
         await server.serve()
 

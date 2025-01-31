@@ -1,4 +1,4 @@
-SGLANG = "chutes/sglang:0.4.1.post6a"
+SGLANG = "chutes/sglang:0.4.2.post0"
 
 # To build this yourself, you can use something like:
 # from chutes.image import Image  # noqa: E402
