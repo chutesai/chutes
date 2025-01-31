@@ -236,7 +236,10 @@ def build_image(
             logo_id = await upload_logo(logo)
 
         # Always tack on the final directives, which include installing chutes and adding project files.
-        image._directives.append(RUN("pip install chutes --upgrade"))
+        # For remote builds, we omit installing chutes since the validator/build process injects
+        # specific, locked chutes versions to allow for tracking version IDs.
+        if local:
+            image._directives.append(RUN("pip install chutes --upgrade"))
         current_directory = os.getcwd()
         if include_cwd:
             image._directives.append(ADD(source=".", dest="/app"))
