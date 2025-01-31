@@ -192,6 +192,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
             await self.rate_limiter.acquire()
 
         # Handle the rate limit semaphore release properly for streaming responses.
+        response = None
         try:
             response = await self._dispatch(request, call_next)
             if hasattr(response, "body_iterator"):
