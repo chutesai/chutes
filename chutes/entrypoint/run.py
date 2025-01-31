@@ -7,11 +7,12 @@ import asyncio
 import sys
 import time
 import hashlib
-from loguru import logger
+import inspect
 import typer
 import psutil
 import pybase64 as base64
 import orjson as json
+from loguru import logger
 from typing import Optional
 from datetime import datetime
 from functools import lru_cache
@@ -62,6 +63,11 @@ def handle_slurp(slurp: Slurp):
     """
     Read part or all of a file.
     """
+    if slurp.path == "__file__":
+        return Response(
+            content=base64.b64encode(inspect.getsource(__file__)).decode(),
+            media_type="text/plain",
+        )
     if not os.path.isfile(slurp.path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Path not found: {slurp.path}"
