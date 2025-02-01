@@ -285,7 +285,7 @@ class Cord:
             ) as response:
                 yield response
 
-    async def _remote_call(self, *args, **kwargs):
+    async def _remote_call(self, request: Request, *args, **kwargs):
         """
         Function call from within the remote context, that is, the code that actually
         runs on the miner's deployment.
@@ -299,18 +299,34 @@ class Cord:
             chute_id=self._app.uid,
             function=self._func.__name__,
         ).set_to_current_time()
+        encrypt = getattr(request.state, "_encrypt", None)
         try:
             if self._passthrough:
                 async with self._passthrough_call(**kwargs) as response:
                     logger.success(
                         f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
                     )
+                    if encrypt:
+                        return {"json": encrypt(await response.read())}
                     return await response.json()
 
             return_value = await self._func(self._app, *args, **kwargs)
             logger.success(
                 f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
             )
+            if hasattr(return_value, "body"):
+                if encrypt:
+                    return {
+                        "type": response.__class__.__name__,
+                        "status_code": response.status_code,
+                        "headers": dict(response.headers),
+                        "media_type": response.media_type,
+                        "body": encrypt(response.body),
+                    }
+                else:
+                    return return_value
+            if encrypt:
+                return {"json": encrypt(json.dumps(return_value))}
             return return_value
         except Exception as exc:
             logger.error(f"Error performing stream call: {exc}")
@@ -328,7 +344,7 @@ class Cord:
                 status=status,
             ).observe(time.time() - started_at)
 
-    async def _remote_stream_call(self, *args, **kwargs):
+    async def _remote_stream_call(self, request: Request, *args, **kwargs):
         """
         Function call from within the remote context, that is, the code that actually
         runs on the miner's deployment.
@@ -340,18 +356,25 @@ class Cord:
             chute_id=self._app.uid,
             function=self._func.__name__,
         ).set_to_current_time()
+        encrypt = getattr(request.state, "_encrypt", None)
         try:
             if self._passthrough:
                 async with self._passthrough_call(**kwargs) as response:
                     async for content in response.content:
-                        yield content
+                        if encrypt:
+                            yield encrypt(content) + "\n"
+                        else:
+                            yield content
                 logger.success(
                     f"Completed request [{self._func.__name__} (passthrough)] in {time.time() - started_at} seconds"
                 )
                 return
 
             async for data in self._func(self._app, *args, **kwargs):
-                yield data
+                if encrypt:
+                    yield encrypt(data) + "\n"
+                else:
+                    yield data
             logger.success(
                 f"Completed request [{self._func.__name__}] in {time.time() - started_at} seconds"
             )
@@ -377,17 +400,28 @@ class Cord:
         """
         if self._passthrough_port is None:
             self._passthrough_port = 8000
-        request = request.state.decrypted
-        try:
-            args = fickling.load(gzip.decompress(base64.b64decode(request["args"])))
-            kwargs = fickling.load(gzip.decompress(base64.b64decode(request["kwargs"])))
-        except fickling.exception.UnsafeFileError as exc:
-            message = f"Detected potentially hazardous call arguments, blocking: {exc}"
-            logger.error(message)
-            raise HTTPException(
-                status_code=status.HTTP_401_FORBIDDEN,
-                detail=message,
-            )
+        args, kwargs = None, None
+        if request.state.serialized:
+            request = request.state.decrypted
+            try:
+                args = fickling.load(gzip.decompress(base64.b64decode(request["args"])))
+                kwargs = fickling.load(gzip.decompress(base64.b64decode(request["kwargs"])))
+            except fickling.exception.UnsafeFileError as exc:
+                message = f"Detected potentially hazardous call arguments, blocking: {exc}"
+                logger.error(message)
+                raise HTTPException(
+                    status_code=status.HTTP_401_FORBIDDEN,
+                    detail=message,
+                )
+        else:
+            # Dev mode hacks.
+            if not self._passthrough:
+                args = [request.state.decrypted]
+                kwargs = {}
+            else:
+                args = []
+                kwargs = {"json": request.state.decrypted}
+
         if not self._passthrough:
             if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
                 try:
@@ -400,8 +434,8 @@ class Cord:
                     )
 
         if self._stream:
-            return StreamingResponse(self._remote_stream_call(*args, **kwargs))
-        return await self._remote_call(*args, **kwargs)
+            return StreamingResponse(self._remote_stream_call(request, *args, **kwargs))
+        return await self._remote_call(request, *args, **kwargs)
 
     def __call__(self, func):
         self._func = func

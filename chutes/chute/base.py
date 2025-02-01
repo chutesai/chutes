@@ -4,6 +4,7 @@ Main application class, along with all of the inference decorators.
 
 import asyncio
 import uuid
+import orjson as json
 from loguru import logger
 from typing import Any, List, Dict
 from fastapi import FastAPI, Request
@@ -23,6 +24,8 @@ async def _pong(request: Request) -> Dict[str, Any]:
     """
     Echo incoming request as a liveness check.
     """
+    if hasattr(request.state, "_encrypt"):
+        return {"json": request.state._encrypt(json.dumps(request.state.decrypted))}
     return request.state.decrypted
 
 
