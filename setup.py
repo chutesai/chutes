@@ -7,7 +7,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 
 setup(
     name="chutes",
-    version="0.2.5",
+    version="0.2.6",
     description="Chutes development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -23,7 +23,6 @@ setup(
         "fastapi>=0.115",
         "uvicorn>=0.32.0",
         "pydantic>=2.9,<3",
-        "pybase64>=1.4.0",
         "orjson>=3.10",
         "fickling==0.1.3",
         "setuptools>=0.75",

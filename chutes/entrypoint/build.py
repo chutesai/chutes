@@ -6,7 +6,7 @@ import sys
 import shutil
 import importlib
 import tempfile
-import pybase64 as base64
+import base64
 import pickle
 import orjson as json
 from io import BytesIO

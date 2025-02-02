@@ -10,7 +10,7 @@ import hashlib
 import inspect
 import typer
 import psutil
-import pybase64 as base64
+import base64
 import orjson as json
 from loguru import logger
 from typing import Optional
