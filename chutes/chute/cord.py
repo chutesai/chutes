@@ -402,10 +402,13 @@ class Cord:
             self._passthrough_port = 8000
         args, kwargs = None, None
         if request.state.serialized:
-            request = request.state.decrypted
             try:
-                args = fickling.load(gzip.decompress(base64.b64decode(request["args"])))
-                kwargs = fickling.load(gzip.decompress(base64.b64decode(request["kwargs"])))
+                args = fickling.load(
+                    gzip.decompress(base64.b64decode(request.state.decrypted["args"]))
+                )
+                kwargs = fickling.load(
+                    gzip.decompress(base64.b64decode(request.state.decrypted["kwargs"]))
+                )
             except fickling.exception.UnsafeFileError as exc:
                 message = f"Detected potentially hazardous call arguments, blocking: {exc}"
                 logger.error(message)
@@ -421,7 +424,6 @@ class Cord:
             else:
                 args = []
                 kwargs = {"json": request.state.decrypted}
-
         if not self._passthrough:
             if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
                 try:
