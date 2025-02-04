@@ -22,6 +22,7 @@ from uvicorn import Config, Server
 from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.background import BackgroundTask
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import load_chute
@@ -263,7 +264,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 unpadded_data = unpadder.update(decrypted_data) + unpadder.finalize()
                 try:
                     request.state.decrypted = json.loads(unpadded_data)
-                except:
+                except Exception:
                     request.state.decrypted = json.loads(unpadded_data.rstrip(bytes(range(1, 17))))
                 request.state.iv = iv
             except ValueError as exc:
@@ -307,6 +308,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
             )
         ):
             return await self._dispatch(request, call_next)
+
         async with self.lock:
             if self.rate_limiter.locked():
                 return ORJSONResponse(
@@ -317,27 +319,28 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     },
                 )
             await self.rate_limiter.acquire()
-
-        # Handle the rate limit semaphore release properly for streaming responses.
-        response = None
         try:
-            response = await self._dispatch(request, call_next)
-            if hasattr(response, "body_iterator"):
-                original_iterator = response.body_iterator
+            response = await call_next(request)
+        except Exception:
+            self.rate_limiter.release()
+            raise
 
-                async def wrapped_iterator():
-                    try:
-                        async for chunk in original_iterator:
-                            yield chunk
-                    finally:
-                        self.rate_limiter.release()
+        def release_semaphore():
+            self.rate_limiter.release()
 
-                response.body_iterator = wrapped_iterator()
-                return response
-            return response
-        finally:
-            if not response or not hasattr(response, "body_iterator"):
-                self.rate_limiter.release()
+        if response.background is None:
+            response.background = BackgroundTask(release_semaphore)
+        else:
+            old_bg = response.background
+
+            def chain():
+                try:
+                    old_bg()
+                finally:
+                    release_semaphore()
+
+            response.background = BackgroundTask(chain)
+        return response
 
 
 # NOTE: Might want to change the name of this to 'start'.
