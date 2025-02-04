@@ -6,6 +6,7 @@ import os
 import asyncio
 import sys
 import time
+import uuid
 import hashlib
 import inspect
 import typer
@@ -22,7 +23,6 @@ from uvicorn import Config, Server
 from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.background import BackgroundTask
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import load_chute
@@ -119,8 +119,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         self.concurrency = concurrency
-        self.rate_limiter = asyncio.Semaphore(concurrency)
         self.lock = asyncio.Lock()
+        self.requests_in_flight = {}
         self.symmetric_key = None
         self.app = app
 
@@ -295,6 +295,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
         """
         Rate-limiting wrapper around the actual dispatch function.
         """
+        request.request_id = str(uuid.uuid4())
         request.state.serialized = request.headers.get("X-Chutes-Serialized") is not None
         if request.scope.get("path", "").endswith(
             (
@@ -309,38 +310,56 @@ class GraValMiddleware(BaseHTTPMiddleware):
         ):
             return await self._dispatch(request, call_next)
 
+        # Concurrency control with timeouts in case it didn't get cleaned up properly.
         async with self.lock:
-            if self.rate_limiter.locked():
-                return ORJSONResponse(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    content={
-                        "error": "RateLimitExceeded",
-                        "detail": f"Max concurrency exceeded: {self.concurrency}, try again later.",
-                    },
-                )
-            await self.rate_limiter.acquire()
+            now = time.time()
+            if len(self.requests_in_flight) >= self.concurrency:
+                purge_keys = []
+                for key, val in self.requests_in_flight.items():
+                    if now - val >= 600:
+                        logger.warning(
+                            f"Assuming this request is no longer in flight, killing: {key}"
+                        )
+                        purge_keys.append(key)
+                if purge_keys:
+                    for key in purge_keys:
+                        self.requests_in_flight.pop(key, None)
+                    self.requests_in_flight[request.request_id] = now
+                else:
+                    return ORJSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content={
+                            "error": "RateLimitExceeded",
+                            "detail": f"Max concurrency exceeded: {self.concurrency}, try again later.",
+                        },
+                    )
+            else:
+                self.requests_in_flight[request.request_id] = now
+
+        # Perform the actual request.
+        response = None
         try:
             response = await self._dispatch(request, call_next)
-        except Exception:
-            self.rate_limiter.release()
-            raise
+            if hasattr(response, "body_iterator"):
+                original_iterator = response.body_iterator
 
-        def release_semaphore():
-            self.rate_limiter.release()
+                async def wrapped_iterator():
+                    try:
+                        async for chunk in original_iterator:
+                            yield chunk
+                    except Exception as exc:
+                        logger.warning(f"Unhandled exception in body iterator: {exc}")
+                        self.requests_in_flight.pop(request.request_id, None)
+                        raise
+                    finally:
+                        self.requests_in_flight.pop(request.request_id, None)
 
-        if response.background is None:
-            response.background = BackgroundTask(release_semaphore)
-        else:
-            old_bg = response.background
-
-            def chain():
-                try:
-                    old_bg()
-                finally:
-                    release_semaphore()
-
-            response.background = BackgroundTask(chain)
-        return response
+                response.body_iterator = wrapped_iterator()
+                return response
+            return response
+        finally:
+            if not response or not hasattr(response, "body_iterator"):
+                self.requests_in_flight.pop(request.request_id, None)
 
 
 # NOTE: Might want to change the name of this to 'start'.

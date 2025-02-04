@@ -10,7 +10,7 @@ image = (
     Image(
         username="chutes",
         name="sglang",
-        tag="0.4.2.post03",
+        tag="0.4.2.post06",
         readme="SGLang is a fast serving framework for large language models and vision language models. It makes your interaction with models faster and more controllable by co-designing the backend runtime and frontend language."
     )
     .from_base("parachutes/base-python:3.12.7")
@@ -30,4 +30,3 @@ chute = build_sglang_chute(
     ),
     engine_args="--trust-remote-code",
 )
-chute.chute._standard_template ="vllm"
