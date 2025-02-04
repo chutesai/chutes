@@ -320,7 +320,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 )
             await self.rate_limiter.acquire()
         try:
-            response = await call_next(request)
+            response = await self._dispatch(request, call_next)
         except Exception:
             self.rate_limiter.release()
             raise
