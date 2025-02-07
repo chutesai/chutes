@@ -3,6 +3,7 @@ Main application class, along with all of the inference decorators.
 """
 
 import asyncio
+import aiohttp
 import uuid
 import orjson as json
 from loguru import logger
@@ -27,6 +28,20 @@ async def _pong(request: Request) -> Dict[str, Any]:
     if hasattr(request.state, "_encrypt"):
         return {"json": request.state._encrypt(json.dumps(request.state.decrypted))}
     return request.state.decrypted
+
+
+async def _get_token(request: Request) -> Dict[str, Any]:
+    """
+    Fetch a token, useful in detecting proxies between the real deployment and API.
+    """
+    endpoint = request.state.decrypted.get(
+        "endpoint", "https://api.chutes.ai/instances/token_check"
+    )
+    async with aiohttp.ClientSession() as session:
+        async with session.get(endpoint) as resp:
+            if hasattr(request.state, "_encrypt"):
+                return {"json": await resp.json()}
+            return await resp.json()
 
 
 class Chute(FastAPI):
@@ -148,8 +163,11 @@ class Chute(FastAPI):
 
         # Add a ping endpoint for validators to use.
         self.add_api_route("/_ping", _pong, methods=["POST"])
-        logger.info(f"Added liveness endpoint: /{self.uid}/_ping")
         logger.info("Added ping endpoint: /_ping")
+
+        # Token fetch endpoint.
+        self.add_api_route("/_token", _get_token, methods=["GET"])
+        logger.info("Added token endpoint: /_token")
 
         # Add a k8s liveness check endpoint.
         self.add_api_route("/_alive", lambda: {"alive": True}, methods=["GET"])

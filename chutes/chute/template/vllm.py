@@ -8,6 +8,8 @@ from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
 
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+
 
 class DefaultRole(Enum):
     user = "user"
@@ -214,7 +216,7 @@ def build_vllm_chute(
 
     # Semi-optimized defaults for code starts (but not overall perf once hot).
     defaults = {
-        "enforce_eager": True,
+        "enforce_eager": False,
         "num_scheduler_steps": 1,
         "multi_step_stream_outputs": True,
         "enable_chunked_prefill": False,

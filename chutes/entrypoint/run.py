@@ -247,6 +247,27 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 content={"ok": True},
             )
 
+        # All paths are encrypted to reduce the ease of adding a MITM proxy.
+        try:
+            iv = bytes.fromhex(path[1:33])
+            cipher = Cipher(
+                algorithms.AES(self.symmetric_key),
+                modes.CBC(iv),
+                backend=default_backend(),
+            )
+            unpadder = padding.PKCS7(128).unpadder()
+            decryptor = cipher.decryptor()
+            decrypted_data = decryptor.update(bytes.fromhex(path[33:])) + decryptor.finalize()
+            actual_path = unpadder.update(decrypted_data) + unpadder.finalize()
+            actual_path = actual_path.decode().rstrip("?")
+            logger.info(f"Decrypted request path: {actual_path} from input path: {path}")
+            request.scope["path"] = actual_path
+        except ValueError:
+            return ORJSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={"detail": f"Bad path: {path}"},
+            )
+
         # Decrypt using the symmetric key we exchanged via GraVal.
         if request.method in ("POST", "PUT", "PATCH"):
             try:
