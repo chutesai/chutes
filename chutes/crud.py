@@ -57,7 +57,7 @@ class ChuteTable:
             (
                 "Scopes",
                 lambda item: (
-                    "\n".join([json.dumps(scope) for scope in item["scops"]])
+                    "\n".join([json.dumps(scope) for scope in item["scopes"]])
                     if item["scopes"]
                     else "-"
                 ),

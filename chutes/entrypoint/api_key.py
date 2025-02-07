@@ -76,6 +76,11 @@ def create_api_key(
                                     "action": action,
                                 }
                             )
+                if not (image_ids or chute_ids):
+                    if images:
+                        payload["scopes"].append({"action": action.value, "object_type": "images"})
+                    if chutes or action == Action.invoke:
+                        payload["scopes"].append({"action": action.value, "object_type": "chutes"})
 
         # Sign & send request
 
