@@ -271,6 +271,7 @@ def build_vllm_chute(
         import vllm.entrypoints.openai.api_server as vllm_api_server
         from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
         from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
+        import vllm.version as vv
 
         try:
             from vllm.entrypoints.openai.serving_engine import BaseModelPath
@@ -303,13 +304,10 @@ def build_vllm_chute(
         self.include_router(vllm_api_server.router)
         extra_args = {}
         extra_token_args = {}
+        version_parts = vv.__version__.split(".")
         old_vllm = False
-        if isinstance(image, Image):
-            if image.tag and re.search(r"^0\.[0-6]\.", image.tag):
-                old_vllm = True
-        elif isinstance(image, str):
-            if re.search(r":0\.[0-6]", image):
-                old_vllm = True
+        if int(version_parts[0]) == 0 and int(version_parts[1]) < 7:
+            old_vllm = True
         if old_vllm:
             extra_args["lora_modules"] = []
             extra_args["prompt_adapters"] = []
@@ -323,6 +321,7 @@ def build_vllm_chute(
                 lora_modules=[],
                 prompt_adapters=[],
             )
+
         vllm_api_server.chat = lambda s: OpenAIServingChat(
             self.engine,
             model_config=model_config,
@@ -358,6 +357,8 @@ def build_vllm_chute(
             chat_template_content_format=None,
             **extra_token_args,
         )
+        if not old_vllm:
+            self.state.openai_serving_models = extra_args["models"]
 
     def _parse_stream_chunk(encoded_chunk):
         chunk = encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()
