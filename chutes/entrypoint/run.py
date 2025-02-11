@@ -247,27 +247,6 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 content={"ok": True},
             )
 
-        # All paths are encrypted to reduce the ease of adding a MITM proxy.
-        try:
-            iv = bytes.fromhex(path[1:33])
-            cipher = Cipher(
-                algorithms.AES(self.symmetric_key),
-                modes.CBC(iv),
-                backend=default_backend(),
-            )
-            unpadder = padding.PKCS7(128).unpadder()
-            decryptor = cipher.decryptor()
-            decrypted_data = decryptor.update(bytes.fromhex(path[33:])) + decryptor.finalize()
-            actual_path = unpadder.update(decrypted_data) + unpadder.finalize()
-            actual_path = actual_path.decode().rstrip("?")
-            logger.info(f"Decrypted request path: {actual_path} from input path: {path}")
-            request.scope["path"] = actual_path
-        except ValueError:
-            return ORJSONResponse(
-                status_code=status.HTTP_404_NOT_FOUND,
-                content={"detail": f"Bad path: {path}"},
-            )
-
         # Decrypt using the symmetric key we exchanged via GraVal.
         if request.method in ("POST", "PUT", "PATCH"):
             try:
@@ -318,6 +297,43 @@ class GraValMiddleware(BaseHTTPMiddleware):
         """
         request.request_id = str(uuid.uuid4())
         request.state.serialized = request.headers.get("X-Chutes-Serialized") is not None
+
+        # Pass regular, special paths through.
+        if request.scope.get("path", "").endswith(
+            (
+                "/_alive",
+                "/_metrics",
+                "/_ping",
+                "/_procs",
+                "/_slurp",
+            )
+        ):
+            return await self._dispatch(request, call_next)
+
+        # Decrypt encrypted paths, which could be one of the above as well.
+        path = request.scope.get("path", "")
+        if self.symmetric_key:
+            try:
+                iv = bytes.fromhex(path[1:33])
+                cipher = Cipher(
+                    algorithms.AES(self.symmetric_key),
+                    modes.CBC(iv),
+                    backend=default_backend(),
+                )
+                unpadder = padding.PKCS7(128).unpadder()
+                decryptor = cipher.decryptor()
+                decrypted_data = decryptor.update(bytes.fromhex(path[33:])) + decryptor.finalize()
+                actual_path = unpadder.update(decrypted_data) + unpadder.finalize()
+                actual_path = actual_path.decode().rstrip("?")
+                logger.info(f"Decrypted request path: {actual_path} from input path: {path}")
+                request.scope["path"] = actual_path
+            except ValueError:
+                return ORJSONResponse(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    content={"detail": f"Bad path: {path}"},
+                )
+
+        # Now pass the decrypted special paths through.
         if request.scope.get("path", "").endswith(
             (
                 "/_fs_challenge",

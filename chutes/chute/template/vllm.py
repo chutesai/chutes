@@ -306,7 +306,7 @@ def build_vllm_chute(
         extra_token_args = {}
         version_parts = vv.__version__.split(".")
         old_vllm = False
-        if int(version_parts[0]) == 0 and int(version_parts[1]) < 7:
+        if not vv.__version__.startswith("0.1.dev") and int(version_parts[0]) == 0 and int(version_parts[1]) < 7:
             old_vllm = True
         if old_vllm:
             extra_args["lora_modules"] = []
