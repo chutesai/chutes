@@ -40,7 +40,7 @@ async def _get_token(request: Request) -> Dict[str, Any]:
     async with aiohttp.ClientSession() as session:
         async with session.get(endpoint) as resp:
             if hasattr(request.state, "_encrypt"):
-                return {"json": await resp.json()}
+                return {"json": request.state._encrypt(await resp.text())}
             return await resp.json()
 
 
@@ -166,7 +166,7 @@ class Chute(FastAPI):
         logger.info("Added ping endpoint: /_ping")
 
         # Token fetch endpoint.
-        self.add_api_route("/_token", _get_token, methods=["GET"])
+        self.add_api_route("/_token", _get_token, methods=["POST"])
         logger.info("Added token endpoint: /_token")
 
         # Add a k8s liveness check endpoint.
