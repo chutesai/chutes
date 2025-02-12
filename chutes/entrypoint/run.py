@@ -299,14 +299,17 @@ class GraValMiddleware(BaseHTTPMiddleware):
         request.state.serialized = request.headers.get("X-Chutes-Serialized") is not None
 
         # Pass regular, special paths through.
-        if request.scope.get("path", "").endswith(
-            (
-                "/_alive",
-                "/_metrics",
-                "/_ping",
-                "/_procs",
-                "/_slurp",
+        if (
+            request.scope.get("path", "").endswith(
+                (
+                    "/_alive",
+                    "/_metrics",
+                    "/_ping",
+                    "/_procs",
+                    "/_slurp",
+                )
             )
+            or request.client.host == "127.0.0.1"
         ):
             return await self._dispatch(request, call_next)
 

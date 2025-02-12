@@ -1,6 +1,5 @@
 import json
 import os
-import re
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Callable, Literal, Optional, Union, List
@@ -266,7 +265,6 @@ def build_vllm_chute(
         # Imports here to avoid needing torch/vllm/etc. to just perform inference/build remotely.
         import torch
         import multiprocessing
-        from chutes.image import Image
         from vllm import AsyncEngineArgs, AsyncLLMEngine
         import vllm.entrypoints.openai.api_server as vllm_api_server
         from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
@@ -306,7 +304,11 @@ def build_vllm_chute(
         extra_token_args = {}
         version_parts = vv.__version__.split(".")
         old_vllm = False
-        if not vv.__version__.startswith("0.1.dev") and int(version_parts[0]) == 0 and int(version_parts[1]) < 7:
+        if (
+            not vv.__version__.startswith("0.1.dev")
+            and int(version_parts[0]) == 0
+            and int(version_parts[1]) < 7
+        ):
             old_vllm = True
         if old_vllm:
             extra_args["lora_modules"] = []
