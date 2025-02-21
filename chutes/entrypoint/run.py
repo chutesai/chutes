@@ -60,10 +60,11 @@ class Slurp(BaseModel):
     end_byte: Optional[int] = None
 
 
-def handle_slurp(slurp: Slurp):
+def handle_slurp(request: Request):
     """
     Read part or all of a file.
     """
+    slurp = Slurp(**request.state.decrypted)
     if slurp.path == "__file__":
         return Response(
             content=base64.b64encode(inspect.getsource(sys.modules[__name__])).decode(),

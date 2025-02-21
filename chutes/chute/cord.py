@@ -310,11 +310,11 @@ class Cord:
                         return {"json": encrypt(await response.read())}
                     return await response.json()
 
-            return_value = await self._func(self._app, *args, **kwargs)
+            response = await self._func(self._app, *args, **kwargs)
             logger.success(
                 f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
             )
-            if hasattr(return_value, "body"):
+            if hasattr(response, "body"):
                 if encrypt:
                     return {
                         "type": response.__class__.__name__,
@@ -324,10 +324,10 @@ class Cord:
                         "body": encrypt(response.body),
                     }
                 else:
-                    return return_value
+                    return response
             if encrypt:
-                return {"json": encrypt(json.dumps(return_value))}
-            return return_value
+                return {"json": encrypt(json.dumps(response))}
+            return response
         except Exception as exc:
             logger.error(f"Error performing stream call: {exc}")
             status = 500
