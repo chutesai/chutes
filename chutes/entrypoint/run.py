@@ -71,6 +71,10 @@ def handle_slurp(request: Request):
             media_type="text/plain",
         )
     if not os.path.isfile(slurp.path):
+        if os.path.isdir(slurp.path):
+            if hasattr(request.state, "_encrypt"):
+                return {"json": request.state._encrypt(json.dumps({"dir": os.listdir(slurp.path)}))}
+            return {"dir": os.listdir(slurp.path)}
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Path not found: {slurp.path}"
         )
@@ -81,10 +85,10 @@ def handle_slurp(request: Request):
             response_bytes = f.read()
         else:
             response_bytes = f.read(slurp.end_byte - slurp.start_byte)
-    return Response(
-        content=base64.b64encode(response_bytes).decode(),
-        media_type="text/plain",
-    )
+    response_data = {"contents": base64.b64encode(response_bytes).decode()}
+    if hasattr(request.state, "_encrypt"):
+        return {"json": request.state._encrypt(json.dumps(response_data))}
+    return response_data
 
 
 @lru_cache(maxsize=1)
