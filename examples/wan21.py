@@ -115,7 +115,7 @@ class ImageGenInput(BaseModel):
 
 class VideoGenInput(ImageGenInput):
     steps: int = Field(25, ge=10, le=30)
-    fps: int = Field(24, ge=16, le=60)
+    fps: int = Field(16, ge=16, le=60)
     frames: Optional[int] = Field(81, ge=81, le=241)
     single_frame: Optional[bool] = False
 
@@ -142,7 +142,7 @@ class I2VInput(BaseModel):
 
 def initialize_model(rank, world_size, task_queue):
     """
-    Load both the text-to-video and image-to-video models and compile the various components.
+    Load the models and use mp Queue to perform inference on the non-rank0 processes.
     """
     import torch
     import torch.distributed as dist
@@ -254,6 +254,8 @@ async def initialize(self):
     import torch
     import torch.multiprocessing as torch_mp
     import multiprocessing
+    import numpy as np
+    from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS
 
     start_time = int(time.time())
     self.world_size = torch.cuda.device_count()
@@ -271,6 +273,49 @@ async def initialize(self):
     self.wan_t2v, self.wan_i2v_480 = initialize_model(0, self.world_size, self.task_queue)
     delta = int(time.time()) - start_time
     logger.success(f"Initialized T2V and I2V models in {delta} seconds!")
+
+    # Warmup the I2V model.
+    array = np.zeros((480, 832, 3), dtype=np.uint8)
+    for x in range(832):
+        for y in range(480):
+            r = int(255 * x / 832)
+            g = int(255 * y / 480)
+            b = int(255 * (x + y) / (832 + 480))
+            array[y, x] = [r, g, b]
+    warmup_image = Image.fromarray(array)
+    prompt_args = {
+        "max_area": MAX_AREA_CONFIGS[Resolution.WIDESCREEN.value],
+        "frame_num": 81,
+        "shift": 3.0,
+        "sample_solver": "unipc",
+        "sampling_steps": 25,
+        "guide_scale": 5.0,
+        "seed": 42,
+        "offload_model": False,
+    }
+    logger.info("Warming up image-to-video model...")
+    _infer(self, "Shifting gradient.", image=warmup_image, single_frame=False, **prompt_args)
+
+    # And the T2V model.
+    for resolution in (
+        Resolution.SIXTEEN_NINE,
+        Resolution.NINE_SIXTEEN,
+        Resolution.WIDESCREEN,
+        Resolution.PORTRAIT,
+        Resolution.SQUARE,
+    ):
+        prompt_args = {
+            "size": SIZE_CONFIGS[resolution.value],
+            "frame_num": 81,
+            "shift": 5.0,
+            "sample_solver": "unipc",
+            "sampling_steps": 25,
+            "guide_scale": 5.0,
+            "seed": 42,
+            "offload_model": False,
+        }
+        logger.info(f"Warming up text-to-video (and t2i) model with {resolution=}")
+        _infer(self, "a goat jumping off a boat", image=None, single_frame=False, **prompt_args)
 
 
 def _infer(self, prompt, image=None, single_frame=False, **prompt_args):
@@ -311,7 +356,7 @@ def _infer(self, prompt, image=None, single_frame=False, **prompt_args):
                 output_file = cache_video(
                     tensor=video[None],
                     save_file=output_file,
-                    fps=prompt_args.get("fps", 24),
+                    fps=prompt_args.get("fps", 16),
                     nrow=1,
                     normalize=True,
                     value_range=(-1, 1),
