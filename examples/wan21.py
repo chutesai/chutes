@@ -387,11 +387,8 @@ def prepare_input_image(args):
     """
     Resize/crop/convert input images.
     """
-    target_width = 1280
-    target_height = 720
-    if args.resolution.value == Resolution.WIDESCREEN.value:
-        target_width = 832
-        target_height = 480
+    target_width = 832
+    target_height = 480
     try:
         input_image = Image.open(BytesIO(base64.b64decode(args.image_b64)))
         orig_width, orig_height = input_image.size
