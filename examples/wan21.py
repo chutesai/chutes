@@ -425,9 +425,7 @@ async def image_to_video(self, args: I2VInput):
     from wan.configs import MAX_AREA_CONFIGS
 
     if args.sample_shift is None:
-        args.sample_shift = 5.0
-    if args.frames % 4 != 1:
-        args.frames = args.frames - (args.frames % 4) + 1
+        args.sample_shift = 3.0
 
     # Format and reshape the image.
     input_image = prepare_input_image(args)
