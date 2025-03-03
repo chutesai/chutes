@@ -134,9 +134,9 @@ class I2VInput(BaseModel):
     # resolution: Optional[I2VResolution] = Resolution.WIDESCREEN
     seed: Optional[int] = 42
     image_b64: str
-    steps: int = Field(25, ge=10, le=30)
-    fps: int = Field(24, ge=16, le=60)
-    frames: Optional[int] = Field(81, ge=81, le=241)
+    steps: int = Field(25, ge=20, le=50)
+    fps: int = Field(16, ge=16, le=60)
+    # frames: Optional[int] = Field(81, ge=81, le=241)
     single_frame: Optional[bool] = False
 
 
@@ -428,14 +428,12 @@ async def image_to_video(self, args: I2VInput):
         args.sample_shift = 5.0
     if args.frames % 4 != 1:
         args.frames = args.frames - (args.frames % 4) + 1
-    if not args.frames:
-        args.frames = 81
 
     # Format and reshape the image.
     input_image = prepare_input_image(args)
     prompt_args = {
         "max_area": MAX_AREA_CONFIGS[Resolution.WIDESCREEN.value],
-        "frame_num": args.frames,
+        "frame_num": 81,  # XXX the model seems to fail for any other frame count?
         "shift": args.sample_shift,
         "sample_solver": "unipc",
         "sampling_steps": args.steps,
