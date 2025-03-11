@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Tuple
 from chutes.config import get_config
 from chutes.util.auth import sign_request
 
-CHUTE_REF_RE = re.compile(r"^[a-z0-9][a-z0-9_/]*:[a-z][a-z0-9_]+$", re.I)
+CHUTE_REF_RE = re.compile(r"^[a-z][a-z0-9_]*:[a-z][a-z0-9_]+$", re.I)
 
 
 class FakeStreamWriter:
