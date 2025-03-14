@@ -18,6 +18,7 @@ from chutes.chute import Chute, NodeSelector
 OUTPUT_RE = re.compile(r"Outputs:\s*\n(.*?)\n", re.MULTILINE)
 
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
+
 chute_image = (
     ChuteImage(
         username="chutes",
@@ -62,7 +63,6 @@ chute_image = (
         "git clone https://github.com/lodestone-rock/ComfyUI_FluxMod.git /home/chutes/comfy/ComfyUI/custom_nodes/ComfyUI_FluxMod"
     )
     .add("chroma_workflow_api.json", "/app/workflow.json")
-    .with_env("PYTHONPATH", "/home/chutes/comfy/ComfyUI")
     .set_workdir("/app")
 )
 
@@ -70,7 +70,9 @@ chute_image = (
 class TextToImagePayload(BaseModel):
     prompt: str = Field(...)
     seed: Optional[int] = Field(0, title="Seed", description="Seed for text generation.", gte=0)
-    steps: Optional[int] = Field(30, title="Steps", description="Steps for text generation.", gte=5, lte=50)
+    steps: Optional[int] = Field(
+        30, title="Steps", description="Steps for text generation.", gte=5, lte=50
+    )
     cfg: Optional[float] = Field(
         4.5, title="CFG Scale", description="CFG Scale for text generation.", gte=1.0, lte=7.5
     )
@@ -125,11 +127,18 @@ async def download_file(url, destination, expected_digest):
     os.makedirs(os.path.dirname(destination), exist_ok=True)
     if os.path.exists(f"{destination}.tmp"):
         os.remove(f"{destination}.tmp")
+    env = os.environ.copy()
+    env.update(
+        {
+            "NO_PROXY": "localhost,127.0.0.1",
+        }
+    )
     process = await asyncio.create_subprocess_exec(
         "wget",
         url,
         "-O",
         f"{destination}.tmp",
+        env=env,
     )
     stdout, stderr = await process.communicate()
     if process.returncode == 0:
@@ -192,6 +201,13 @@ async def initialize_pipeline(self):
     )
 
     # Start comfyui.
+    env = os.environ.copy()
+    env.update(
+        {
+            "PYTHONPATH": "/home/chutes/comfy/ComfyUI",
+            "NO_PROXY": "localhost,127.0.0.1",
+        }
+    )
     process = await asyncio.create_subprocess_exec(
         "comfy",
         "launch",
@@ -201,6 +217,7 @@ async def initialize_pipeline(self):
         "12345",
         "--listen",
         "127.0.0.1",
+        env=env,
     )
     stdout, stderr = await process.communicate()
     assert process.returncode == 0
@@ -219,6 +236,13 @@ async def generate(self, args: TextToImagePayload) -> Response:
     """
     Generate an image from text.
     """
+    env = os.environ.copy()
+    env.update(
+        {
+            "PYTHONPATH": "/home/chutes/comfy/ComfyUI",
+            "NO_PROXY": "localhost,127.0.0.1",
+        }
+    )
     with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as workflow_f:
         workflow = deepcopy(self.template)
         workflow["4"]["inputs"]["text"] = args.prompt
@@ -249,6 +273,7 @@ async def generate(self, args: TextToImagePayload) -> Response:
                 "--wait",
                 "--timeout",
                 "180",
+                env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
