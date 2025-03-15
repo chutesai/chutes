@@ -324,30 +324,15 @@ Then, you can start a container with that image:
 docker run --rm -it -e CHUTES_EXECUTION_CONTEXT=REMOTE -p 8000:8000 vllm:0.6.3 chutes run llama1b:chute --port 8000 --dev
 ```
 
-Then, you can actually invoke your functions by setting the `CHUTES_DEV_URL` environment variable, e.g., supposing you add the following to `llama1b.py`:
-```python
-async def main():
-    request = {
-        "json": {
-            "model": "unsloth/Llama-3.2-1B-Instruct",
-            "messages": [{"role": "user", "content": "Give me a spicy mayo recipe."}],
-            "temperature": 0.7,
-            "seed": 42,
-            "max_tokens": 3,
-            "stream": True,
-            "logprobs": True,
-        }
-    }
-    async for data in chute.chat_stream(**request):
-        if not data:
-            continue
-        print(json.dumps(data, indent=2))
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-You can call the `chute.chat_stream(..)` function running on your local instance with:
+Then, you can simply perform http requests to your instance.
 ```bash
-CHUTES_DEV_URL=http://127.0.0.1:8000 python llama1b.py
+curl -XPOST http://127.0.0.1:8000/chat_stream -H 'content-type: application/json' -d '{
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "messages": [{"role": "user", "content": "Give me a spicy mayo recipe."}],
+  "temperature": 0.7,
+  "seed": 42,
+  "max_tokens": 3,
+  "stream": True,
+  "logprobs": True,
+}'
 ```
