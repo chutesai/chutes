@@ -283,6 +283,12 @@ def build_vllm_chute(
         torch.cuda.set_device(0)
         multiprocessing.set_start_method("spawn", force=True)
 
+        # Tool args.
+        extra_args = dict(
+            tool_call_parser=engine_args.pop("tool_call_parser", None),
+            enable_auto_tool_choice=engine_args.pop("enable_auto_tool_choice", False),
+        )
+
         # Configure engine arguments
         gpu_count = int(os.getenv("CUDA_DEVICE_COUNT", str(torch.cuda.device_count())))
         engine_args = AsyncEngineArgs(
@@ -300,7 +306,6 @@ def build_vllm_chute(
         ]
 
         self.include_router(vllm_api_server.router)
-        extra_args = {}
         extra_token_args = {}
         version_parts = vv.__version__.split(".")
         old_vllm = False
@@ -359,6 +364,7 @@ def build_vllm_chute(
             chat_template_content_format=None,
             **extra_token_args,
         )
+        setattr(self.state, "enable_server_load_tracking", False)
         if not old_vllm:
             self.state.openai_serving_models = extra_args["models"]
 
