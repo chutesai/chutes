@@ -285,8 +285,8 @@ def build_vllm_chute(
 
         # Tool args.
         extra_args = dict(
-            tool_call_parser=engine_args.pop("tool_call_parser", None),
-            enable_auto_tool_choice=engine_args.pop("enable_auto_tool_choice", False),
+            tool_parser=engine_args.pop("tool_call_parser", None),
+            enable_auto_tools=engine_args.pop("enable_auto_tool_choice", False),
         )
 
         # Configure engine arguments

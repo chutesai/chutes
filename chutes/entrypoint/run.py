@@ -45,6 +45,7 @@ def get_all_process_info():
             info["create_time"] = datetime.fromtimestamp(proc.create_time()).strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
+            info["environ"] = dict(proc.environ())
             processes[str(proc.pid)] = info
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
@@ -105,7 +106,6 @@ class FSChallenge(BaseModel):
 
 
 class DevMiddleware(BaseHTTPMiddleware):
-
     async def dispatch(self, request: Request, call_next):
         """
         Dev/dummy dispatch.
@@ -117,7 +117,6 @@ class DevMiddleware(BaseHTTPMiddleware):
 
 
 class GraValMiddleware(BaseHTTPMiddleware):
-
     def __init__(self, app: FastAPI, concurrency: int = 1):
         """
         Initialize a semaphore for concurrency control/limits.
@@ -196,7 +195,6 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Exchange a symmetric key via GraVal first."},
             )
         elif path == "/_exchange":
-
             # Initial GraVal payload that contains the symmetric key, encrypted with GraVal.
             encrypted_body = json.loads(body_bytes)
             required_fields = {"ciphertext", "iv", "length", "device_id", "seed"}
@@ -312,6 +310,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_ping",
                     "/_procs",
                     "/_slurp",
+                    "/_devices",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -351,6 +350,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_device_challenge",
                 "/_procs",
                 "/_slurp",
+                "/_devices",
             )
         ):
             return await self._dispatch(request, call_next)
@@ -437,6 +437,10 @@ def run_chute(
         # GraVal enabled?
         if dev:
             chute.add_middleware(DevMiddleware)
+            if graval_seed is not None:
+                logger.info(f"Initializing graval with {graval_seed=}")
+                miner().initialize(graval_seed)
+                miner()._seed = graval_seed
         else:
             if graval_seed is not None:
                 logger.info(f"Initializing graval with {graval_seed=}")
@@ -460,7 +464,12 @@ def run_chute(
         # Slurps and processes.
         chute.add_api_route("/_slurp", handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info)
-        logger.info("Added slurp and proc endpoints: /_slurp, /_procs")
+
+        async def _devices():
+            return [miner().get_device_info(idx) for idx in range(miner()._device_count)]
+
+        chute.add_api_route("/_devices", _devices)
+        logger.info("Added slurp, proc, device endpoints: /_slurp, /_procs, /_devices")
 
         # Device info challenge endpoint.
         async def _device_challenge(request: Request, challenge: str):
