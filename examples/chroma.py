@@ -6,6 +6,7 @@ import uuid
 import hashlib
 import json
 import time
+import secrets
 import tempfile
 from copy import deepcopy
 from loguru import logger
@@ -15,18 +16,19 @@ from typing import Optional
 from chutes.image import Image as ChuteImage
 from chutes.chute import Chute, NodeSelector
 
+
 OUTPUT_RE = re.compile(r"Outputs:\s*\n(.*?)\n", re.MULTILINE)
 
-os.environ["NO_PROXY"] = "localhost,127.0.0.1"
+os.environ["NO_PROXY"] = "localhost,127.0.0.1,127.0.0.1:12345"
 
 chute_image = (
     ChuteImage(
         username="chutes",
         name="comfyui",
-        tag="0.0.1",
+        tag="0.3.26",
         readme="comfyui base image",
     )
-    .from_base("parachutes/base-python:3.12.7")
+    .from_base("parachutes/base-python:3.12.9")
     .set_user("root")
     .run_command("apt -y update && apt -y install git unzip libgl1-mesa-glx")
     .set_user("chutes")
@@ -58,7 +60,7 @@ chute_image = (
         "mkdir -p /home/chutes/comfy/ComfyUI/models/controlnet && cd /home/chutes/comfy/ComfyUI/models/controlnet && "
         "wget -O diffusion_pytorch_model.safetensors 'https://huggingface.co/InstantX/InstantID/resolve/main/ControlNetModel/diffusion_pytorch_model.safetensors?download=true'"
     )
-    .run_command("pip install opencv-python insightface 'uvicorn[standard]'")
+    .run_command("pip install opencv-python insightface 'uvicorn[standard]' 'numpy<2'")
     .run_command(
         "git clone https://github.com/lodestone-rock/ComfyUI_FluxMod.git /home/chutes/comfy/ComfyUI/custom_nodes/ComfyUI_FluxMod"
     )
@@ -92,7 +94,7 @@ chute = Chute(
     image=chute_image,
     node_selector=NodeSelector(
         gpu_count=1,
-        min_vram_gb_per_gpu=24,
+        min_vram_gb_per_gpu=40,
     ),
     concurrency=2,
 )
@@ -115,7 +117,7 @@ def check_integrity(path, expected_digest):
     digest = hash_obj.hexdigest()
     if digest == expected_digest:
         return True
-    logger.warning(f"Found cache file {path} but digest does not match!")
+    logger.warning(f"Found cache file {path} but digest does not match: {digest} vs {expected_digest}")
     return False
 
 
@@ -130,11 +132,12 @@ async def download_file(url, destination, expected_digest):
     env = os.environ.copy()
     env.update(
         {
-            "NO_PROXY": "localhost,127.0.0.1",
+            "NO_PROXY": "localhost,127.0.0.1,127.0.0.1:12345",
         }
     )
     process = await asyncio.create_subprocess_exec(
         "wget",
+        "-q",
         url,
         "-O",
         f"{destination}.tmp",
@@ -180,12 +183,20 @@ async def initialize_pipeline(self):
     """
     Ensure model files are downloaded, start comfyui.
     """
+    # Ensure the wget config file contains proxy settings.
+    if (http_proxy := os.getenv("HTTP_PROXY")) and (https_proxy := os.getenv("HTTPS_PROXY")):
+        with open("/home/chutes/.wgetrc", "w") as outfile:
+            outfile.write("\n".join([
+                f"http_proxy = {http_proxy}",
+                f"https_proxy = {https_proxy}",
+            ]))
+
     await asyncio.gather(
         *[
             ensure_downloaded_and_linked(
-                "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v13.safetensors",
+                "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v16.safetensors",
                 "/home/chutes/comfy/ComfyUI/models/diffusion_models/chroma.safetensors",
-                "95d0a549e7980f0b50371d0706ef434f98d961a1f0ea54999aaa55328d7f1d09",
+                "321642e415cc21782e8bfb2f5979e7ddfd3901a070d9024e47e4c46aa95a49d8",
             ),
             ensure_downloaded_and_linked(
                 "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors",
@@ -205,7 +216,7 @@ async def initialize_pipeline(self):
     env.update(
         {
             "PYTHONPATH": "/home/chutes/comfy/ComfyUI",
-            "NO_PROXY": "localhost,127.0.0.1",
+            "NO_PROXY": "localhost,127.0.0.1,127.0.0.1:12345",
         }
     )
     process = await asyncio.create_subprocess_exec(
@@ -217,6 +228,9 @@ async def initialize_pipeline(self):
         "12345",
         "--listen",
         "127.0.0.1",
+        "--gpu-only",
+        "--disable-auto-launch",
+        "--disable-metadata",
         env=env,
     )
     stdout, stderr = await process.communicate()
@@ -224,6 +238,31 @@ async def initialize_pipeline(self):
     logger.success("ComfyUI successfully started!")
     with open("/app/workflow.json") as infile:
         self.template = json.load(infile)
+
+    # Run one warmup workflow.
+    started_at = time.time()
+    process = await asyncio.create_subprocess_exec(
+        "comfy",
+        "run",
+        "--workflow",
+        "/app/workflow.json",
+        "--wait",
+        "--timeout",
+        "600",
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    stdout = stdout.decode("utf-8").strip()
+    stderr = stderr.decode("utf-8").strip()
+    assert process.returncode == 0
+    output_match = OUTPUT_RE.search(stdout)
+    if not output_match:
+        raise Exception(f"No output file created: {stdout}")
+    output_path = output_match.group(1)
+    delta = time.time() - started_at
+    logger.success(f"Generated warmup prompt image in {delta} seconds: {output_path=}")
 
 
 @chute.cord(
@@ -240,7 +279,7 @@ async def generate(self, args: TextToImagePayload) -> Response:
     env.update(
         {
             "PYTHONPATH": "/home/chutes/comfy/ComfyUI",
-            "NO_PROXY": "localhost,127.0.0.1",
+            "NO_PROXY": "localhost,127.0.0.1,127.0.0.1:12345",
         }
     )
     with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as workflow_f:
@@ -259,7 +298,7 @@ async def generate(self, args: TextToImagePayload) -> Response:
                 "height": args.height,
             }
         )
-        workflow["19"]["inputs"]["filename_prefix"] = str(uuid.uuid4())
+        workflow["19"]["inputs"]["filename_prefix"] = secrets.token_hex(4)
         workflow_f.write(json.dumps(workflow, indent=2).encode())
         workflow_f.close()
 

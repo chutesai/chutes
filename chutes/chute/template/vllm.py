@@ -373,7 +373,17 @@ def build_vllm_chute(
             model_config=model_config,
             request_logger=None,
             return_tokens_as_token_ids=True,
-            **extra_args,
+            **{
+                k: v
+                for k, v in extra_args.items()
+                if k
+                not in (
+                    "chat_template",
+                    "chat_template_content_format",
+                    "tool_parser",
+                    "enable_auto_tools",
+                )
+            },
         )
         vllm_api_server.tokenization = lambda s: OpenAIServingTokenization(
             self.engine,
