@@ -1,5 +1,7 @@
+import asyncio
 import json
 import os
+import re
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Dict, Callable, Literal, Optional, Union, List
@@ -251,6 +253,24 @@ def build_sglang_chute(
             execute_shell_command,
             wait_for_server,
         )
+
+        from huggingface_hub import snapshot_download
+
+        download_path = None
+        for attempt in range(5):
+            download_kwargs = {}
+            m = re.search(r"--revision\s*=?\s*([^ ]+)", engine_args, re.I)
+            if m:
+                download_kwargs["revision"] = m.group(1)
+            try:
+                download_path = snapshot_download(repo_id=model_name, **download_kwargs)
+                print(f"Successfully downloaded {model_name} to {download_path}")
+                break
+            except Exception as exc:
+                print(f"Failed downloading {model_name} {download_kwargs or ''}: {exc}")
+            await asyncio.sleep(60)
+        if not download_path:
+            raise Exception(f"Failed to download {model_name} after 5 attempts.")
 
         # Reset torch.
         torch.cuda.empty_cache()

@@ -1,0 +1,84 @@
+{{ bos_token }}
+{%- if messages[0]['role'] == 'system' -%}
+    {%- if messages[0]['content'] is string -%}
+        {%- set first_user_prefix = messages[0]['content'] + '\n\n' -%}
+    {%- else -%}
+        {%- set first_user_prefix = messages[0]['content'][0]['text'] + '\n\n' -%}
+    {%- endif -%}
+    {%- set loop_messages = messages[1:] -%}
+{%- else -%}
+    {%- set first_user_prefix = "" -%}
+    {%- set loop_messages = messages -%}
+{%- endif -%}
+{%- if not tools is defined %}
+    {%- set tools = none %}
+{%- endif %}
+{%- for message in loop_messages | rejectattr("role", "equalto", "tool") | selectattr("tool_calls", "undefined") -%}
+    {%- if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}
+        {{ raise_exception("Conversation roles must alternate user/assistant/user/assistant/...") }}
+    {%- endif -%}
+{%- endfor -%}
+{%- for message in loop_messages -%}
+    {%- if (message['role'] == 'assistant') -%}
+        {%- set role = "model" -%}
+    {%- elif (message['role'] == 'tool') -%}
+        {%- set role = "user" -%}
+    {%- else -%}
+        {%- set role = message['role'] -%}
+    {%- endif -%}
+    {{ '<start_of_turn>' + role + '\n' -}}
+    {%- if loop.first -%}
+        {{ first_user_prefix }}
+        {%- if tools is not none -%}
+            {{- "You have access to the following tools to help respond to the user. To call tools, please respond with a python list of the calls. DO NOT USE MARKDOWN SYNTAX.\n" }}
+            {{- 'Respond in the format [func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)] \n' }}
+            {{- "Do not use variables.\n\n" }}
+            {%- for t in tools -%}
+                {{- t | tojson(indent=4) }}
+                {{- "\n\n" }}
+            {%- endfor -%}
+        {%- endif -%}
+    {%- endif -%}
+
+    {%- if 'tool_calls' in message -%}
+        {{- '[' -}}
+        {%- for tool_call in message.tool_calls -%}
+            {%- if tool_call.function is defined -%}
+                {%- set tool_call = tool_call.function -%}
+            {%- endif -%}
+            {{- tool_call.name + '(' -}}
+            {%- for param in tool_call.arguments -%}
+                {{- param + '=' -}}
+                {{- "%sr" | format(tool_call.arguments[param]) -}}
+                {%- if not loop.last -%}, {% endif -%}
+            {%- endfor -%}
+            {{- ')' -}}
+            {%- if not loop.last -%},{%- endif -%}
+        {%- endfor -%}
+        {{- ']' -}}
+    {%- endif -%}
+
+    {%- if (message['role'] == 'tool') -%}
+        {{ '<tool_response>\n' -}}
+    {%- endif -%}
+    {%- if message['content'] is string -%}
+        {{ message['content'] | trim }}
+    {%- elif message['content'] is iterable -%}
+        {%- for item in message['content'] -%}
+            {%- if item['type'] == 'image' -%}
+                {{ '<start_of_image>' }}
+            {%- elif item['type'] == 'text' -%}
+                {{ item['text'] | trim }}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- else -%}
+        {{ raise_exception("Invalid content type") }}
+    {%- endif -%}
+    {%- if (message['role'] == 'tool') -%}
+        {{ '</tool_response>' -}}
+    {%- endif -%}
+    {{ '<end_of_turn>\n' }}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{'<start_of_turn>model\n'}}
+{%- endif -%}

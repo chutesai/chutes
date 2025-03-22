@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from enum import Enum
@@ -271,6 +272,24 @@ def build_vllm_chute(
         from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
         import vllm.version as vv
 
+        # Force download in initializer with some retries.
+        from huggingface_hub import snapshot_download
+
+        download_path = None
+        for attempt in range(5):
+            download_kwargs = {}
+            if revision := engine_args.get("revision"):
+                download_kwargs["revision"] = revision
+            try:
+                download_path = snapshot_download(repo_id=model_name, **download_kwargs)
+                print(f"Successfully downloaded {model_name} to {download_path}")
+                break
+            except Exception as exc:
+                print(f"Failed downloading {model_name} {download_kwargs or ''}: {exc}")
+            await asyncio.sleep(60)
+        if not download_path:
+            raise Exception(f"Failed to download {model_name} after 5 attempts")
+
         try:
             from vllm.entrypoints.openai.serving_engine import BaseModelPath
         except Exception:
@@ -284,9 +303,15 @@ def build_vllm_chute(
         multiprocessing.set_start_method("spawn", force=True)
 
         # Tool args.
+        if chat_template := engine_args.pop("chat_template", None):
+            if len(chat_template) <= 1024 and os.path.exists(chat_template):
+                with open(chat_template) as infile:
+                    chat_template = infile.read()
         extra_args = dict(
             tool_parser=engine_args.pop("tool_call_parser", None),
             enable_auto_tools=engine_args.pop("enable_auto_tool_choice", False),
+            chat_template=chat_template,
+            chat_template_content_format=engine_args.pop("chat_template_content_format", None),
         )
 
         # Configure engine arguments
@@ -328,15 +353,19 @@ def build_vllm_chute(
                 lora_modules=[],
                 prompt_adapters=[],
             )
+            extra_token_args.update(
+                {
+                    "chat_template": extra_args.get("chat_template"),
+                    "chat_template_content_format": extra_args.get("chat_template_content_format"),
+                }
+            )
 
         vllm_api_server.chat = lambda s: OpenAIServingChat(
             self.engine,
             model_config=model_config,
-            chat_template=None,
             response_role="assistant",
             request_logger=None,
             return_tokens_as_token_ids=True,
-            chat_template_content_format=None,
             **extra_args,
         )
         vllm_api_server.completion = lambda s: OpenAIServingCompletion(
@@ -351,8 +380,6 @@ def build_vllm_chute(
             model_config,
             base_model_paths,
             request_logger=None,
-            chat_template=None,
-            chat_template_content_format=None,
             **extra_token_args,
         )
         self.state.openai_serving_tokenization = OpenAIServingTokenization(
@@ -360,8 +387,6 @@ def build_vllm_chute(
             model_config,
             base_model_paths,
             request_logger=None,
-            chat_template=None,
-            chat_template_content_format=None,
             **extra_token_args,
         )
         setattr(self.state, "enable_server_load_tracking", False)
