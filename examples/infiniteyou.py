@@ -139,17 +139,23 @@ async def generate(self, args: GenerationInput):
             args.seed = random.randint(0, 1000000000)
 
         # Generate the image.
-        image = self.pipe(
-            id_image=id_image,
-            prompt=args.prompt,
-            control_image=control_image,
-            seed=args.seed,
-            guidance_scale=args.guidance_scale,
-            num_steps=args.steps,
-            infusenet_conditioning_scale=args.infusenet_conditioning_scale,
-            infusenet_guidance_start=args.infusenet_guidance_start,
-            infusenet_guidance_end=args.infusenet_guidance_end,
-        )
+        try:
+            image = self.pipe(
+                id_image=id_image,
+                prompt=args.prompt,
+                control_image=control_image,
+                seed=args.seed,
+                guidance_scale=args.guidance_scale,
+                num_steps=args.steps,
+                infusenet_conditioning_scale=args.infusenet_conditioning_scale,
+                infusenet_guidance_start=args.infusenet_guidance_start,
+                infusenet_guidance_end=args.infusenet_guidance_end,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bad request: {exc}",
+            )
 
         buffer = BytesIO()
         image.save(buffer, format="JPEG", quality=85)

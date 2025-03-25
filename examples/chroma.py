@@ -95,6 +95,7 @@ chute = Chute(
     node_selector=NodeSelector(
         gpu_count=1,
         min_vram_gb_per_gpu=40,
+        include=["l40s", "h100", "h100_sxm", "h800", "h200", "a6000_ada"]
     ),
     concurrency=2,
 )
