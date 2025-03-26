@@ -4,12 +4,12 @@ from chutes.chute.template.sglang import build_sglang_chute
 from chutes.image import Image
 
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
-NEXTN = os.path.join(os.environ.get("HF_HOME", "/cache"), "hub", "DeepSeek-R1-NextN.new")
+NEXTN = os.path.join(os.environ.get("HF_HOME", "/cache"), "hub", "DeepSeek-R1-Zero-NextN")
 if os.getenv("CHUTES_EXECUTION_CONTEXT") == "REMOTE":
     from huggingface_hub import snapshot_download
 
     os.makedirs(os.path.dirname(NEXTN), exist_ok=True)
-    snapshot_download(repo_id="chutesai/DeepSeek-R1-NextN", local_dir=NEXTN)
+    snapshot_download(repo_id="chutesai/DeepSeek-R1-Zero-NextN", local_dir=NEXTN)
 
 image = (
     Image(
@@ -29,8 +29,8 @@ image = (
 
 chute = build_sglang_chute(
     username="chutes",
-    readme="DeepSeek-R1",
-    model_name="deepseek-ai/DeepSeek-R1",
+    readme="DeepSeek-R1-Zero",
+    model_name="deepseek-ai/DeepSeek-R1-Zero",
     image=image,
     concurrency=12,
     node_selector=NodeSelector(
@@ -39,7 +39,7 @@ chute = build_sglang_chute(
     ),
     engine_args=(
         "--trust-remote-code "
-        "--revision f7361cd9ff99396dbf6bd644ad846015e59ed4fc "
+        "--revision b3c33b0822efb24324ad2d384c645d9aabab6da3 "
         "--enable-torch-compile "
         "--torch-compile-max-bs 1 "
         "--enable-flashinfer-mla "

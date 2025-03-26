@@ -86,7 +86,7 @@ async def initialize(self):
 
 
 @chute.cord(
-    public_api_path="/speak", 
+    public_api_path="/speak",
     public_api_method="POST",
     stream=False,
     output_content_type="audio/wav",

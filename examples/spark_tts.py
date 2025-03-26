@@ -186,7 +186,15 @@ async def speak(self, args: InputArgs) -> Response:
                 generate_args.pop(key, None)
         text = generate_args.pop("text")
         with self.torch.no_grad():
-            output = self.model.inference(text, **generate_args)
+            try:
+                output = self.model.inference(text, **generate_args)
+            except Exception as exc:
+                if "format not recognised" in str(exc).lower():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid input audio_b64 provided: {exc}",
+                    )
+                raise
             self.soundfile.write(output_path, output, samplerate=16000)
         with open(output_path, "rb") as infile:
             return Response(

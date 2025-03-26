@@ -9,7 +9,7 @@ image = (
     Image(
         username="chutes",
         name="nfsw-classifier",
-        tag="0.0.1",
+        tag="0.0.2",
         readme="## Image classifier to detect NSFW via Falconsai/nsfw_image_detection",
     )
     .from_base("parachutes/base-python:3.12.7")
