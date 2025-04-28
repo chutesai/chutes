@@ -5,6 +5,7 @@ Run a chute, automatically handling encryption/decryption via GraVal.
 import os
 import asyncio
 import sys
+import jwt
 import time
 import uuid
 import hashlib
@@ -311,6 +312,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_procs",
                     "/_slurp",
                     "/_devices",
+                    "/_exchange",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -351,6 +353,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_procs",
                 "/_slurp",
                 "/_devices",
+                "/_exchange",
             )
         ):
             return await self._dispatch(request, call_next)
@@ -407,8 +410,39 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 self.requests_in_flight.pop(request.request_id, None)
 
 
-# NOTE: Might want to change the name of this to 'start'.
-# So `run` means an easy way to perform inference on a chute (pull the cord :P)
+async def _gather_devices_and_initialize(token: str) -> dict:
+    """
+    Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
+    """
+    body = {"gpus": []}
+    for idx in miner()._device_count:
+        body["gpus"].append(miner().get_device_info(idx))
+    token_data = jwt.decode(token, options={"verify_signature": False})
+    url = token_data.get("url")
+    async with aiohttp.ClientSession(raise_for_status=True) as session:
+        async with session.post(url, headers={"Authorization": token}, json=body) as resp:
+            graval_params = await resp.json()
+            logger.success(f"Successfully initialized deployment, received {graval_params=}")
+            miner()._graval_seed = graval_params["seed"]
+            iterations = graval_params.get("iterations", 1)
+            miner().initialize(miner()._graval_seed, iterations)
+
+            # Decrypt the challenges (if any).
+            if graval_params.get("challenges"):
+                challenge_response = []
+                for challenge in graval_params["challenges"]:
+                    ciphertext = bytes.fromhex(challenge["ciphertext"])
+                    iv = bytes.fromhex(challenge["iv"])
+                    decrypted = miner().decrypt(ciphertext, iv, challenge["length"], challenge["device_id"])
+                    challenge_response.append(decrypted)
+                async with session.put(url, headers={"Authorization": token}, json={"response": challenge_response}) as resp:
+                    logger.success("Successfully negotiated challenge response")
+                    return await resp.json()
+            return graval_params
+
+
+# Run API-based chutes, i.e. chutes that stay online, receive and process requests,
+# unlike the batch/job based entrypoint.
 def run_chute(
     chute_ref_str: str = typer.Argument(
         ..., help="chute to run, in the form [module]:[app_name], similar to uvicorn"
@@ -417,7 +451,7 @@ def run_chute(
     validator_ss58: str = typer.Option(None, help="validator hotkey ss58 address"),
     port: int | None = typer.Option(None, help="port to listen on"),
     host: str | None = typer.Option(None, help="host to bind to"),
-    graval_seed: int | None = typer.Option(None, help="graval seed for encryption/decryption"),
+    token: str | None = typer.Option(None, help="one-time token to fetch graval params from validator"),
     debug: bool = typer.Option(False, help="enable debug logging"),
     dev: bool = typer.Option(False, help="dev/local mode"),
 ):
@@ -426,26 +460,24 @@ def run_chute(
     """
 
     async def _run_chute():
+        # Load the chute.
         _, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
         if is_local():
             logger.error("Cannot run chutes in local context!")
             sys.exit(1)
-
-        # Run the server.
         chute = chute.chute if isinstance(chute, ChutePack) else chute
 
-        # GraVal enabled?
+        # Gather device info, post to API to get graval parameters.
+        if token:
+            await _gather_devices_and_initialize(token)
+        elif not dev:
+            logger.error("No token provide to initialize graval!")
+            sys.exit(1)
+
+        # Inject our middleware.
         if dev:
             chute.add_middleware(DevMiddleware)
-            if graval_seed is not None:
-                logger.info(f"Initializing graval with {graval_seed=}")
-                miner().initialize(graval_seed)
-                miner()._seed = graval_seed
         else:
-            if graval_seed is not None:
-                logger.info(f"Initializing graval with {graval_seed=}")
-                miner().initialize(graval_seed)
-                miner()._seed = graval_seed
             chute.add_middleware(GraValMiddleware, concurrency=chute.concurrency)
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58
@@ -501,3 +533,47 @@ def run_chute(
         await server.serve()
 
     asyncio.run(_run_chute())
+
+
+# Run one-off/background jobs.
+def run_job(
+    chute_ref_str: str = typer.Argument(
+        ..., help="chute to run, in the form [module]:[app_name], similar to uvicorn"
+    ),
+    token: str = typer.Option(None, help="auth token for the job"),
+    debug: bool = typer.Option(False, help="enable debug logging"),
+    test_payload: str = typer.Option(None, help="path to JSON payload for dev/local mode"),
+):
+    """
+    Execute a job, i.e. run a chute one-time for a specific payload, uploading the
+    results when finished.
+    """
+
+    async def _run_job():
+        _, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
+        if is_local():
+            logger.error("Cannot run chutes in local context!")
+            sys.exit(1)
+        chute = chute.chute if isinstance(chute, ChutePack) else chute
+
+        # Gather job params, which will be after challenge negotiation/graval when not in dev mode.
+        job_data = None
+        if test_payload:
+            with open(test_payload, "r") as infile:
+                job_data = json.loads(infile.read())
+        else:
+            if not token:
+                logger.error("Must provide a token in order to fetch job params!")
+                sys.exit(1)
+            job_data = await _gather_devices_and_initialize(token)
+            if job_data.get("skip"):
+                logger.info(f"Instructed to skip job, done.")
+                return
+
+        # Set up logging handlers, temp dirs, etc.
+        with tempfile.TemporaryDirectory() as tempdir:
+            job_data["output_directory"] = tempdir
+            try:
+                await getattr(chute, job_data["method"])(job_data)
+            except Exception as exc:
+                
