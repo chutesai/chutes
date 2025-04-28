@@ -309,6 +309,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_exchange",
                     "/_env_sig",
                     "/_env_dump",
+                    "/_exchange",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -352,6 +353,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_exchange",
                 "/_env_sig",
                 "/_env_dump",
+                "/_exchange",
             )
         ):
             return await self._dispatch(request, call_next)
