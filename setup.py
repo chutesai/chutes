@@ -7,7 +7,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 
 setup(
     name="chutes",
-    version="0.2.30",
+    version="0.2.36",
     description="Chutes development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -15,6 +15,14 @@ setup(
     author="Jon Durbin",
     license_expression="MIT",
     packages=find_packages(),
+    include_package_data=True,
+    package_data={
+        "chutes": [
+            "chutes/pyarmor_runtime_006563/*",
+            "chutes/pyarmor_runtime_006563/**/*",
+            "chutes/envcheck/*.py",
+        ],
+    },
     install_requires=[
         "aiohttp[speedups]>=3.10,<4",
         "backoff>=2.2,<3",
