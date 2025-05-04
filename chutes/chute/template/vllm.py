@@ -281,6 +281,7 @@ def build_vllm_chute(
             if revision := engine_args.get("revision"):
                 download_kwargs["revision"] = revision
             try:
+                print(f"Attempting to download {model_name} to cache...")
                 download_path = snapshot_download(repo_id=model_name, **download_kwargs)
                 print(f"Successfully downloaded {model_name} to {download_path}")
                 break
