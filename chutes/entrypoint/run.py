@@ -13,6 +13,7 @@ import typer
 import psutil
 import base64
 import orjson as json
+import chutes.envcheck as envcheck
 from loguru import logger
 from typing import Optional
 from datetime import datetime
@@ -52,6 +53,27 @@ def get_all_process_info():
     return Response(
         content=json.dumps(processes).decode(),
         media_type="application/json",
+    )
+
+
+def get_env_sig(request: Request):
+    """
+    Environment signature check.
+    """
+    return Response(
+        content=envcheck.signature(request.state.decrypted["salt"]),
+        media_type="text/plain",
+    )
+
+
+def get_env_dump(request: Request):
+    """
+    Base level environment check, running processes and things.
+    """
+    key = bytes.fromhex(request.state.decrypted["key"])
+    return Response(
+        content=envcheck.dump(key),
+        media_type="text/plain",
     )
 
 
@@ -311,6 +333,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_procs",
                     "/_slurp",
                     "/_devices",
+                    "/_env_sig",
+                    "/_env_dump",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -351,6 +375,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_procs",
                 "/_slurp",
                 "/_devices",
+                "/_env_sig",
+                "/_env_dump",
             )
         ):
             return await self._dispatch(request, call_next)
@@ -465,11 +491,17 @@ def run_chute(
         chute.add_api_route("/_slurp", handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info)
 
+        # Env checks.
+        chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
+        chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
+
         async def _devices():
             return [miner().get_device_info(idx) for idx in range(miner()._device_count)]
 
         chute.add_api_route("/_devices", _devices)
-        logger.info("Added slurp, proc, device endpoints: /_slurp, /_procs, /_devices")
+        logger.info(
+            "Added validation endpoints: /_slurp, /_procs, /_devices, /_env_sig, /_env_dump"
+        )
 
         # Device info challenge endpoint.
         async def _device_challenge(request: Request, challenge: str):
