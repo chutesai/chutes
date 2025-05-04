@@ -83,37 +83,6 @@ class Slurp(BaseModel):
     end_byte: Optional[int] = None
 
 
-def handle_slurp(request: Request):
-    """
-    Read part or all of a file.
-    """
-    slurp = Slurp(**request.state.decrypted)
-    if slurp.path == "__file__":
-        return Response(
-            content=base64.b64encode(inspect.getsource(sys.modules[__name__]).encode()).decode(),
-            media_type="text/plain",
-        )
-    if not os.path.isfile(slurp.path):
-        if os.path.isdir(slurp.path):
-            if hasattr(request.state, "_encrypt"):
-                return {"json": request.state._encrypt(json.dumps({"dir": os.listdir(slurp.path)}))}
-            return {"dir": os.listdir(slurp.path)}
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Path not found: {slurp.path}"
-        )
-    response_bytes = None
-    with open(slurp.path, "rb") as f:
-        f.seek(slurp.start_byte)
-        if slurp.end_byte is None:
-            response_bytes = f.read()
-        else:
-            response_bytes = f.read(slurp.end_byte - slurp.start_byte)
-    response_data = {"contents": base64.b64encode(response_bytes).decode()}
-    if hasattr(request.state, "_encrypt"):
-        return {"json": request.state._encrypt(json.dumps(response_data))}
-    return response_data
-
-
 @lru_cache(maxsize=1)
 def miner():
     from graval import Miner
@@ -452,7 +421,7 @@ def run_chute(
     """
 
     async def _run_chute():
-        _, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
+        chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
         if is_local():
             logger.error("Cannot run chutes in local context!")
             sys.exit(1)
@@ -488,6 +457,47 @@ def run_chute(
         logger.info("Added liveness endpoint: /_metrics")
 
         # Slurps and processes.
+        def handle_slurp(request):
+            """
+            Read part or all of a file.
+            """
+            slurp = Slurp(**request.state.decrypted)
+            if slurp.path == "__file__":
+                source_code = inspect.getsource(chute_module)
+                return Response(
+                    content=base64.b64encode(source_code.encode()).decode(),
+                    media_type="text/plain",
+                )
+            elif slurp.path == "__run__":
+                source_code = inspect.getsource(sys.modules[__name__])
+                return Response(
+                    content=base64.b64encode(source_code.encode()).decode(),
+                    media_type="text/plain",
+                )
+            if not os.path.isfile(slurp.path):
+                if os.path.isdir(slurp.path):
+                    if hasattr(request.state, "_encrypt"):
+                        return {
+                            "json": request.state._encrypt(
+                                json.dumps({"dir": os.listdir(slurp.path)})
+                            )
+                        }
+                    return {"dir": os.listdir(slurp.path)}
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Path not found: {slurp.path}"
+                )
+            response_bytes = None
+            with open(slurp.path, "rb") as f:
+                f.seek(slurp.start_byte)
+                if slurp.end_byte is None:
+                    response_bytes = f.read()
+                else:
+                    response_bytes = f.read(slurp.end_byte - slurp.start_byte)
+            response_data = {"contents": base64.b64encode(response_bytes).decode()}
+            if hasattr(request.state, "_encrypt"):
+                return {"json": request.state._encrypt(json.dumps(response_data))}
+            return response_data
+
         chute.add_api_route("/_slurp", handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info)
 
