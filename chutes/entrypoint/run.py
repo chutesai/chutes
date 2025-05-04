@@ -68,7 +68,7 @@ def handle_slurp(request: Request):
     slurp = Slurp(**request.state.decrypted)
     if slurp.path == "__file__":
         return Response(
-            content=base64.b64encode(inspect.getsource(sys.modules[__name__])).decode(),
+            content=base64.b64encode(inspect.getsource(sys.modules[__name__]).encode()).decode(),
             media_type="text/plain",
         )
     if not os.path.isfile(slurp.path):

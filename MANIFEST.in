@@ -1,0 +1,2 @@
+recursive-include chutes/pyarmor_runtime_006563 *.py *.so
+recursive-include chutes/envcheck *.py
