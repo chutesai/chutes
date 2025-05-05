@@ -185,7 +185,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 status_code=status.HTTP_426_UPGRADE_REQUIRED,
                 content={"detail": "Exchange a symmetric key via GraVal first."},
             )
-        elif path == "/_exchange":
+        if path == "/_exchange":
             # Initial GraVal payload that contains the symmetric key, encrypted with GraVal.
             encrypted_body = json.loads(body_bytes)
             required_fields = {"ciphertext", "iv", "length", "device_id", "seed"}
@@ -312,7 +312,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
 
         # Decrypt encrypted paths, which could be one of the above as well.
         path = request.scope.get("path", "")
-        if self.symmetric_key:
+        if self.symmetric_key and path != "/_exchange":
             try:
                 iv = bytes.fromhex(path[1:33])
                 cipher = Cipher(
@@ -457,10 +457,11 @@ def run_chute(
         logger.info("Added liveness endpoint: /_metrics")
 
         # Slurps and processes.
-        def handle_slurp(request):
+        def handle_slurp(request: Request):
             """
             Read part or all of a file.
             """
+            nonlocal chute_module
             slurp = Slurp(**request.state.decrypted)
             if slurp.path == "__file__":
                 source_code = inspect.getsource(chute_module)
