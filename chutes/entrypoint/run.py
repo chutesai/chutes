@@ -14,7 +14,6 @@ import typer
 import psutil
 import base64
 import orjson as json
-import chutes.envcheck as envcheck
 from loguru import logger
 from typing import Optional
 from datetime import datetime
@@ -61,6 +60,8 @@ def get_env_sig(request: Request):
     """
     Environment signature check.
     """
+    import chutes.envcheck as envcheck
+
     return Response(
         content=envcheck.signature(request.state.decrypted["salt"]),
         media_type="text/plain",
@@ -71,6 +72,8 @@ def get_env_dump(request: Request):
     """
     Base level environment check, running processes and things.
     """
+    import chutes.envcheck as envcheck
+
     key = bytes.fromhex(request.state.decrypted["key"])
     return Response(
         content=envcheck.dump(key),
