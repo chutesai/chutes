@@ -514,7 +514,7 @@ def run_chute(
 
         chute.add_api_route("/_devices", _devices)
         logger.info(
-            "Added validation endpoints: /_slurp, /_procs, /_devices, /_env_sig, /_env_dump"
+            "Added validation endpoints:\n  - /_slurp\n  - /_procs\n  - /_devices\n  - /_env_sig\n  - /_env_dump"
         )
 
         # Device info challenge endpoint.
