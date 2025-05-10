@@ -1,3 +1,3 @@
-# Pyarmor 9.1.6 (group), 006563, 2025-05-09T09:19:29.063984
+# Pyarmor 9.1.6 (group), 006563, 2025-05-10T03:22:31.543248
 from sys import version_info as py_version
 __pyarmor__ = __import__("py%d%d.pyarmor_runtime" % py_version[:2], globals(), locals(), ["__pyarmor__"], 1).__pyarmor__
