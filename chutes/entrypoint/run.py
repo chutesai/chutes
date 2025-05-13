@@ -4,6 +4,11 @@ Run a chute, automatically handling encryption/decryption via GraVal.
 
 import os
 import asyncio
+import aiohttp
+import traceback
+import tempfile
+import backoff
+import glob
 import sys
 import jwt
 import time
@@ -77,6 +82,45 @@ def get_env_dump(request: Request):
     key = bytes.fromhex(request.state.decrypted["key"])
     return Response(
         content=envcheck.dump(key),
+        media_type="text/plain",
+    )
+
+
+async def get_metrics():
+    """
+    Get the latest prometheus metrics.
+    """
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+async def get_devices():
+    """
+    Fetch device information.
+    """
+    return [miner().get_device_info(idx) for idx in range(miner()._device_count)]
+
+
+async def process_device_challenge(request: Request, challenge: str):
+    """
+    Process a GraVal device info challenge string.
+    """
+    return Response(
+        content=miner().process_device_info_challenge(challenge),
+        media_type="text/plain",
+    )
+
+
+async def process_fs_challenge(request: Request):
+    """
+    Process a filesystem challenge.
+    """
+    challenge = FSChallenge(**request.state.decrypted)
+    return Response(
+        content=miner().process_filesystem_challenge(
+            filename=challenge.filename,
+            offset=challenge.offset,
+            length=challenge.length,
+        ),
         media_type="text/plain",
     )
 
@@ -415,7 +459,7 @@ async def _gather_devices_and_initialize(token: str) -> dict:
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
     body = {"gpus": []}
-    for idx in miner()._device_count:
+    for idx in range(miner()._device_count):
         body["gpus"].append(miner().get_device_info(idx))
     token_data = jwt.decode(token, options={"verify_signature": False})
     url = token_data.get("url")
@@ -433,16 +477,19 @@ async def _gather_devices_and_initialize(token: str) -> dict:
                 for challenge in graval_params["challenges"]:
                     ciphertext = bytes.fromhex(challenge["ciphertext"])
                     iv = bytes.fromhex(challenge["iv"])
-                    decrypted = miner().decrypt(ciphertext, iv, challenge["length"], challenge["device_id"])
+                    decrypted = miner().decrypt(
+                        ciphertext, iv, challenge["length"], challenge["device_id"]
+                    )
                     challenge_response.append(decrypted)
-                async with session.put(url, headers={"Authorization": token}, json={"response": challenge_response}) as resp:
+                async with session.put(
+                    url, headers={"Authorization": token}, json={"response": challenge_response}
+                ) as resp:
                     logger.success("Successfully negotiated challenge response")
                     return await resp.json()
             return graval_params
 
 
-# Run API-based chutes, i.e. chutes that stay online, receive and process requests,
-# unlike the batch/job based entrypoint.
+# Run a chute (or job).
 def run_chute(
     chute_ref_str: str = typer.Argument(
         ..., help="chute to run, in the form [module]:[app_name], similar to uvicorn"
@@ -451,30 +498,69 @@ def run_chute(
     validator_ss58: str = typer.Option(None, help="validator hotkey ss58 address"),
     port: int | None = typer.Option(None, help="port to listen on"),
     host: str | None = typer.Option(None, help="host to bind to"),
-    token: str | None = typer.Option(None, help="one-time token to fetch graval params from validator"),
+    token: str | None = typer.Option(
+        None, help="one-time token to fetch graval params from validator"
+    ),
     debug: bool = typer.Option(False, help="enable debug logging"),
     dev: bool = typer.Option(False, help="dev/local mode"),
 ):
     """
-    Run the chute (uvicorn server).
+    Run a chute (or async job).
     """
 
+    @backoff.on_exception(
+        backoff.constant,
+        Exception,
+        jitter=None,
+        interval=10,
+        max_tries=7,
+    )
+    async def _upload_job_file(path: str, signed_url: str) -> None:
+        """
+        Job file upload helper, with retries.
+        """
+        async with aiohttp.ClientSession(raise_for_status=True) as session:
+            async with session.put(signed_url, data=open(path, "rb")):
+                logger.success(f"Uploaded job output file: {path}")
+
+    @backoff.on_exception(
+        backoff.constant,
+        Exception,
+        jitter=None,
+        interval=10,
+        max_tries=7,
+    )
+    async def _update_job_status(job_data, final_result):
+        """
+        Mark the job as complete (failed or successful).
+        """
+        async with aiohttp.ClientSession(raise_for_status=True) as session:
+            async with session.post(job_data["job_status_url"], json=final_result) as resp:
+                return await resp.json()
+
     async def _run_chute():
-        # Load the chute.
+        """
+        Run the chute (or job).
+        """
         chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
         if is_local():
             logger.error("Cannot run chutes in local context!")
             sys.exit(1)
+
         chute = chute.chute if isinstance(chute, ChutePack) else chute
 
-        # Gather device info, post to API to get graval parameters.
+        # Run the chute's initialization code so it's ready before tracking job times.
+        await chute.initialize()
+
+        # GPU verification plus job fetching.
+        job_data: dict | None = None
         if token:
-            await _gather_devices_and_initialize(token)
+            job_data = await _gather_devices_and_initialize(token)
         elif not dev:
-            logger.error("No token provide to initialize graval!")
+            logger.error("No GraVal token supplied!")
             sys.exit(1)
 
-        # Inject our middleware.
+        # Encryption/rate-limiting middleware setup.
         if dev:
             chute.add_middleware(DevMiddleware)
         else:
@@ -483,17 +569,6 @@ def run_chute(
             miner()._validator_ss58 = validator_ss58
             miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
-        # Run initialization code.
-        await chute.initialize()
-
-        # Metrics endpoint.
-        async def _metrics():
-            return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-        chute.add_api_route("/_metrics", _metrics, methods=["GET"])
-        logger.info("Added liveness endpoint: /_metrics")
-
-        # Slurps and processes.
         def handle_slurp(request: Request):
             """
             Read part or all of a file.
@@ -536,92 +611,123 @@ def run_chute(
                 return {"json": request.state._encrypt(json.dumps(response_data))}
             return response_data
 
+        # Common endpoints.
+        chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
         chute.add_api_route("/_slurp", handle_slurp, methods=["POST"])
-        chute.add_api_route("/_procs", get_all_process_info)
-
-        # Env checks.
+        chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
         chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
+        chute.add_api_route("/_devices", get_devices, methods=["GET"])
+        chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
+        chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
 
-        async def _devices():
-            return [miner().get_device_info(idx) for idx in range(miner()._device_count)]
+        # Shutdown endpoint for async jobs.
+        job_cancel_event: asyncio.Event | None = None
+        job_task: asyncio.Task | None = None
 
-        chute.add_api_route("/_devices", _devices)
-        logger.info(
-            "Added validation endpoints:\n  - /_slurp\n  - /_procs\n  - /_devices\n  - /_env_sig\n  - /_env_dump"
+        async def _shutdown(_: Request):
+            if job_cancel_event:
+                job_cancel_event.set()
+            logger.warning("Shutdown requested through /_shutdown")
+            server.should_exit = True
+            return {"ok": True}
+
+        chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
+        logger.info("Added shutdown endpoint: /_shutdown")
+
+        # Start the uvicorn process, whether in job mode or not.
+        config = Config(
+            app=chute, host=host or "0.0.0.0", port=port or 8000, limit_concurrency=1000
         )
-
-        # Device info challenge endpoint.
-        async def _device_challenge(request: Request, challenge: str):
-            return Response(
-                content=miner().process_device_info_challenge(challenge),
-                media_type="text/plain",
-            )
-
-        chute.add_api_route("/_device_challenge", _device_challenge, methods=["GET"])
-        logger.info("Added device challenge endpoint: /_device_challenge")
-
-        # Filesystem challenge endpoint.
-        async def _fs_challenge(request: Request):
-            challenge = FSChallenge(**request.state.decrypted)
-            return Response(
-                content=miner().process_filesystem_challenge(
-                    filename=challenge.filename,
-                    offset=challenge.offset,
-                    length=challenge.length,
-                ),
-                media_type="text/plain",
-            )
-
-        chute.add_api_route("/_fs_challenge", _fs_challenge, methods=["POST"])
-        logger.info("Added filesystem challenge endpoint: /_fs_challenge")
-
-        config = Config(app=chute, host=host, port=port, limit_concurrency=1000)
         server = Server(config)
-        await server.serve()
+        server_task = asyncio.create_task(server.serve())
 
-    asyncio.run(_run_chute())
-
-
-# Run one-off/background jobs.
-def run_job(
-    chute_ref_str: str = typer.Argument(
-        ..., help="chute to run, in the form [module]:[app_name], similar to uvicorn"
-    ),
-    token: str = typer.Option(None, help="auth token for the job"),
-    debug: bool = typer.Option(False, help="enable debug logging"),
-    test_payload: str = typer.Option(None, help="path to JSON payload for dev/local mode"),
-):
-    """
-    Execute a job, i.e. run a chute one-time for a specific payload, uploading the
-    results when finished.
-    """
-
-    async def _run_job():
-        _, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
-        if is_local():
-            logger.error("Cannot run chutes in local context!")
-            sys.exit(1)
-        chute = chute.chute if isinstance(chute, ChutePack) else chute
-
-        # Gather job params, which will be after challenge negotiation/graval when not in dev mode.
-        job_data = None
-        if test_payload:
-            with open(test_payload, "r") as infile:
-                job_data = json.loads(infile.read())
-        else:
-            if not token:
-                logger.error("Must provide a token in order to fetch job params!")
-                sys.exit(1)
-            job_data = await _gather_devices_and_initialize(token)
+        # Job processing.
+        upload_required = False
+        final_result: dict | None = None
+        if job_data:
             if job_data.get("skip"):
-                logger.info(f"Instructed to skip job, done.")
+                logger.warning(f"Instructed to skip job: {job_data}")
+                server.should_exit = True
+                await server_task
                 return
 
-        # Set up logging handlers, temp dirs, etc.
-        with tempfile.TemporaryDirectory() as tempdir:
-            job_data["output_directory"] = tempdir
+            tempdir = tempfile.mkdtemp()
+            job_data["output_dir"] = tempdir
+            job_cancel_event = asyncio.Event()
+
+            async def _run_job() -> dict:
+                """
+                Wrap the user-defined method so we can listen for external cancel.
+                """
+                method = getattr(chute, job_data["method"])
+                coro = method(job_data)
+                done, pending = await asyncio.wait(
+                    [asyncio.create_task(coro), asyncio.create_task(job_cancel_event.wait())],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if job_cancel_event.is_set():
+                    for task in pending | done:
+                        task.cancel()
+                    raise asyncio.CancelledError("Job cancelled by /_shutdown")
+                return next(iter(done)).result()
+
+            # Handle job timeouts.
+            job_timeout = job_data.get("timeout")
             try:
-                await getattr(chute, job_data["method"])(job_data)
+                job_task = asyncio.create_task(_run_job())
+                done, _ = await asyncio.wait(
+                    [job_task, server_task],
+                    timeout=job_timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if job_task in done:
+                    final_result = await job_task
+                    upload_required = True
+                    logger.success("Job finished successfully")
+                else:
+                    job_task.cancel()
+                    await job_task
+            except asyncio.CancelledError:
+                logger.error("Job cancelled")
+            except asyncio.TimeoutError:
+                logger.error(f"Job timed-out after {job_timeout} s")
             except Exception as exc:
-                
+                logger.error(f"Job failed: {exc}\n{traceback.format_exc()}")
+
+        # Upload all paths in the temporary directory.
+        if upload_required and final_result is not None:
+            output_files = [
+                p
+                for p in glob.glob(os.path.join(tempdir, "**"), recursive=True)
+                if os.path.isfile(p)
+            ]
+
+            # Mark complete.
+            upload_cfg = await _update_job_status(job_data, final_result)
+
+            # Upload files in batches.
+            if output_files and "output_storage_urls" in upload_cfg:
+                sem = asyncio.Semaphore(8)
+
+                async def _wrapped_upload(idx: int):
+                    async with sem:
+                        await _upload_job_file(
+                            output_files[idx], upload_cfg["output_storage_urls"][idx]
+                        )
+
+                await asyncio.gather(
+                    *[
+                        _wrapped_upload(i)
+                        for i in range(
+                            min(len(output_files), len(upload_cfg["output_storage_urls"]))
+                        )
+                    ]
+                )
+                logger.success("Uploaded all output files, job complete!")
+
+        server.should_exit = True
+        await server_task
+
+    # Kick everything off
+    asyncio.run(_run_chute())
