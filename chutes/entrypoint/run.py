@@ -458,11 +458,20 @@ async def _gather_devices_and_initialize(token: str) -> dict:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
+    import chutes.envcheck as envcheck
+
+    # Build the GraVal request based on the GPUs that were actually assigned to this pod.
     body = {"gpus": []}
     for idx in range(miner()._device_count):
         body["gpus"].append(miner().get_device_info(idx))
     token_data = jwt.decode(token, options={"verify_signature": False})
     url = token_data.get("url")
+    key_salt_hex = token_data.get("env_key"), "a" * 32
+    key = bytes.fromhex(key_salt_hex)
+    body["env"] = envcheck.dump(key)
+    body["sig"] = envcheck.signature(key_salt_hex)
+
+    # Fetch the challenges.
     async with aiohttp.ClientSession(raise_for_status=True) as session:
         async with session.post(url, headers={"Authorization": token}, json=body) as resp:
             graval_params = await resp.json()
@@ -486,10 +495,11 @@ async def _gather_devices_and_initialize(token: str) -> dict:
                 ) as resp:
                     logger.success("Successfully negotiated challenge response")
                     return await resp.json()
+
             return graval_params
 
 
-# Run a chute (or job).
+# Run a chute (which can be an async job or otherwise long-running process).
 def run_chute(
     chute_ref_str: str = typer.Argument(
         ..., help="chute to run, in the form [module]:[app_name], similar to uvicorn"
@@ -660,7 +670,12 @@ def run_chute(
                 """
                 Wrap the user-defined method so we can listen for external cancel.
                 """
+                job_methods = [cord._func for cord in chute._cords if cord.job]
                 method = getattr(chute, job_data["method"])
+                if method not in job_methods:
+                    logger.error("Selected method is not a job cord!")
+                    raise asyncio.CancelledError("Job cancelled, invalid method selected")
+
                 coro = method(job_data)
                 done, pending = await asyncio.wait(
                     [asyncio.create_task(coro), asyncio.create_task(job_cancel_event.wait())],

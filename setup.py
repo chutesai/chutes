@@ -41,6 +41,7 @@ setup(
         "prometheus-client==0.21.0",
         "cryptography",
         "psutil",
+        "pyjwt>=2.10.1",
     ],
     extras_require={
         "dev": [

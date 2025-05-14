@@ -31,6 +31,7 @@ class Cord:
     def __init__(
         self,
         app: Chute,
+        job: bool = False,
         stream: bool = False,
         path: str = None,
         passthrough_path: str = None,
@@ -59,6 +60,7 @@ class Cord:
         self._public_api_path = None
         if public_api_path:
             self.public_api_path = public_api_path
+        self._job = job
         self._public_api_method = public_api_method
         self._passthrough_port = passthrough_port
         self._stream = stream
@@ -97,6 +99,20 @@ class Cord:
             return self._config
         self._config = get_config()
         return self._config
+
+    @property
+    def job(self):
+        """
+        Job vs API endpoint.
+        """
+        return self._job
+
+    @job.setter
+    def job(self, value: bool):
+        """
+        Job attribute setter.
+        """
+        self._job = value
 
     @path.setter
     def path(self, path: str):
@@ -458,6 +474,11 @@ class Cord:
                     self.output_content_type = "application/json"
                 else:
                     self.output_content_type = "text/plain"
+        # Job mode.
+        if self.job:
+            return self._func
+
+        # API mode.
         if is_local():
             return self._local_call if not self._stream else self._local_stream_call
         return self._remote_call if not self._stream else self._remote_stream_call
