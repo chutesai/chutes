@@ -353,7 +353,6 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_exchange",
                     "/_env_sig",
                     "/_env_dump",
-                    "/_exchange",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -397,7 +396,6 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_exchange",
                 "/_env_sig",
                 "/_env_dump",
-                "/_exchange",
             )
         ):
             return await self._dispatch(request, call_next)
@@ -621,8 +619,56 @@ def run_chute(
                 return {"json": request.state._encrypt(json.dumps(response_data))}
             return response_data
 
-        # Common endpoints.
-        chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
+        # Metrics endpoint.
+        async def _metrics():
+            return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+        chute.add_api_route("/_metrics", _metrics, methods=["GET"])
+        logger.info("Added liveness endpoint: /_metrics")
+
+        # Slurps and processes.
+        def handle_slurp(request: Request):
+            """
+            Read part or all of a file.
+            """
+            nonlocal chute_module
+            slurp = Slurp(**request.state.decrypted)
+            if slurp.path == "__file__":
+                source_code = inspect.getsource(chute_module)
+                return Response(
+                    content=base64.b64encode(source_code.encode()).decode(),
+                    media_type="text/plain",
+                )
+            elif slurp.path == "__run__":
+                source_code = inspect.getsource(sys.modules[__name__])
+                return Response(
+                    content=base64.b64encode(source_code.encode()).decode(),
+                    media_type="text/plain",
+                )
+            if not os.path.isfile(slurp.path):
+                if os.path.isdir(slurp.path):
+                    if hasattr(request.state, "_encrypt"):
+                        return {
+                            "json": request.state._encrypt(
+                                json.dumps({"dir": os.listdir(slurp.path)})
+                            )
+                        }
+                    return {"dir": os.listdir(slurp.path)}
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Path not found: {slurp.path}"
+                )
+            response_bytes = None
+            with open(slurp.path, "rb") as f:
+                f.seek(slurp.start_byte)
+                if slurp.end_byte is None:
+                    response_bytes = f.read()
+                else:
+                    response_bytes = f.read(slurp.end_byte - slurp.start_byte)
+            response_data = {"contents": base64.b64encode(response_bytes).decode()}
+            if hasattr(request.state, "_encrypt"):
+                return {"json": request.state._encrypt(json.dumps(response_data))}
+            return response_data
+
         chute.add_api_route("/_slurp", handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
@@ -641,6 +687,18 @@ def run_chute(
             logger.warning("Shutdown requested through /_shutdown")
             server.should_exit = True
             return {"ok": True}
+
+        # Env checks.
+        chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
+        chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
+
+        async def _devices():
+            return [miner().get_device_info(idx) for idx in range(miner()._device_count)]
+
+        chute.add_api_route("/_devices", _devices)
+        logger.info(
+            "Added validation endpoints:\n  - /_slurp\n  - /_procs\n  - /_devices\n  - /_env_sig\n  - /_env_dump"
+        )
 
         chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
         logger.info("Added shutdown endpoint: /_shutdown")

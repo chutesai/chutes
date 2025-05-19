@@ -2,6 +2,7 @@
 Main application class, along with all of the inference decorators.
 """
 
+import os
 import asyncio
 import aiohttp
 import uuid
@@ -19,6 +20,20 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from chutes.chute.cord import Cord
+
+if os.getenv("CHUTES_EXECUTION_CONTEXT") == "REMOTE":
+    existing = os.getenv("NO_PROXY")
+    os.environ["NO_PROXY"] = ",".join(
+        [
+            "localhost",
+            "127.0.0.1",
+            "api",
+            "api.chutes.svc",
+            "api.chutes.svc.cluster.local",
+        ]
+    )
+    if existing:
+        os.environ["NO_PROXY"] += f",{existing}"
 
 
 async def _pong(request: Request) -> Dict[str, Any]:
