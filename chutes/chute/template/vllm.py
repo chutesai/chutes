@@ -294,8 +294,13 @@ def build_vllm_chute(
         try:
             from vllm.entrypoints.openai.serving_engine import BaseModelPath
         except Exception:
-            from vllm.entrypoints.openai.serving_models import BaseModelPath, OpenAIServingModels
-        from vllm.entrypoints.openai.serving_tokenization import OpenAIServingTokenization
+            from vllm.entrypoints.openai.serving_models import (
+                BaseModelPath,
+                OpenAIServingModels,
+            )
+        from vllm.entrypoints.openai.serving_tokenization import (
+            OpenAIServingTokenization,
+        )
 
         # Reset torch.
         torch.cuda.empty_cache()

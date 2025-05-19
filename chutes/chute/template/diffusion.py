@@ -102,7 +102,9 @@ def single_file_pipeline(model_path, model_type="auto"):
                     base_model, subfolder="text_encoder", torch_dtype=torch.float16
                 )
                 components["text_encoder_2"] = CLIPTextModelWithProjection.from_pretrained(
-                    base_model, subfolder="text_encoder_2", torch_dtype=torch.float16
+                    base_model,
+                    subfolder="text_encoder_2",
+                    torch_dtype=torch.float16,
                 )
             else:
                 components["tokenizer"] = CLIPTokenizer.from_pretrained(
@@ -112,7 +114,10 @@ def single_file_pipeline(model_path, model_type="auto"):
                     base_model, subfolder="text_encoder", torch_dtype=torch.float16
                 )
             pipeline = pipeline_class.from_single_file(
-                model_path, **components, torch_dtype=torch.float16, use_safetensors=True
+                model_path,
+                **components,
+                torch_dtype=torch.float16,
+                use_safetensors=True,
             )
         except Exception:
             vae_model = (
@@ -122,7 +127,10 @@ def single_file_pipeline(model_path, model_type="auto"):
             )
             components["vae"] = AutoencoderKL.from_pretrained(vae_model, torch_dtype=torch.float16)
             pipeline = pipeline_class.from_single_file(
-                model_path, **components, torch_dtype=torch.float16, use_safetensors=True
+                model_path,
+                **components,
+                torch_dtype=torch.float16,
+                use_safetensors=True,
             )
     return pipeline.to("cuda")
 
