@@ -577,48 +577,6 @@ def run_chute(
             miner()._validator_ss58 = validator_ss58
             miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
-        def handle_slurp(request: Request):
-            """
-            Read part or all of a file.
-            """
-            nonlocal chute_module
-            slurp = Slurp(**request.state.decrypted)
-            if slurp.path == "__file__":
-                source_code = inspect.getsource(chute_module)
-                return Response(
-                    content=base64.b64encode(source_code.encode()).decode(),
-                    media_type="text/plain",
-                )
-            elif slurp.path == "__run__":
-                source_code = inspect.getsource(sys.modules[__name__])
-                return Response(
-                    content=base64.b64encode(source_code.encode()).decode(),
-                    media_type="text/plain",
-                )
-            if not os.path.isfile(slurp.path):
-                if os.path.isdir(slurp.path):
-                    if hasattr(request.state, "_encrypt"):
-                        return {
-                            "json": request.state._encrypt(
-                                json.dumps({"dir": os.listdir(slurp.path)})
-                            )
-                        }
-                    return {"dir": os.listdir(slurp.path)}
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="Path not found: {slurp.path}"
-                )
-            response_bytes = None
-            with open(slurp.path, "rb") as f:
-                f.seek(slurp.start_byte)
-                if slurp.end_byte is None:
-                    response_bytes = f.read()
-                else:
-                    response_bytes = f.read(slurp.end_byte - slurp.start_byte)
-            response_data = {"contents": base64.b64encode(response_bytes).decode()}
-            if hasattr(request.state, "_encrypt"):
-                return {"json": request.state._encrypt(json.dumps(response_data))}
-            return response_data
-
         # Metrics endpoint.
         async def _metrics():
             return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -681,13 +639,6 @@ def run_chute(
         job_cancel_event: asyncio.Event | None = None
         job_task: asyncio.Task | None = None
 
-        async def _shutdown(_: Request):
-            if job_cancel_event:
-                job_cancel_event.set()
-            logger.warning("Shutdown requested through /_shutdown")
-            server.should_exit = True
-            return {"ok": True}
-
         # Env checks.
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
         chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
@@ -700,8 +651,21 @@ def run_chute(
             "Added validation endpoints:\n  - /_slurp\n  - /_procs\n  - /_devices\n  - /_env_sig\n  - /_env_dump"
         )
 
-        chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
-        logger.info("Added shutdown endpoint: /_shutdown")
+        # Job/rental shutdown helper.
+        @app.post("/_shutdown")
+        async def _shutdown():
+            nonlocal job_task
+            if not job_task:
+                return
+            logger.warning("Shutdown requested.")
+            if job_obj and not job_obj.cancel_event.is_set():
+                job_obj.cancel_event.set()
+            server.should_exit = True
+            return {"ok": True}
+
+        if job_data:
+            chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
+            logger.info("Added shutdown endpoint: /_shutdown")
 
         # Start the uvicorn process, whether in job mode or not.
         config = Config(
@@ -711,95 +675,26 @@ def run_chute(
         server_task = asyncio.create_task(server.serve())
 
         # Job processing.
-        upload_required = False
-        final_result: dict | None = None
         if job_data:
             if job_data.get("skip"):
-                logger.warning(f"Instructed to skip job: {job_data}")
-                server.should_exit = True
-                await server_task
-                return
-
-            tempdir = tempfile.mkdtemp()
-            job_data["output_dir"] = tempdir
-            job_cancel_event = asyncio.Event()
-
-            async def _run_job() -> dict:
-                """
-                Wrap the user-defined method so we can listen for external cancel.
-                """
-                job_methods = [cord._func for cord in chute._cords if cord.job]
-                method = getattr(chute, job_data["method"])
-                if method not in job_methods:
-                    logger.error("Selected method is not a job cord!")
-                    raise asyncio.CancelledError("Job cancelled, invalid method selected")
-
-                coro = method(job_data)
-                done, pending = await asyncio.wait(
-                    [asyncio.create_task(coro), asyncio.create_task(job_cancel_event.wait())],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if job_cancel_event.is_set():
-                    for task in pending | done:
-                        task.cancel()
-                    raise asyncio.CancelledError("Job cancelled by /_shutdown")
-                return next(iter(done)).result()
-
-            # Handle job timeouts.
-            job_timeout = job_data.get("timeout")
+                logger.warning("Instructed to skip job!")
+                sys.exit(0)
+            job_names = [job.name for job in chute._jobs]
+            requested_method = job_data["method"]
+            if requested_method not in job_names:
+                logger.error(f"Selected method {requested_method} is not a known job!")
+                sys.exit(1)
+            job_obj = next(j for j in chute._jobs if j.name == requested_method)
             try:
-                job_task = asyncio.create_task(_run_job())
-                done, _ = await asyncio.wait(
-                    [job_task, server_task],
-                    timeout=job_timeout,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if job_task in done:
-                    final_result = await job_task
-                    upload_required = True
-                    logger.success("Job finished successfully")
-                else:
-                    job_task.cancel()
-                    await job_task
+                final_result = await job_obj.run(job_data)
+                logger.info(f"Job completed with result: {final_result}")
             except asyncio.CancelledError:
-                logger.error("Job cancelled")
+                logger.error("Job cancelled.")
             except asyncio.TimeoutError:
-                logger.error(f"Job timed-out after {job_timeout} s")
+                logger.error("Job timed out.")
             except Exception as exc:
-                logger.error(f"Job failed: {exc}\n{traceback.format_exc()}")
-
-        # Upload all paths in the temporary directory.
-        if upload_required and final_result is not None:
-            output_files = [
-                p
-                for p in glob.glob(os.path.join(tempdir, "**"), recursive=True)
-                if os.path.isfile(p)
-            ]
-
-            # Mark complete.
-            upload_cfg = await _update_job_status(job_data, final_result)
-
-            # Upload files in batches.
-            if output_files and "output_storage_urls" in upload_cfg:
-                sem = asyncio.Semaphore(8)
-
-                async def _wrapped_upload(idx: int):
-                    async with sem:
-                        await _upload_job_file(
-                            output_files[idx], upload_cfg["output_storage_urls"][idx]
-                        )
-
-                await asyncio.gather(
-                    *[
-                        _wrapped_upload(i)
-                        for i in range(
-                            min(len(output_files), len(upload_cfg["output_storage_urls"]))
-                        )
-                    ]
-                )
-                logger.success("Uploaded all output files, job complete!")
-
-        server.should_exit = True
+                logger.error(f"Job failed unexpectedly: {exc}\n{traceback.format_exc()}")
+            server.should_exit = True
         await server_task
 
     # Kick everything off
