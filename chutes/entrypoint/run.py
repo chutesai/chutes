@@ -512,39 +512,6 @@ def run_chute(
     debug: bool = typer.Option(False, help="enable debug logging"),
     dev: bool = typer.Option(False, help="dev/local mode"),
 ):
-    """
-    Run a chute (or async job).
-    """
-
-    @backoff.on_exception(
-        backoff.constant,
-        Exception,
-        jitter=None,
-        interval=10,
-        max_tries=7,
-    )
-    async def _upload_job_file(path: str, signed_url: str) -> None:
-        """
-        Job file upload helper, with retries.
-        """
-        async with aiohttp.ClientSession(raise_for_status=True) as session:
-            async with session.put(signed_url, data=open(path, "rb")):
-                logger.success(f"Uploaded job output file: {path}")
-
-    @backoff.on_exception(
-        backoff.constant,
-        Exception,
-        jitter=None,
-        interval=10,
-        max_tries=7,
-    )
-    async def _update_job_status(job_data, final_result):
-        """
-        Mark the job as complete (failed or successful).
-        """
-        async with aiohttp.ClientSession(raise_for_status=True) as session:
-            async with session.post(job_data["job_status_url"], json=final_result) as resp:
-                return await resp.json()
 
     async def _run_chute():
         """
@@ -576,13 +543,6 @@ def run_chute(
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58
             miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
-
-        # Metrics endpoint.
-        async def _metrics():
-            return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-        chute.add_api_route("/_metrics", _metrics, methods=["GET"])
-        logger.info("Added liveness endpoint: /_metrics")
 
         # Slurps and processes.
         def handle_slurp(request: Request):
@@ -627,6 +587,15 @@ def run_chute(
                 return {"json": request.state._encrypt(json.dumps(response_data))}
             return response_data
 
+        # Metrics endpoint.
+        async def _metrics():
+            return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+        # Device fetch.
+        async def _devices():
+            return [miner().get_device_info(idx) for idx in range(miner()._device_count)]
+
+        chute.add_api_route("/_metrics", _metrics, methods=["GET"])
         chute.add_api_route("/_slurp", handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
@@ -634,27 +603,25 @@ def run_chute(
         chute.add_api_route("/_devices", get_devices, methods=["GET"])
         chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
         chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
+        chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
+        chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
+        chute.add_api_route("/_devices", _devices)
+        logger.success("Added all chutes interval endpoints.")
 
         # Shutdown endpoint for async jobs.
         job_cancel_event: asyncio.Event | None = None
         job_task: asyncio.Task | None = None
 
-        # Env checks.
-        chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
-        chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
-
-        async def _devices():
-            return [miner().get_device_info(idx) for idx in range(miner()._device_count)]
-
-        chute.add_api_route("/_devices", _devices)
-        logger.info(
-            "Added validation endpoints:\n  - /_slurp\n  - /_procs\n  - /_devices\n  - /_env_sig\n  - /_env_dump"
+        # Start the uvicorn process, whether in job mode or not.
+        config = Config(
+            app=chute, host=host or "0.0.0.0", port=port or 8000, limit_concurrency=1000
         )
+        server = Server(config)
+        server_task = asyncio.create_task(server.serve())
 
-        # Job/rental shutdown helper.
-        @app.post("/_shutdown")
+        # Job/rental shutdown/cancellation helper.
         async def _shutdown():
-            nonlocal job_task
+            nonlocal job_task, server
             if not job_task:
                 return
             logger.warning("Shutdown requested.")
@@ -666,13 +633,6 @@ def run_chute(
         if job_data:
             chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
             logger.info("Added shutdown endpoint: /_shutdown")
-
-        # Start the uvicorn process, whether in job mode or not.
-        config = Config(
-            app=chute, host=host or "0.0.0.0", port=port or 8000, limit_concurrency=1000
-        )
-        server = Server(config)
-        server_task = asyncio.create_task(server.serve())
 
         # Job processing.
         if job_data:
