@@ -72,11 +72,9 @@ class TokenizeRequest(BaseRequest):
     prompt: str
     add_special_tokens: bool
 
-
 class DetokenizeRequest(BaseRequest):
     model: str
     tokens: List[int]
-
 
 class ChatCompletionRequest(BaseRequest):
     messages: List[ChatMessage]
@@ -117,16 +115,13 @@ class ChatCompletionResponse(BaseModel):
     usage: UsageInfo
     prompt_logprobs: Optional[List[Optional[Dict[int, Logprob]]]] = None
 
-
 class TokenizeResponse(BaseRequest):
     count: int
     max_model_len: int
     tokens: List[int]
 
-
 class DetokenizeResponse(BaseRequest):
     prompt: str
-
 
 class DeltaMessage(BaseModel):
     role: Optional[str] = None
@@ -470,7 +465,7 @@ def build_vllm_chute(
     )
     async def chat(data) -> ChatCompletionResponse:
         return data
-
+    
     @chute.cord(
         passthrough_path="/tokenize",
         public_api_path="/tokenize",
@@ -481,7 +476,7 @@ def build_vllm_chute(
     )
     async def tokenize(data) -> TokenizeResponse:
         return data
-
+    
     @chute.cord(
         passthrough_path="/detokenize",
         public_api_path="/detokenize",
