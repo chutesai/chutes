@@ -12,9 +12,10 @@ import inspect
 import typer
 import psutil
 import base64
+import aiohttp
 import orjson as json
 from loguru import logger
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime
 from functools import lru_cache
 from pydantic import BaseModel
@@ -78,6 +79,37 @@ def get_env_dump(request: Request):
         content=envcheck.dump(key),
         media_type="text/plain",
     )
+
+
+async def pong(request: Request) -> dict[str, Any]:
+    """
+    Echo incoming request as a liveness check.
+    """
+    if hasattr(request.state, "_encrypt"):
+        return {"json": request.state._encrypt(json.dumps(request.state.decrypted))}
+    return request.state.decrypted
+
+
+async def get_token(request: Request) -> dict[str, Any]:
+    """
+    Fetch a token, useful in detecting proxies between the real deployment and API.
+    """
+    endpoint = request.state.decrypted.get(
+        "endpoint", "https://api.chutes.ai/instances/token_check"
+    )
+    salt = request.state.decrypted.get("salt", 42)
+    async with aiohttp.ClientSession(trust_env=True) as session:
+        async with session.get(endpoint, params={"salt": salt}) as resp:
+            if hasattr(request.state, "_encrypt"):
+                return {"json": request.state._encrypt(await resp.text())}
+            return await resp.json()
+
+
+async def is_alive(request: Request):
+    """
+    Liveness probe endpoint for k8s.
+    """
+    return {"alive": True}
 
 
 class Slurp(BaseModel):
@@ -299,14 +331,18 @@ class GraValMiddleware(BaseHTTPMiddleware):
         if (
             request.scope.get("path", "").endswith(
                 (
+                    "/_fs_challenge",
                     "/_alive",
                     "/_metrics",
                     "/_ping",
                     "/_procs",
                     "/_slurp",
+                    "/_device_challenge",
                     "/_devices",
                     "/_env_sig",
                     "/_env_dump",
+                    "/_exchange",
+                    "/_token",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -343,12 +379,14 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_alive",
                 "/_metrics",
                 "/_ping",
-                "/_device_challenge",
                 "/_procs",
                 "/_slurp",
+                "/_device_challenge",
                 "/_devices",
                 "/_env_sig",
                 "/_env_dump",
+                "/_exchange",
+                "/_token",
             )
         ):
             return await self._dispatch(request, call_next)
@@ -457,7 +495,6 @@ def run_chute(
             return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
         chute.add_api_route("/_metrics", _metrics, methods=["GET"])
-        logger.info("Added liveness endpoint: /_metrics")
 
         # Slurps and processes.
         def handle_slurp(request: Request):
@@ -488,7 +525,8 @@ def run_chute(
                         }
                     return {"dir": os.listdir(slurp.path)}
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="Path not found: {slurp.path}"
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Path not found: {slurp.path}",
                 )
             response_bytes = None
             with open(slurp.path, "rb") as f:
@@ -509,13 +547,15 @@ def run_chute(
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
         chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
 
+        # Add a ping endpoint for validators to use.
+        chute.add_api_route("/_ping", pong, methods=["POST"])
+        chute.add_api_route("/_token", get_token, methods=["POST"])
+        chute.add_api_route("/_alive", is_alive, methods=["GET"])
+
         async def _devices():
             return [miner().get_device_info(idx) for idx in range(miner()._device_count)]
 
         chute.add_api_route("/_devices", _devices)
-        logger.info(
-            "Added validation endpoints:\n  - /_slurp\n  - /_procs\n  - /_devices\n  - /_env_sig\n  - /_env_dump"
-        )
 
         # Device info challenge endpoint.
         async def _device_challenge(request: Request, challenge: str):
@@ -525,7 +565,6 @@ def run_chute(
             )
 
         chute.add_api_route("/_device_challenge", _device_challenge, methods=["GET"])
-        logger.info("Added device challenge endpoint: /_device_challenge")
 
         # Filesystem challenge endpoint.
         async def _fs_challenge(request: Request):
@@ -540,7 +579,8 @@ def run_chute(
             )
 
         chute.add_api_route("/_fs_challenge", _fs_challenge, methods=["POST"])
-        logger.info("Added filesystem challenge endpoint: /_fs_challenge")
+
+        logger.info("Added validation endpoints.")
 
         config = Config(app=chute, host=host, port=port, limit_concurrency=1000)
         server = Server(config)
