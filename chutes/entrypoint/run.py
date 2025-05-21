@@ -6,9 +6,6 @@ import os
 import asyncio
 import aiohttp
 import traceback
-import tempfile
-import backoff
-import glob
 import sys
 import jwt
 import time
@@ -18,7 +15,6 @@ import inspect
 import typer
 import psutil
 import base64
-import aiohttp
 import orjson as json
 from loguru import logger
 from typing import Optional, Any
@@ -124,6 +120,7 @@ async def process_fs_challenge(request: Request):
         ),
         media_type="text/plain",
     )
+
 
 async def pong(request: Request) -> dict[str, Any]:
     """
@@ -549,7 +546,6 @@ def run_chute(
     debug: bool = typer.Option(False, help="enable debug logging"),
     dev: bool = typer.Option(False, help="dev/local mode"),
 ):
-
     async def _run_chute():
         """
         Run the chute (or job).
@@ -641,10 +637,6 @@ def run_chute(
         chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
         logger.success("Added all chutes interval endpoints.")
 
-        # Shutdown endpoint for async jobs.
-        job_cancel_event: asyncio.Event | None = None
-        job_task: asyncio.Task | None = None
-
         # Start the uvicorn process, whether in job mode or not.
         config = Config(
             app=chute, host=host or "0.0.0.0", port=port or 8000, limit_concurrency=1000
@@ -653,6 +645,8 @@ def run_chute(
         server_task = asyncio.create_task(server.serve())
 
         # Job/rental shutdown/cancellation helper.
+        job_task: asyncio.Task | None = None
+
         async def _shutdown():
             nonlocal job_task, server
             if not job_task:
@@ -665,7 +659,7 @@ def run_chute(
 
         if job_data:
             chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
-            logger.info("Added shutdown endpoint: /_shutdown")
+            logger.info("Added job shutdown endpoint: /_shutdown")
 
         # Job processing.
         if job_data:
