@@ -412,17 +412,18 @@ def build_vllm_chute(
                 )
             },
         )
+        models_arg = base_model_paths if old_vllm else extra_args["models"]
         vllm_api_server.tokenization = lambda s: OpenAIServingTokenization(
             self.engine,
             model_config,
-            base_model_paths,
+            models_arg,
             request_logger=None,
             **extra_token_args,
         )
         self.state.openai_serving_tokenization = OpenAIServingTokenization(
             self.engine,
             model_config,
-            base_model_paths,
+            models_arg,
             request_logger=None,
             **extra_token_args,
         )
