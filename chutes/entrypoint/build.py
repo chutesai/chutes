@@ -267,25 +267,6 @@ def build_image(
                     dest=f"/app/{_clean_path(module.__file__)}",
                 )
             )
-            imported_files = [
-                os.path.abspath(module.__file__)
-                for module in sys.modules.values()
-                if hasattr(module, "__file__") and module.__file__
-            ]
-            imported_files = [
-                f
-                for f in imported_files
-                if f.startswith(current_directory)
-                and not re.search(r"(site|dist)-packages|bin/chutes|^\.local", f)
-                and f != os.path.abspath(module.__file__)
-            ]
-            for path in imported_files:
-                image._directives.append(
-                    ADD(
-                        source=_clean_path(path),
-                        dest=f"/app/{_clean_path(path)}",
-                    )
-                )
         logger.debug(f"Generated Dockerfile:\n{str(image)}")
 
         # Building locally?
