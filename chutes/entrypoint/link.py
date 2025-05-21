@@ -24,7 +24,8 @@ def link_hotkey(
         None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
     hotkey_path: str = typer.Option(
-        ..., help="Path to the validator/subnet owner hotkey file (used only for signature)"
+        ...,
+        help="Path to the validator/subnet owner hotkey file (used only for signature)",
     ),
     hotkey_type: HotkeyType = typer.Option(
         ...,

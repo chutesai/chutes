@@ -73,7 +73,15 @@ def _build_local(image):
         logger.info(f"Starting build of {tmp.name}...")
         os.execv(
             "/usr/bin/docker",
-            ["/usr/bin/docker", "build", "-t", f"{image.name}:{image.tag}", ".", "-f", tmp.name],
+            [
+                "/usr/bin/docker",
+                "build",
+                "-t",
+                f"{image.name}:{image.tag}",
+                ".",
+                "-f",
+                tmp.name,
+            ],
         )
 
 
