@@ -24,7 +24,7 @@ from chutes.chute.base import Chute
 import chutes.metrics as metrics
 
 # Simple regex to check for custom path overrides.
-PATH_RE = re.compile(r"^(/[a-z0-9]+[a-z0-9-_]*)+$")
+PATH_RE = re.compile(r"^(/[a-z0-9_]+[a-z0-9-_]*)+$")
 
 
 class Cord:
