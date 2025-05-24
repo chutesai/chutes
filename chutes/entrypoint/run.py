@@ -153,6 +153,49 @@ async def is_alive(request: Request):
     return {"alive": True}
 
 
+def handle_slurp(request, chute_module):
+    """
+    Read part or all of a file.
+    """
+    slurp = Slurp(**request.state.decrypted)
+    if slurp.path == "__file__":
+        source_code = inspect.getsource(chute_module)
+        return Response(
+            content=base64.b64encode(source_code.encode()).decode(),
+            media_type="text/plain",
+        )
+    elif slurp.path == "__run__":
+        source_code = inspect.getsource(sys.modules[__name__])
+        return Response(
+            content=base64.b64encode(source_code.encode()).decode(),
+            media_type="text/plain",
+        )
+    if not os.path.isfile(slurp.path):
+        if os.path.isdir(slurp.path):
+            if hasattr(request.state, "_encrypt"):
+                return {
+                    "json": request.state._encrypt(
+                        json.dumps({"dir": os.listdir(slurp.path)})
+                    )
+                }
+            return {"dir": os.listdir(slurp.path)}
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Path not found: {slurp.path}",
+        )
+    response_bytes = None
+    with open(slurp.path, "rb") as f:
+        f.seek(slurp.start_byte)
+        if slurp.end_byte is None:
+            response_bytes = f.read()
+        else:
+            response_bytes = f.read(slurp.end_byte - slurp.start_byte)
+    response_data = {"contents": base64.b64encode(response_bytes).decode()}
+    if hasattr(request.state, "_encrypt"):
+        return {"json": request.state._encrypt(json.dumps(response_data))}
+    return response_data
+
+
 class Slurp(BaseModel):
     path: str
     start_byte: Optional[int] = 0
@@ -550,6 +593,7 @@ def run_chute(
         """
         Run the chute (or job).
         """
+        # Load the chute.
         chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
         if is_local():
             logger.error("Cannot run chutes in local context!")
@@ -557,10 +601,10 @@ def run_chute(
 
         chute = chute.chute if isinstance(chute, ChutePack) else chute
 
-        # Run the chute's initialization code so it's ready before tracking job times.
+        # Run the initialization code.
         await chute.initialize()
 
-        # GPU verification plus job fetching.
+        # GPU and environment verification.
         job_data: dict | None = None
         if token:
             job_data = await _gather_devices_and_initialize(token)
@@ -577,49 +621,9 @@ def run_chute(
             miner()._validator_ss58 = validator_ss58
             miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
-        # Slurps and processes.
-        def handle_slurp(request: Request):
-            """
-            Read part or all of a file.
-            """
+        def _handle_slurp(request: Request):
             nonlocal chute_module
-            slurp = Slurp(**request.state.decrypted)
-            if slurp.path == "__file__":
-                source_code = inspect.getsource(chute_module)
-                return Response(
-                    content=base64.b64encode(source_code.encode()).decode(),
-                    media_type="text/plain",
-                )
-            elif slurp.path == "__run__":
-                source_code = inspect.getsource(sys.modules[__name__])
-                return Response(
-                    content=base64.b64encode(source_code.encode()).decode(),
-                    media_type="text/plain",
-                )
-            if not os.path.isfile(slurp.path):
-                if os.path.isdir(slurp.path):
-                    if hasattr(request.state, "_encrypt"):
-                        return {
-                            "json": request.state._encrypt(
-                                json.dumps({"dir": os.listdir(slurp.path)})
-                            )
-                        }
-                    return {"dir": os.listdir(slurp.path)}
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Path not found: {slurp.path}",
-                )
-            response_bytes = None
-            with open(slurp.path, "rb") as f:
-                f.seek(slurp.start_byte)
-                if slurp.end_byte is None:
-                    response_bytes = f.read()
-                else:
-                    response_bytes = f.read(slurp.end_byte - slurp.start_byte)
-            response_data = {"contents": base64.b64encode(response_bytes).decode()}
-            if hasattr(request.state, "_encrypt"):
-                return {"json": request.state._encrypt(json.dumps(response_data))}
-            return response_data
+            return handle_slurp(request, chute_module)
 
         # Validation endpoints.
         chute.add_api_route("/_ping", pong, methods=["POST"])
@@ -639,7 +643,7 @@ def run_chute(
 
         # Start the uvicorn process, whether in job mode or not.
         config = Config(
-            app=chute, host=host or "0.0.0.0", port=port or 8000, limit_concurrency=1000
+            app=chute, host=host or "0.0.0.0", port=port or 8000, limit_concurrency=200
         )
         server = Server(config)
         server_task = asyncio.create_task(server.serve())
