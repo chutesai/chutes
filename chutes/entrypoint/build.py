@@ -1,6 +1,5 @@
 import asyncio
 import aiohttp
-import re
 import os
 import sys
 import shutil
@@ -21,6 +20,7 @@ from chutes.image.directive.generic_run import RUN
 from chutes.entrypoint._shared import load_chute, FakeStreamWriter, upload_logo
 from chutes.util.auth import sign_request
 
+
 def expand_context_files(paths, cwd):
     files = []
     for path in paths:
@@ -33,6 +33,8 @@ def expand_context_files(paths, cwd):
             files.append(abs_path)
     files = [f for f in files if os.path.commonpath([cwd, f]) == cwd]
     return files
+
+
 @contextmanager
 def temporary_build_directory(image):
     """
@@ -85,9 +87,10 @@ def temporary_build_directory(image):
                 logger.debug(f"Copying {abs_path} to {temp_path}")
                 shutil.copy(abs_path, temp_path)
             else:
-                logger.warning(f"Path {path} does not exist or is neither file nor directory, skipping.")
+                logger.warning(
+                    f"Path {path} does not exist or is neither file nor directory, skipping."
+                )
         yield tempdir
-
 
 
 def _build_local(image):
