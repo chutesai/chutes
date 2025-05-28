@@ -1,6 +1,5 @@
 import asyncio
 import aiohttp
-import re
 import os
 import sys
 import shutil
@@ -22,43 +21,75 @@ from chutes.entrypoint._shared import load_chute, FakeStreamWriter, upload_logo
 from chutes.util.auth import sign_request
 
 
+def expand_context_files(paths, cwd):
+    files = []
+    for path in paths:
+        abs_path = os.path.abspath(path)
+        if os.path.isdir(abs_path):
+            for root, _, fs in os.walk(abs_path):
+                for f in fs:
+                    files.append(os.path.join(root, f))
+        elif os.path.isfile(abs_path):
+            files.append(abs_path)
+    files = [f for f in files if os.path.commonpath([cwd, f]) == cwd]
+    return files
+
+
 @contextmanager
 def temporary_build_directory(image):
     """
     Helper to copy the build context files to a build directory.
     """
-
-    # Confirm the context files with the user.
     all_input_files = []
     for directive in image._directives:
         all_input_files += directive._build_context
 
-    samples = all_input_files[:10]
+    cwd = os.getcwd()
+    all_real_files = expand_context_files(all_input_files, cwd)
+    samples = all_real_files[:10]
     logger.info(
-        f"Found {len(all_input_files)} files to include in build context -- \033[1m\033[4mthese will be uploaded for remote builds!\033[0m"
+        f"Found {len(all_real_files)} files to include in build context -- \033[1m\033[4mthese will be uploaded for remote builds!\033[0m"
     )
     for path in samples:
-        logger.info(f" {path}")
-    if len(samples) != len(all_input_files):
+        rel_path = os.path.relpath(path, start=cwd)
+        logger.info(f" {rel_path}")
+    if len(samples) != len(all_real_files):
         show_all = input(
-            f"\033[93mShowing {len(samples)} of {len(all_input_files)}, would you like to see the rest? (y/n) \033[0m"
+            f"\033[93mShowing {len(samples)} of {len(all_real_files)}, would you like to see the rest? (y/n) \033[0m"
         )
         if show_all.lower() == "y":
-            for path in all_input_files[:10]:
-                logger.info(f" {path}")
+            for path in all_real_files[10:]:
+                rel_path = os.path.relpath(path, start=cwd)
+                logger.info(f" {rel_path}")
     confirm = input("\033[1m\033[4mConfirm submitting build context? (y/n) \033[0m")
     if confirm.lower().strip() != "y":
         logger.error("Aborting!")
         sys.exit(1)
 
-    # Copy all of the context files over to a temp dir (to use for local building or a zip file for remote).
-    _clean_path = lambda in_: in_[len(os.getcwd()) + 1 :]  # noqa: E731
     with tempfile.TemporaryDirectory() as tempdir:
         for path in all_input_files:
-            temp_path = os.path.join(tempdir, _clean_path(os.path.abspath(path)))
-            os.makedirs(os.path.dirname(temp_path), exist_ok=True)
-            logger.debug(f"Copying {path} to {temp_path}")
-            shutil.copy(path, temp_path)
+            abs_path = os.path.abspath(path)
+
+            if os.path.isdir(abs_path):
+                # Recursively copy all files
+                for root, _, files in os.walk(abs_path):
+                    for file in files:
+                        src_file = os.path.join(root, file)
+                        rel_path = os.path.relpath(src_file, start=os.getcwd())
+                        temp_path = os.path.join(tempdir, rel_path)
+                        os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+                        logger.debug(f"Copying {src_file} to {temp_path}")
+                        shutil.copy(src_file, temp_path)
+            elif os.path.isfile(abs_path):
+                rel_path = os.path.relpath(abs_path, start=os.getcwd())
+                temp_path = os.path.join(tempdir, rel_path)
+                os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+                logger.debug(f"Copying {abs_path} to {temp_path}")
+                shutil.copy(abs_path, temp_path)
+            else:
+                logger.warning(
+                    f"Path {path} does not exist or is neither file nor directory, skipping."
+                )
         yield tempdir
 
 
@@ -287,25 +318,6 @@ def build_image(
                     dest=f"/app/{_clean_path(module.__file__)}",
                 )
             )
-            imported_files = [
-                os.path.abspath(module.__file__)
-                for module in sys.modules.values()
-                if hasattr(module, "__file__") and module.__file__
-            ]
-            imported_files = [
-                f
-                for f in imported_files
-                if f.startswith(current_directory)
-                and not re.search(r"(site|dist)-packages|bin/chutes|^\.local", f)
-                and f != os.path.abspath(module.__file__)
-            ]
-            for path in imported_files:
-                image._directives.append(
-                    ADD(
-                        source=_clean_path(path),
-                        dest=f"/app/{_clean_path(path)}",
-                    )
-                )
         logger.debug(f"Generated Dockerfile:\n{str(image)}")
 
         # Building locally?

@@ -412,17 +412,18 @@ def build_vllm_chute(
                 )
             },
         )
+        models_arg = base_model_paths if old_vllm else extra_args["models"]
         vllm_api_server.tokenization = lambda s: OpenAIServingTokenization(
             self.engine,
             model_config,
-            base_model_paths,
+            models_arg,
             request_logger=None,
             **extra_token_args,
         )
         self.state.openai_serving_tokenization = OpenAIServingTokenization(
             self.engine,
             model_config,
-            base_model_paths,
+            models_arg,
             request_logger=None,
             **extra_token_args,
         )
@@ -472,6 +473,7 @@ def build_vllm_chute(
         return data
 
     @chute.cord(
+        path="/do_tokenize",
         passthrough_path="/tokenize",
         public_api_path="/tokenize",
         method="POST",
@@ -479,10 +481,11 @@ def build_vllm_chute(
         input_schema=TokenizeRequest,
         minimal_input_schema=TokenizeRequest,
     )
-    async def tokenize(data) -> TokenizeResponse:
+    async def do_tokenize(data) -> TokenizeResponse:
         return data
 
     @chute.cord(
+        path="/do_detokenize",
         passthrough_path="/detokenize",
         public_api_path="/detokenize",
         method="POST",
@@ -490,7 +493,7 @@ def build_vllm_chute(
         input_schema=DetokenizeRequest,
         minimal_input_schema=DetokenizeRequest,
     )
-    async def detokenize(data) -> DetokenizeResponse:
+    async def do_detokenize(data) -> DetokenizeResponse:
         return data
 
     @chute.cord(

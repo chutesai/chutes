@@ -1,13 +1,21 @@
 # NOTE: Should replace with a pyproject.toml
 import os
+import sys
 from setuptools import setup, find_packages
 
+# Load full readme.
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")) as infile:
     long_description = infile.read()
 
+# Load version.
+here = os.path.abspath(os.path.dirname(__file__))
+sys.path.append(os.path.join(here, "chutes"))
+import _version
+version = _version.version
+
 setup(
     name="chutes",
-    version="0.2.42",
+    version=version,
     description="Chutes development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",
