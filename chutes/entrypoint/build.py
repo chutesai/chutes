@@ -45,7 +45,11 @@ def temporary_build_directory(image):
         all_input_files += directive._build_context
 
     cwd = os.getcwd()
-    all_real_files = expand_context_files(all_input_files, cwd)
+    all_real_files = [
+        path
+        for path in expand_context_files(all_input_files, cwd)
+        if os.path.basename(path) != "Dockerfile"
+    ]
     samples = all_real_files[:10]
     logger.info(
         f"Found {len(all_real_files)} files to include in build context -- \033[1m\033[4mthese will be uploaded for remote builds!\033[0m"
