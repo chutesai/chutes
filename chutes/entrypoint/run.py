@@ -558,6 +558,7 @@ def run_chute(
         symmetric_key: str | None = None
         job_id: str | None = None
         job_obj: Job | None = None
+        job_method: str | None = None
         if token:
             symmetric_key, response = await _gather_devices_and_initialize(token)
             job_id = response.get("job_id")
@@ -578,6 +579,9 @@ def run_chute(
         # Encryption/rate-limiting middleware setup.
         if dev:
             chute.add_middleware(DevMiddleware)
+            job_method = job_data.pop("method", next(j.name for j in chute._jobs))
+            final_result = await job_obj.run(**job_data)
+            logger.info(f"Job completed with result: {final_result}")
         else:
             chute.add_middleware(
                 GraValMiddleware, concurrency=chute.concurrency, symmetric_key=symmetric_key
@@ -607,13 +611,6 @@ def run_chute(
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
         chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
         logger.success("Added all chutes internal endpoints.")
-
-        # Start the uvicorn process, whether in job mode or not.
-        config = Config(
-            app=chute, host=host or "0.0.0.0", port=port or 8000, limit_concurrency=200
-        )
-        server = Server(config)
-        server_task = asyncio.create_task(server.serve())
 
         # Job related endpoints.
         async def _shutdown():

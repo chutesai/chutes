@@ -11,6 +11,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 here = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(os.path.join(here, "chutes"))
 import _version
+
 version = _version.version
 
 setup(

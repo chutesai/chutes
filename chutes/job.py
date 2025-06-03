@@ -103,12 +103,13 @@ class Job:
             async with session.post(job_data["job_status_url"], json=final_result) as resp:
                 return await resp.json()
 
-    async def run(self, job_data: dict):
+    async def run(self, dev: bool = False, **job_data):
         """
         Run a job, uploading output files and handling cancellation, etc.
         """
         tempdir = tempfile.mkdtemp()
         job_data["output_dir"] = tempdir
+        os.environ["TMPDIR"] = tempdir
 
         # Start metrics
         started_at = time.time()
@@ -117,7 +118,7 @@ class Job:
         ).set_to_current_time()
 
         # Wrap the user job in a task, so we can wait on both the task and a cancel event
-        job_task = asyncio.create_task(self._func(self._app, job_data))
+        job_task = asyncio.create_task(self._func(self._app, **job_data))
         done, pending = await asyncio.wait(
             [job_task, self.cancel_event.wait()],
             timeout=self._timeout,
@@ -165,42 +166,44 @@ class Job:
             logger.error(final_result["detail"])
 
         # Update the job object.
-        upload_cfg = await self._update_job_status(job_data, final_result)
-        if self.upload and upload_required:
-            output_files = [
-                p
-                for p in glob.glob(os.path.join(tempdir, "**"), recursive=True)
-                if os.path.isfile(p)
-            ]
-            if output_files and "output_storage_urls" in upload_cfg:
-                sem = asyncio.Semaphore(8)
+        if not dev:
+            upload_cfg = await self._update_job_status(job_data, final_result)
+            if self.upload and upload_required:
+                output_files = [
+                    p
+                    for p in glob.glob(os.path.join(tempdir, "**"), recursive=True)
+                    if os.path.isfile(p)
+                ]
+                if output_files and "output_storage_urls" in upload_cfg:
+                    sem = asyncio.Semaphore(8)
 
-                async def _wrapped_upload(idx: int):
-                    async with sem:
-                        await self._upload_job_file(
-                            output_files[idx],
-                            upload_cfg["output_storage_urls"][idx],
-                        )
+                    async def _wrapped_upload(idx: int):
+                        async with sem:
+                            await self._upload_job_file(
+                                output_files[idx],
+                                upload_cfg["output_storage_urls"][idx],
+                            )
 
-                await asyncio.gather(
-                    *[
-                        _wrapped_upload(i)
-                        for i in range(
-                            min(len(output_files), len(upload_cfg["output_storage_urls"]))
-                        )
-                    ]
-                )
-                logger.success("Uploaded all output files, job complete!")
+                    await asyncio.gather(
+                        *[
+                            _wrapped_upload(i)
+                            for i in range(
+                                min(len(output_files), len(upload_cfg["output_storage_urls"]))
+                            )
+                        ]
+                    )
+                    logger.success("Uploaded all output files, job complete!")
 
-        # Record job completion.
-        elapsed = time.time() - started_at
-        status = 700 if final_result["status"] == "complete" else 750
-        metrics.total_requests.labels(
-            chute_id=self._app.uid, function=self._func.__name__, status=status
-        ).inc()
-        metrics.request_duration.labels(
-            chute_id=self._app.uid, function=self._func.__name__, status=status
-        ).observe(elapsed)
+            # Record job completion.
+            elapsed = time.time() - started_at
+            status = 700 if final_result["status"] == "complete" else 750
+            metrics.total_requests.labels(
+                chute_id=self._app.uid, function=self._func.__name__, status=status
+            ).inc()
+            metrics.request_duration.labels(
+                chute_id=self._app.uid, function=self._func.__name__, status=status
+            ).observe(elapsed)
+
         return final_result
 
     def __call__(self, func):
