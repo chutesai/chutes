@@ -10,8 +10,8 @@ import traceback
 import tempfile
 import backoff
 import aiohttp
-from pydantic import BaseModel, Field, Literal, constr
-from typing import Optional, Any
+from pydantic import BaseModel, Field, constr
+from typing import Optional, Any, Literal
 from loguru import logger
 import chutes.metrics as metrics
 from chutes.chute.base import Chute
@@ -38,6 +38,11 @@ class Job:
         self.timeout = timeout
         self.ports = ports
         self._upload = upload
+        self.cancel_event = asyncio.Event()
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def timeout(self):

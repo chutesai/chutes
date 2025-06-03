@@ -13,13 +13,6 @@ from chutes.image import Image
 from chutes.util.context import is_remote
 from chutes.chute.node_selector import NodeSelector
 
-# NOTE: Alternative is to combine the modules
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from chutes.chute.cord import Cord
-    from chutes.chute.job import Job
-
 if os.getenv("CHUTES_EXECUTION_CONTEXT") == "REMOTE":
     existing = os.getenv("NO_PROXY")
     os.environ["NO_PROXY"] = ",".join(
@@ -48,6 +41,9 @@ class Chute(FastAPI):
         concurrency: int = 1,
         **kwargs,
     ):
+        from chutes.chute.cord import Cord
+        from chutes.chute.job import Job
+
         super().__init__(**kwargs)
         self._username = username
         self._name = name
@@ -60,7 +56,7 @@ class Chute(FastAPI):
         self._startup_hooks = []
         self._shutdown_hooks = []
         self._cords: list[Cord] = []
-        self._jobs = list[Job] = []
+        self._jobs: list[Job] = []
         self.concurrency = concurrency
         self.docs_url = None
         self.redoc_url = None

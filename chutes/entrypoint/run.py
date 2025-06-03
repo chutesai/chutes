@@ -5,7 +5,6 @@ Run a chute, automatically handling encryption/decryption via GraVal.
 import os
 import asyncio
 import aiohttp
-import traceback
 import sys
 import jwt
 import time
@@ -29,8 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import load_chute
-from chutes.job import Job
-from chutes.chute import ChutePack
+from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
@@ -127,7 +125,6 @@ async def handle_slurp(request: Request, chute_module):
     """
     Read part or all of a file.
     """
-    nonlocal chute_module
     slurp = Slurp(**request.state.decrypted)
     if slurp.path == "__file__":
         source_code = inspect.getsource(chute_module)
@@ -539,7 +536,8 @@ def run_chute(
     certfile: str | None = typer.Option(None, help="path to TLS certificate file"),
     debug: bool = typer.Option(False, help="enable debug logging"),
     dev: bool = typer.Option(False, help="dev/local mode"),
-    job_data_path: str = typer.Option(None, help="dev mode job payload JSON path"),
+    dev_job_data_path: str = typer.Option(None, help="dev mode: job payload JSON path"),
+    dev_job_method: str = typer.Option(None, help="dev mode: job method"),
 ):
     async def _run_chute():
         """
@@ -569,9 +567,10 @@ def run_chute(
         elif not dev:
             logger.error("No GraVal token supplied!")
             sys.exit(1)
-        if dev and job_data_path:
-            with open(job_data_path) as infile:
-                job_data = json.load(infile)
+        if dev and dev_job_data_path:
+            with open(dev_job_data_path) as infile:
+                job_data = json.loads(infile.read())
+            job_id = str(uuid.uuid4())
 
         # Run the chute's initialization code.
         await chute.initialize()
@@ -580,8 +579,9 @@ def run_chute(
         if dev:
             chute.add_middleware(DevMiddleware)
             job_method = job_data.pop("method", next(j.name for j in chute._jobs))
-            final_result = await job_obj.run(**job_data)
-            logger.info(f"Job completed with result: {final_result}")
+            job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
+            logger.info(f"Creating task, dev mode, for {job_method=}")
+            asyncio.create_task(job_obj.run(**job_data))
         else:
             chute.add_middleware(
                 GraValMiddleware, concurrency=chute.concurrency, symmetric_key=symmetric_key
@@ -627,21 +627,27 @@ def run_chute(
             return {"ok": True}
 
         async def _launch_job(request: Request):
-            nonlocal chute, job_obj
+            nonlocal chute, job_obj, server
+            if not job_obj:
+                return
             job_data = request.state.decrypted
             if job_data.get("skip"):
                 logger.warning("Instructed to skip job!")
                 os._exit(0)
-            try:
-                final_result = await job_obj.run(**job_data)
-                logger.info(f"Job completed with result: {final_result}")
-            except asyncio.CancelledError:
-                logger.error("Job cancelled.")
-            except asyncio.TimeoutError:
-                logger.error("Job timed out.")
-            except Exception as exc:
-                logger.error(f"Job failed unexpectedly: {exc}\n{traceback.format_exc()}")
-            server.should_exit = True
+            job_task = asyncio.create_task(job_obj.run(**job_data))
+
+            async def monitor_job():
+                try:
+                    result = await job_task
+                    logger.info(f"Job completed with result: {result}")
+                except Exception as e:
+                    logger.error(f"Job failed with error: {e}")
+                finally:
+                    logger.info("Job finished, shutting down server...")
+                    server.should_exit = True
+
+            asyncio.create_task(monitor_job())
+            return {"status": "job_started", "job_id": job_id}
 
         if job_id:
             chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
