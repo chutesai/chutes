@@ -123,7 +123,7 @@ async def process_fs_challenge(request: Request):
     )
 
 
-def handle_slurp(request: Request, chute_module):
+async def handle_slurp(request: Request, chute_module):
     """
     Read part or all of a file.
     """
@@ -545,6 +545,7 @@ def run_chute(
         """
         Run the chute (or job).
         """
+        # Load the chute.
         chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
         if is_local():
             logger.error("Cannot run chutes in local context!")
@@ -606,6 +607,13 @@ def run_chute(
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
         chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
         logger.success("Added all chutes internal endpoints.")
+
+        # Start the uvicorn process, whether in job mode or not.
+        config = Config(
+            app=chute, host=host or "0.0.0.0", port=port or 8000, limit_concurrency=200
+        )
+        server = Server(config)
+        server_task = asyncio.create_task(server.serve())
 
         # Job related endpoints.
         async def _shutdown():
