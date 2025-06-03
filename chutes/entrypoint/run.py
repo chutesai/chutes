@@ -29,6 +29,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import load_chute
+from chutes.job import Job
 from chutes.chute import ChutePack
 from chutes.util.context import is_local
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -122,6 +123,46 @@ async def process_fs_challenge(request: Request):
     )
 
 
+def handle_slurp(request: Request, chute_module):
+    """
+    Read part or all of a file.
+    """
+    nonlocal chute_module
+    slurp = Slurp(**request.state.decrypted)
+    if slurp.path == "__file__":
+        source_code = inspect.getsource(chute_module)
+        return Response(
+            content=base64.b64encode(source_code.encode()).decode(),
+            media_type="text/plain",
+        )
+    elif slurp.path == "__run__":
+        source_code = inspect.getsource(sys.modules[__name__])
+        return Response(
+            content=base64.b64encode(source_code.encode()).decode(),
+            media_type="text/plain",
+        )
+    if not os.path.isfile(slurp.path):
+        if os.path.isdir(slurp.path):
+            if hasattr(request.state, "_encrypt"):
+                return {"json": request.state._encrypt(json.dumps({"dir": os.listdir(slurp.path)}))}
+            return {"dir": os.listdir(slurp.path)}
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Path not found: {slurp.path}",
+        )
+    response_bytes = None
+    with open(slurp.path, "rb") as f:
+        f.seek(slurp.start_byte)
+        if slurp.end_byte is None:
+            response_bytes = f.read()
+        else:
+            response_bytes = f.read(slurp.end_byte - slurp.start_byte)
+    response_data = {"contents": base64.b64encode(response_bytes).decode()}
+    if hasattr(request.state, "_encrypt"):
+        return {"json": request.state._encrypt(json.dumps(response_data))}
+    return response_data
+
+
 async def pong(request: Request) -> dict[str, Any]:
     """
     Echo incoming request as a liveness check.
@@ -184,7 +225,7 @@ class DevMiddleware(BaseHTTPMiddleware):
 
 
 class GraValMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: FastAPI, concurrency: int = 1):
+    def __init__(self, app: FastAPI, concurrency: int = 1, symmetric_key: str = None):
         """
         Initialize a semaphore for concurrency control/limits.
         """
@@ -192,7 +233,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
         self.concurrency = concurrency
         self.lock = asyncio.Lock()
         self.requests_in_flight = {}
-        self.symmetric_key = None
+        self.symmetric_key = symmetric_key
         self.app = app
 
     async def _dispatch(self, request: Request, call_next):
@@ -252,69 +293,6 @@ class GraValMiddleware(BaseHTTPMiddleware):
             return ORJSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "go away (sig)"},
-            )
-
-        # Decrypt the payload.
-        if not self.symmetric_key and path != "/_exchange":
-            logger.warning("Received a request but we need the symmetric key first!")
-            return ORJSONResponse(
-                status_code=status.HTTP_426_UPGRADE_REQUIRED,
-                content={"detail": "Exchange a symmetric key via GraVal first."},
-            )
-        if path == "/_exchange":
-            # Initial GraVal payload that contains the symmetric key, encrypted with GraVal.
-            encrypted_body = json.loads(body_bytes)
-            required_fields = {"ciphertext", "iv", "length", "device_id", "seed"}
-            decrypted_body = {}
-            for key in encrypted_body:
-                if not all(field in encrypted_body[key] for field in required_fields):
-                    logger.error(
-                        f"Missing encryption fields: {required_fields - set(encrypted_body[key])}"
-                    )
-                    return ORJSONResponse(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        content={
-                            "detail": "Missing one or more required fields for encrypted payloads!"
-                        },
-                    )
-                if encrypted_body[key]["seed"] != miner()._seed:
-                    logger.error(
-                        f"Expecting seed: {miner()._seed}, received {encrypted_body[key]['seed']}"
-                    )
-                    return ORJSONResponse(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        content={"detail": "Provided seed does not match initialization seed!"},
-                    )
-
-                try:
-                    # Decrypt the request body.
-                    ciphertext = base64.b64decode(encrypted_body[key]["ciphertext"].encode())
-                    iv = bytes.fromhex(encrypted_body[key]["iv"])
-                    decrypted = miner().decrypt(
-                        ciphertext,
-                        iv,
-                        encrypted_body[key]["length"],
-                        encrypted_body[key]["device_id"],
-                    )
-                    assert decrypted, "Decryption failed!"
-                    decrypted_body[key] = decrypted
-                except Exception as exc:
-                    return ORJSONResponse(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        content={"detail": f"Decryption failed: {exc}"},
-                    )
-
-            # Extract our symmetric key.
-            secret = decrypted_body.get("symmetric_key")
-            if not secret:
-                return ORJSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={"detail": "Exchange request must contain symmetric key!"},
-                )
-            self.symmetric_key = bytes.fromhex(secret)
-            return ORJSONResponse(
-                status_code=status.HTTP_200_OK,
-                content={"ok": True},
             )
 
         # Decrypt using the symmetric key we exchanged via GraVal.
@@ -393,26 +371,25 @@ class GraValMiddleware(BaseHTTPMiddleware):
 
         # Decrypt encrypted paths, which could be one of the above as well.
         path = request.scope.get("path", "")
-        if self.symmetric_key and path != "/_exchange":
-            try:
-                iv = bytes.fromhex(path[1:33])
-                cipher = Cipher(
-                    algorithms.AES(self.symmetric_key),
-                    modes.CBC(iv),
-                    backend=default_backend(),
-                )
-                unpadder = padding.PKCS7(128).unpadder()
-                decryptor = cipher.decryptor()
-                decrypted_data = decryptor.update(bytes.fromhex(path[33:])) + decryptor.finalize()
-                actual_path = unpadder.update(decrypted_data) + unpadder.finalize()
-                actual_path = actual_path.decode().rstrip("?")
-                logger.info(f"Decrypted request path: {actual_path} from input path: {path}")
-                request.scope["path"] = actual_path
-            except ValueError:
-                return ORJSONResponse(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    content={"detail": f"Bad path: {path}"},
-                )
+        try:
+            iv = bytes.fromhex(path[1:33])
+            cipher = Cipher(
+                algorithms.AES(self.symmetric_key),
+                modes.CBC(iv),
+                backend=default_backend(),
+            )
+            unpadder = padding.PKCS7(128).unpadder()
+            decryptor = cipher.decryptor()
+            decrypted_data = decryptor.update(bytes.fromhex(path[33:])) + decryptor.finalize()
+            actual_path = unpadder.update(decrypted_data) + unpadder.finalize()
+            actual_path = actual_path.decode().rstrip("?")
+            logger.info(f"Decrypted request path: {actual_path} from input path: {path}")
+            request.scope["path"] = actual_path
+        except ValueError:
+            return ORJSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={"detail": f"Bad path: {path}"},
+            )
 
         # Now pass the decrypted special paths through.
         if request.scope.get("path", "").endswith(
@@ -506,29 +483,44 @@ async def _gather_devices_and_initialize(token: str) -> dict:
     # Fetch the challenges.
     async with aiohttp.ClientSession(raise_for_status=True) as session:
         async with session.post(url, headers={"Authorization": token}, json=body) as resp:
-            graval_params = await resp.json()
-            logger.success(f"Successfully initialized deployment, received {graval_params=}")
-            miner()._graval_seed = graval_params["seed"]
-            iterations = graval_params.get("iterations", 1)
+            init_params = await resp.json()
+            logger.success(f"Successfully initialized deployment, received {init_params=}")
+            miner()._graval_seed = init_params["seed"]
+            iterations = init_params.get("iterations", 1)
             miner().initialize(miner()._graval_seed, iterations)
 
-            # Decrypt the challenges (if any).
-            if graval_params.get("challenges"):
-                challenge_response = []
-                for challenge in graval_params["challenges"]:
-                    ciphertext = bytes.fromhex(challenge["ciphertext"])
-                    iv = bytes.fromhex(challenge["iv"])
-                    decrypted = miner().decrypt(
-                        ciphertext, iv, challenge["length"], challenge["device_id"]
-                    )
-                    challenge_response.append(decrypted)
-                async with session.put(
-                    url, headers={"Authorization": token}, json={"response": challenge_response}
-                ) as resp:
-                    logger.success("Successfully negotiated challenge response")
-                    return await resp.json()
+            # Use GraVal to extract the symmetric key from the response.
+            sym_key = init_params["symmetric_key"]
+            bytes_ = base64.b64decode(sym_key["ciphertext"])
+            iv = bytes_[:16]
+            cipher = bytes_[16:]
+            symmetric_key = bytes.fromhex(
+                miner().decrypt(cipher, iv, len(cipher), sym_key["device_index"])
+            )
 
-            return graval_params
+            # Now, we can respond to the URL by encrypting a payload with the symmetric key and sending it back.
+            padder = padding.PKCS7(128).padder()
+            cipher = Cipher(
+                algorithms.AES(symmetric_key),
+                modes.CBC(iv),
+                backend=default_backend(),
+            )
+            plaintext = sym_key["response_plaintext"]
+            padded_data = padder.update(plaintext) + padder.finalize()
+            encryptor = cipher.encryptor()
+            encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+            response_cipher = base64.b64encode(encrypted_data).decode()
+
+            # Post the response to the challenge, which returns job data (if any).
+            async with session.put(
+                init_params["response_url"],
+                headers={"Authorization": token},
+                json={
+                    "response": response_cipher,
+                },
+            ) as resp:
+                logger.success("Successfully negotiated challenge response")
+                return symmetric_key, await resp.json()
 
 
 # Run a chute (which can be an async job or otherwise long-running process).
@@ -543,8 +535,11 @@ def run_chute(
     token: str | None = typer.Option(
         None, help="one-time token to fetch graval params from validator"
     ),
+    keyfile: str | None = typer.Option(None, help="path to TLS key file"),
+    certfile: str | None = typer.Option(None, help="path to TLS certificate file"),
     debug: bool = typer.Option(False, help="enable debug logging"),
     dev: bool = typer.Option(False, help="dev/local mode"),
+    job_data_path: str = typer.Option(None, help="dev mode job payload JSON path"),
 ):
     async def _run_chute():
         """
@@ -557,76 +552,51 @@ def run_chute(
 
         chute = chute.chute if isinstance(chute, ChutePack) else chute
 
-        # Run the chute's initialization code so it's ready before tracking job times.
-        await chute.initialize()
-
         # GPU verification plus job fetching.
         job_data: dict | None = None
+        symmetric_key: str | None = None
+        job_id: str | None = None
+        job_obj: Job | None = None
         if token:
-            job_data = await _gather_devices_and_initialize(token)
+            symmetric_key, response = await _gather_devices_and_initialize(token)
+            job_id = response.get("job_id")
+            job_method = response.get("job_method")
+            if job_method:
+                job_obj = next(j for j in chute._jobs if j.name == job_method)
+
         elif not dev:
             logger.error("No GraVal token supplied!")
             sys.exit(1)
+        if dev and job_data_path:
+            with open(job_data_path) as infile:
+                job_data = json.load(infile)
+
+        # Run the chute's initialization code.
+        await chute.initialize()
 
         # Encryption/rate-limiting middleware setup.
         if dev:
             chute.add_middleware(DevMiddleware)
         else:
-            chute.add_middleware(GraValMiddleware, concurrency=chute.concurrency)
+            chute.add_middleware(
+                GraValMiddleware, concurrency=chute.concurrency, symmetric_key=symmetric_key
+            )
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58
             miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
         # Slurps and processes.
-        def handle_slurp(request: Request):
-            """
-            Read part or all of a file.
-            """
+        async def _handle_slurp(request: Request):
             nonlocal chute_module
-            slurp = Slurp(**request.state.decrypted)
-            if slurp.path == "__file__":
-                source_code = inspect.getsource(chute_module)
-                return Response(
-                    content=base64.b64encode(source_code.encode()).decode(),
-                    media_type="text/plain",
-                )
-            elif slurp.path == "__run__":
-                source_code = inspect.getsource(sys.modules[__name__])
-                return Response(
-                    content=base64.b64encode(source_code.encode()).decode(),
-                    media_type="text/plain",
-                )
-            if not os.path.isfile(slurp.path):
-                if os.path.isdir(slurp.path):
-                    if hasattr(request.state, "_encrypt"):
-                        return {
-                            "json": request.state._encrypt(
-                                json.dumps({"dir": os.listdir(slurp.path)})
-                            )
-                        }
-                    return {"dir": os.listdir(slurp.path)}
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Path not found: {slurp.path}",
-                )
-            response_bytes = None
-            with open(slurp.path, "rb") as f:
-                f.seek(slurp.start_byte)
-                if slurp.end_byte is None:
-                    response_bytes = f.read()
-                else:
-                    response_bytes = f.read(slurp.end_byte - slurp.start_byte)
-            response_data = {"contents": base64.b64encode(response_bytes).decode()}
-            if hasattr(request.state, "_encrypt"):
-                return {"json": request.state._encrypt(json.dumps(response_data))}
-            return response_data
+
+            return await handle_slurp(request, chute_module)
 
         # Validation endpoints.
         chute.add_api_route("/_ping", pong, methods=["POST"])
         chute.add_api_route("/_token", get_token, methods=["POST"])
         chute.add_api_route("/_alive", is_alive, methods=["GET"])
         chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
-        chute.add_api_route("/_slurp", handle_slurp, methods=["POST"])
+        chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
         chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
@@ -635,45 +605,30 @@ def run_chute(
         chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
         chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
-        logger.success("Added all chutes interval endpoints.")
+        logger.success("Added all chutes internal endpoints.")
 
-        # Start the uvicorn process, whether in job mode or not.
-        config = Config(
-            app=chute, host=host or "0.0.0.0", port=port or 8000, limit_concurrency=1000
-        )
-        server = Server(config)
-        server_task = asyncio.create_task(server.serve())
-
-        # Job/rental shutdown/cancellation helper.
-        job_task: asyncio.Task | None = None
-
+        # Job related endpoints.
         async def _shutdown():
-            nonlocal job_task, server
-            if not job_task:
-                return
+            nonlocal job_obj, server
+            if not job_obj:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Job task not found",
+                )
             logger.warning("Shutdown requested.")
             if job_obj and not job_obj.cancel_event.is_set():
                 job_obj.cancel_event.set()
             server.should_exit = True
             return {"ok": True}
 
-        if job_data:
-            chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
-            logger.info("Added job shutdown endpoint: /_shutdown")
-
-        # Job processing.
-        if job_data:
+        async def _launch_job(request: Request):
+            nonlocal chute, job_obj
+            job_data = request.state.decrypted
             if job_data.get("skip"):
                 logger.warning("Instructed to skip job!")
-                sys.exit(0)
-            job_names = [job.name for job in chute._jobs]
-            requested_method = job_data["method"]
-            if requested_method not in job_names:
-                logger.error(f"Selected method {requested_method} is not a known job!")
-                sys.exit(1)
-            job_obj = next(j for j in chute._jobs if j.name == requested_method)
+                os._exit(0)
             try:
-                final_result = await job_obj.run(job_data)
+                final_result = await job_obj.run(**job_data)
                 logger.info(f"Job completed with result: {final_result}")
             except asyncio.CancelledError:
                 logger.error("Job cancelled.")
@@ -682,7 +637,23 @@ def run_chute(
             except Exception as exc:
                 logger.error(f"Job failed unexpectedly: {exc}\n{traceback.format_exc()}")
             server.should_exit = True
-        await server_task
+
+        if job_id:
+            chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
+            chute.add_api_route("/_launch", _launch_job, methods=["POST"])
+            logger.info("Added job endpoints: /_shutdown & /_launch")
+
+        # Start the uvicorn process, whether in job mode or not.
+        config = Config(
+            app=chute,
+            host=host or "0.0.0.0",
+            port=port or 8000,
+            limit_concurrency=1000,
+            ssl_certfile=certfile,
+            ssl_keyfile=keyfile,
+        )
+        server = Server(config)
+        await server.serve()
 
     # Kick everything off
     asyncio.run(_run_chute())

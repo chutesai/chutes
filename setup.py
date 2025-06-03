@@ -45,7 +45,7 @@ setup(
         "substrate-interface>=1.7.11",
         "rich>=13.0.0",
         "typer>=0.12.5",
-        "graval<0.1.0",
+        "graval>=0.1.2",
         "prometheus-client==0.21.0",
         "cryptography",
         "psutil",
