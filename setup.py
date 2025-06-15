@@ -51,6 +51,8 @@ setup(
         "cryptography",
         "psutil",
         "pyjwt>=2.10.1",
+        "netifaces",
+        "pyudev",
     ],
     extras_require={
         "dev": [
