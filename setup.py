@@ -49,6 +49,8 @@ setup(
         "prometheus-client==0.21.0",
         "cryptography",
         "psutil",
+        "netifaces",
+        "pyudev",
     ],
     extras_require={
         "dev": [
