@@ -355,10 +355,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_slurp",
                     "/_device_challenge",
                     "/_devices",
-                    "/_exchange",
                     "/_env_sig",
                     "/_env_dump",
-                    "/_exchange",
                     "/_token",
                 )
             )
@@ -399,10 +397,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_slurp",
                 "/_device_challenge",
                 "/_devices",
-                "/_exchange",
                 "/_env_sig",
                 "/_env_dump",
-                "/_exchange",
                 "/_token",
             )
         ):
@@ -506,7 +502,7 @@ async def _gather_devices_and_initialize(token: str) -> dict:
             padded_data = padder.update(plaintext) + padder.finalize()
             encryptor = cipher.encryptor()
             encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-            response_cipher = base64.b64encode(encrypted_data).decode()
+            response_cipher = iv.hex() + base64.b64encode(encrypted_data).decode()
 
             # Post the response to the challenge, which returns job data (if any).
             async with session.put(
@@ -561,6 +557,7 @@ def run_chute(
             symmetric_key, response = await _gather_devices_and_initialize(token)
             job_id = response.get("job_id")
             job_method = response.get("job_method")
+            job_data = response.get("job_data", {})
             if job_method:
                 job_obj = next(j for j in chute._jobs if j.name == job_method)
 
