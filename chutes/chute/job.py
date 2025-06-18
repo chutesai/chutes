@@ -124,8 +124,13 @@ class Job:
 
         # Wrap the user job in a task, so we can wait on both the task and a cancel event
         job_task = asyncio.create_task(self._func(self._app, **job_data))
+
+        async def wait_for_cancel():
+            await self.cancel_event.wait()
+
+        cancel_task = asyncio.create_task(wait_for_cancel())
         done, pending = await asyncio.wait(
-            [job_task, self.cancel_event.wait()],
+            [job_task, cancel_task],
             timeout=self._timeout,
             return_when=asyncio.FIRST_COMPLETED,
         )

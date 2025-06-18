@@ -587,7 +587,6 @@ def run_chute(
             job_method = job_data.pop("method", next(j.name for j in chute._jobs))
             job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
             logger.info(f"Creating task, dev mode, for {job_method=}")
-            asyncio.create_task(job_obj.run(**job_data))
         else:
             chute.add_middleware(
                 GraValMiddleware, concurrency=chute.concurrency, symmetric_key=symmetric_key
@@ -637,15 +636,8 @@ def run_chute(
             server.should_exit = True
             return {"ok": True}
 
-        async def _launch_job(request: Request):
-            nonlocal chute, job_obj, server
-            if not job_obj:
-                return
-            job_data = request.state.decrypted
-            if job_data.get("skip"):
-                logger.warning("Instructed to skip job!")
-                os._exit(0)
-            job_task = asyncio.create_task(job_obj.run(**job_data))
+        if job_id:
+            job_task = asyncio.create_task(job_obj.run(dev=dev, **job_data))
 
             async def monitor_job():
                 try:
@@ -658,12 +650,9 @@ def run_chute(
                     server.should_exit = True
 
             asyncio.create_task(monitor_job())
-            return {"status": "job_started", "job_id": job_id}
 
-        if job_id:
             chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
-            chute.add_api_route("/_launch", _launch_job, methods=["POST"])
-            logger.info("Added job endpoints: /_shutdown & /_launch")
+            logger.info("Launched job, added shutdown endpoint")
 
         # Start the uvicorn process, whether in job mode or not.
         config = Config(
