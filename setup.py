@@ -31,6 +31,7 @@ setup(
             "chutes/pyarmor_runtime_006563/**/*",
             "chutes/envcheck/*.py",
         ],
+        "chutes.envdump": ["*.so"],
     },
     install_requires=[
         "aiohttp[speedups]>=3.10,<4",
