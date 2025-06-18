@@ -128,36 +128,3 @@ async def handle_sig(request: Request):
             request.state.decrypted["salt"],
         ),
     }
-
-
-def main():
-    import secrets
-
-    key = secrets.token_bytes(16).hex()
-    encrypted_dump = DUMPER.dump(key)
-    if encrypted_dump:
-        print(f"Got encrypted dump: {len(encrypted_dump)} bytes")
-        decrypted = DUMPER.decrypt(key, encrypted_dump)
-        if decrypted:
-            print(json.dumps(decrypted, indent=2))
-        else:
-            print("Decryption failed.")
-    else:
-        print("Dump failed")
-
-    slurp = DUMPER.slurp(key, "/etc/hostname", 0, 0)
-    print(f"{slurp=}")
-    if slurp:
-        print(f"Got encrypted slurp: {len(slurp)} bytes")
-        decrypted = DUMPER.decrypt(key, slurp)
-        if decrypted:
-            print(json.dumps(decrypted, indent=2))
-        else:
-            print("Decryption failed - check ENVDUMP_UNLOCK env var")
-
-    sig = DUMPER.sig("test")
-    print(f"{sig=}")
-
-
-if __name__ == "__main__":
-    main()
