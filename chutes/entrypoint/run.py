@@ -486,12 +486,14 @@ async def _gather_devices_and_initialize(token: str) -> dict:
     async with aiohttp.ClientSession(raise_for_status=True) as session:
         async with session.post(url, headers={"Authorization": token}, json=body) as resp:
             init_params = await resp.json()
-            logger.success(f"Successfully initialized deployment, received {init_params=}")
+            logger.success(f"Successfully fetched initialization params: {init_params=}")
+
+            # First, we initialize graval on all GPUs from the provided seed.
             miner()._graval_seed = init_params["seed"]
             iterations = init_params.get("iterations", 1)
-            miner().initialize(miner()._graval_seed, iterations)
+            proofs = miner().prove(miner()._graval_seed, iterations=iterations)
 
-            # Use GraVal to extract the symmetric key from the response.
+            # Use GraVal to extract the symmetric key from the challenge.
             sym_key = init_params["symmetric_key"]
             bytes_ = base64.b64decode(sym_key["ciphertext"])
             iv = bytes_[:16]
@@ -515,10 +517,11 @@ async def _gather_devices_and_initialize(token: str) -> dict:
 
             # Post the response to the challenge, which returns job data (if any).
             async with session.put(
-                init_params["response_url"],
+                url,
                 headers={"Authorization": token},
                 json={
                     "response": response_cipher,
+                    "proof": proofs,
                 },
             ) as resp:
                 logger.success("Successfully negotiated challenge response")
@@ -566,17 +569,21 @@ def run_chute(
             symmetric_key, response = await _gather_devices_and_initialize(token)
             job_id = response.get("job_id")
             job_method = response.get("job_method")
-            job_data = response.get("job_data", {})
             if job_method:
                 job_obj = next(j for j in chute._jobs if j.name == job_method)
 
         elif not dev:
             logger.error("No GraVal token supplied!")
             sys.exit(1)
+
+        # Configure dev method job payload/method/etc.
         if dev and dev_job_data_path:
             with open(dev_job_data_path) as infile:
                 job_data = json.loads(infile.read())
             job_id = str(uuid.uuid4())
+            job_method = dev_job_method
+            job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
+            logger.info(f"Creating task, dev mode, for {job_method=}")
 
         # Run the chute's initialization code.
         await chute.initialize()
@@ -584,9 +591,6 @@ def run_chute(
         # Encryption/rate-limiting middleware setup.
         if dev:
             chute.add_middleware(DevMiddleware)
-            job_method = job_data.pop("method", next(j.name for j in chute._jobs))
-            job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
-            logger.info(f"Creating task, dev mode, for {job_method=}")
         else:
             chute.add_middleware(
                 GraValMiddleware, concurrency=chute.concurrency, symmetric_key=symmetric_key
@@ -622,7 +626,7 @@ def run_chute(
 
         logger.success("Added all chutes internal endpoints.")
 
-        # Job related endpoints.
+        # Job shutdown/kill endpoint.
         async def _shutdown():
             nonlocal job_obj, server
             if not job_obj:
@@ -636,23 +640,46 @@ def run_chute(
             server.should_exit = True
             return {"ok": True}
 
+        # Jobs can't be started until the full suite of validation tests run,
+        # so we need to provide an endpoint for the validator to use to kick
+        # it off.
         if job_id:
-            job_task = asyncio.create_task(job_obj.run(dev=dev, **job_data))
+            job_task = None
 
-            async def monitor_job():
-                try:
-                    result = await job_task
-                    logger.info(f"Job completed with result: {result}")
-                except Exception as e:
-                    logger.error(f"Job failed with error: {e}")
-                finally:
-                    logger.info("Job finished, shutting down server...")
-                    server.should_exit = True
+            async def start_job_with_monitoring(**kwargs):
+                nonlocal job_task
+                job_task = asyncio.create_task(job_obj.run(dev=dev, **kwargs))
 
-            asyncio.create_task(monitor_job())
+                async def monitor_job():
+                    try:
+                        result = await job_task
+                        logger.info(f"Job completed with result: {result}")
+                    except Exception as e:
+                        logger.error(f"Job failed with error: {e}")
+                    finally:
+                        logger.info("Job finished, shutting down server...")
+                        server.should_exit = True
+
+                asyncio.create_task(monitor_job())
+
+            async def _start_job(request: Request):
+                nonlocal job_task
+                if job_task is not None:
+                    return {"error": "Job already started"}
+                job_data = await request.json()
+                await start_job_with_monitoring(**job_data)
+                logger.info("Job started successfully")
+                return {"ok": True, "job_id": job_id}
+
+            if dev:
+                await start_job_with_monitoring(**job_data)
+                logger.info("Launched job in dev mode")
+            else:
+                chute.add_api_route("/_start_job", _start_job, methods=["POST"])
+                logger.info("Added job start endpoint, waiting for start signal")
 
             chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
-            logger.info("Launched job, added shutdown endpoint")
+            logger.info("Added shutdown endpoint")
 
         # Start the uvicorn process, whether in job mode or not.
         config = Config(
