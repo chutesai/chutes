@@ -465,22 +465,22 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 self.requests_in_flight.pop(request.request_id, None)
 
 
-async def _gather_devices_and_initialize(token: str) -> dict:
+async def _gather_devices_and_initialize(
+    token: str, advertise_host: str, advertise_port: int
+) -> dict:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
-    import chutes.envcheck as envcheck
+    from chutes.envdummp import DUMPER
 
     # Build the GraVal request based on the GPUs that were actually assigned to this pod.
-    body = {"gpus": []}
+    body = {"gpus": [], "host": advertise_host, "port": advertise_port}
     for idx in range(miner()._device_count):
         body["gpus"].append(miner().get_device_info(idx))
     token_data = jwt.decode(token, options={"verify_signature": False})
     url = token_data.get("url")
-    key_salt_hex = token_data.get("env_key"), "a" * 32
-    key = bytes.fromhex(key_salt_hex)
-    body["env"] = envcheck.dump(key)
-    body["sig"] = envcheck.signature(key_salt_hex)
+    key = token_data.get("env_key"), "a" * 32
+    body["env"] = DUMPER.dump(key)
 
     # Fetch the challenges.
     async with aiohttp.ClientSession(raise_for_status=True) as session:
@@ -535,8 +535,14 @@ def run_chute(
     ),
     miner_ss58: str = typer.Option(None, help="miner hotkey ss58 address"),
     validator_ss58: str = typer.Option(None, help="validator hotkey ss58 address"),
-    port: int | None = typer.Option(None, help="port to listen on"),
     host: str | None = typer.Option(None, help="host to bind to"),
+    port: int | None = typer.Option(None, help="port to listen on"),
+    advertise_host: str | None = typer.Option(
+        None, help="host to advertise to validator when ready"
+    ),
+    advertise_port: int | None = typer.Option(
+        None, help="port to advertise to validator when ready"
+    ),
     token: str | None = typer.Option(
         None, help="one-time token to fetch graval params from validator"
     ),
@@ -566,7 +572,9 @@ def run_chute(
         job_obj: Job | None = None
         job_method: str | None = None
         if token:
-            symmetric_key, response = await _gather_devices_and_initialize(token)
+            symmetric_key, response = await _gather_devices_and_initialize(
+                token, advertise_host, advertise_port
+            )
             job_id = response.get("job_id")
             job_method = response.get("job_method")
             if job_method:
