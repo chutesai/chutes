@@ -3,6 +3,7 @@ Run a chute, automatically handling encryption/decryption via GraVal.
 """
 
 import os
+import re
 import asyncio
 import aiohttp
 import sys
@@ -465,16 +466,14 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 self.requests_in_flight.pop(request.request_id, None)
 
 
-async def _gather_devices_and_initialize(
-    token: str, advertise_host: str, advertise_port: int
-) -> dict:
+async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[str, Any]]) -> dict:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
     from chutes.envdummp import DUMPER
 
     # Build the GraVal request based on the GPUs that were actually assigned to this pod.
-    body = {"gpus": [], "host": advertise_host, "port": advertise_port}
+    body = {"gpus": [], "port_mappings": port_mappings}
     for idx in range(miner()._device_count):
         body["gpus"].append(miner().get_device_info(idx))
     token_data = jwt.decode(token, options={"verify_signature": False})
@@ -537,15 +536,6 @@ def run_chute(
     validator_ss58: str = typer.Option(None, help="validator hotkey ss58 address"),
     host: str | None = typer.Option(None, help="host to bind to"),
     port: int | None = typer.Option(None, help="port to listen on"),
-    advertise_host: str | None = typer.Option(
-        None, help="host to advertise to validator when ready"
-    ),
-    advertise_port: int | None = typer.Option(
-        None, help="port to advertise to validator when ready"
-    ),
-    token: str | None = typer.Option(
-        None, help="one-time token to fetch graval params from validator"
-    ),
     keyfile: str | None = typer.Option(None, help="path to TLS key file"),
     certfile: str | None = typer.Option(None, help="path to TLS certificate file"),
     debug: bool = typer.Option(False, help="enable debug logging"),
@@ -565,6 +555,23 @@ def run_chute(
 
         chute = chute.chute if isinstance(chute, ChutePack) else chute
 
+        # Load token and port mappings from the environment.
+        token = os.getenv("CHUTES_LAUNCH_JWT")
+        port_mappings = [{"proto": "tcp", "internal_port": 8000, "external_port": 8000}]
+        primary_port = os.getenv("CHUTES_PORT_PRIMARY")
+        if primary_port and primary_port.isdigit():
+            port_mappings[0]["external_port"] = int(primary_port)
+        for key, value in os.environ.items():
+            port_match = re.match(r"^CHUTES_PORT_(TCP|UDP|HTTP)_[0-9]+", key)
+            if port_match and value.isdigit():
+                port_mappings.append(
+                    {
+                        "proto": port_match.group(1),
+                        "internal_port": int(port_match.group(2)),
+                        "external_port": int(value),
+                    }
+                )
+
         # GPU verification plus job fetching.
         job_data: dict | None = None
         symmetric_key: str | None = None
@@ -572,9 +579,7 @@ def run_chute(
         job_obj: Job | None = None
         job_method: str | None = None
         if token:
-            symmetric_key, response = await _gather_devices_and_initialize(
-                token, advertise_host, advertise_port
-            )
+            symmetric_key, response = await _gather_devices_and_initialize(token, port_mappings)
             job_id = response.get("job_id")
             job_method = response.get("job_method")
             if job_method:
@@ -601,7 +606,9 @@ def run_chute(
             chute.add_middleware(DevMiddleware)
         else:
             chute.add_middleware(
-                GraValMiddleware, concurrency=chute.concurrency, symmetric_key=symmetric_key
+                GraValMiddleware,
+                concurrency=chute.concurrency,
+                symmetric_key=symmetric_key,
             )
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58

@@ -10,7 +10,7 @@ import traceback
 import tempfile
 import backoff
 import aiohttp
-from pydantic import BaseModel, Field, constr
+from pydantic import BaseModel, Field, field_validator, constr
 from typing import Optional, Any, Literal
 from loguru import logger
 import chutes.metrics as metrics
@@ -19,8 +19,14 @@ from chutes.chute.base import Chute
 
 class Port(BaseModel):
     name: str = constr(pattern=r"^[a-z]+[0-9]*$")
-    port: int = Field(gt=8001, le=65535, description="Numeric port number")
+    port: int = Field(description="Numeric port number")
     proto: str = Literal["tcp", "udp", "http"]
+
+    @field_validator("port")
+    def validate_port(cls, v):
+        if v == 22 or (8001 < v <= 65535 and v != 8000):
+            return v
+        raise ValueError("Port must be 22 or in range 8002-65535 (excluding 8000)")
 
 
 class Job:
