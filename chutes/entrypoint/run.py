@@ -29,6 +29,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import load_chute
+from chutes.entrypoint.logger import router as logger_router
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
 import chutes.envdump as envdump
@@ -695,6 +696,9 @@ def run_chute(
 
             chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
             logger.info("Added shutdown endpoint")
+
+        # Logging endpoints.
+        chute.include_router(logger_router, prefix="/_log", tags=["Logging"])
 
         # Start the uvicorn process, whether in job mode or not.
         config = Config(
