@@ -10,7 +10,6 @@ import sys
 import jwt
 import time
 import uuid
-import hashlib
 import inspect
 import typer
 import psutil
@@ -19,7 +18,6 @@ import orjson as json
 from loguru import logger
 from typing import Optional, Any
 from datetime import datetime
-from functools import lru_cache
 from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
@@ -28,8 +26,7 @@ from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
-from chutes.entrypoint._shared import load_chute
-from chutes.entrypoint.logger import router as logger_router
+from chutes.entrypoint._shared import load_chute, miner, authenticate_request
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
 import chutes.envdump as envdump
@@ -200,13 +197,6 @@ class Slurp(BaseModel):
     end_byte: Optional[int] = None
 
 
-@lru_cache(maxsize=1)
-def miner():
-    from graval import Miner
-
-    return Miner()
-
-
 class FSChallenge(BaseModel):
     filename: str
     length: int
@@ -263,37 +253,10 @@ class GraValMiddleware(BaseHTTPMiddleware):
             else:
                 return await call_next(request)
 
-        # Verify the signature.
-        miner_hotkey = request.headers.get("X-Chutes-Miner")
-        validator_hotkey = request.headers.get("X-Chutes-Validator")
-        nonce = request.headers.get("X-Chutes-Nonce")
-        signature = request.headers.get("X-Chutes-Signature")
-        if (
-            any(not v for v in [miner_hotkey, validator_hotkey, nonce, signature])
-            or validator_hotkey != miner()._validator_ss58
-            or miner_hotkey != miner()._miner_ss58
-            or int(time.time()) - int(nonce) >= 30
-        ):
-            logger.warning(f"Missing auth data: {request.headers}")
-            return ORJSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "go away (missing)"},
-            )
-        body_bytes = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
-        payload_string = hashlib.sha256(body_bytes).hexdigest() if body_bytes else "chutes"
-        signature_string = ":".join(
-            [
-                miner_hotkey,
-                validator_hotkey,
-                nonce,
-                payload_string,
-            ]
-        )
-        if not miner()._keypair.verify(signature_string, bytes.fromhex(signature)):
-            return ORJSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "go away (sig)"},
-            )
+        # Authentication...
+        body_bytes, failure_response = await authenticate_request(request, miner())
+        if failure_response:
+            return failure_response
 
         # Decrypt using the symmetric key we exchanged via GraVal.
         if request.method in ("POST", "PUT", "PATCH"):
@@ -535,8 +498,9 @@ def run_chute(
     ),
     miner_ss58: str = typer.Option(None, help="miner hotkey ss58 address"),
     validator_ss58: str = typer.Option(None, help="validator hotkey ss58 address"),
-    host: str | None = typer.Option(None, help="host to bind to"),
-    port: int | None = typer.Option(None, help="port to listen on"),
+    host: str | None = typer.Option("0.0.0.0", help="host to bind to"),
+    port: int | None = typer.Option(8000, help="port to listen on"),
+    logging_port: int | None = typer.Option(8001, help="logging port"),
     keyfile: str | None = typer.Option(None, help="path to TLS key file"),
     certfile: str | None = typer.Option(None, help="path to TLS certificate file"),
     debug: bool = typer.Option(False, help="enable debug logging"),
@@ -558,10 +522,26 @@ def run_chute(
 
         # Load token and port mappings from the environment.
         token = os.getenv("CHUTES_LAUNCH_JWT")
-        port_mappings = [{"proto": "tcp", "internal_port": 8000, "external_port": 8000}]
+        port_mappings = [
+            # Main chute pod.
+            {
+                "proto": "tcp",
+                "internal_port": port,
+                "external_port": port,
+            },
+            # Logging server.
+            {
+                "proto": "tcp",
+                "internal_port": logging_port,
+                "external_port": logging_port,
+            },
+        ]
         primary_port = os.getenv("CHUTES_PORT_PRIMARY")
         if primary_port and primary_port.isdigit():
             port_mappings[0]["external_port"] = int(primary_port)
+        ext_logging_port = os.getenv("CHUTES_PORT_LOGGING")
+        if ext_logging_port and ext_logging_port.isdigit():
+            port_mappings[1]["external_port"] = int(ext_logging_port)
         for key, value in os.environ.items():
             port_match = re.match(r"^CHUTES_PORT_(TCP|UDP|HTTP)_[0-9]+", key)
             if port_match and value.isdigit():
@@ -611,9 +591,6 @@ def run_chute(
                 concurrency=chute.concurrency,
                 symmetric_key=symmetric_key,
             )
-            miner()._miner_ss58 = miner_ss58
-            miner()._validator_ss58 = validator_ss58
-            miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
         # Slurps and processes.
         async def _handle_slurp(request: Request):
@@ -697,9 +674,6 @@ def run_chute(
             chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
             logger.info("Added shutdown endpoint")
 
-        # Logging endpoints.
-        chute.include_router(logger_router, prefix="/_log", tags=["Logging"])
-
         # Start the uvicorn process, whether in job mode or not.
         config = Config(
             app=chute,
@@ -713,4 +687,31 @@ def run_chute(
         await server.serve()
 
     # Kick everything off
-    asyncio.run(_run_chute())
+    async def _logged_run():
+        """
+        Wrap the actual chute execution with the logging process, which is
+        kept alive briefly after the main process terminates.
+        """
+        from chutes.entrypoint.logger import launch_server
+
+        if not dev:
+            miner()._miner_ss58 = miner_ss58
+            miner()._validator_ss58 = validator_ss58
+            miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
+
+        logging_task = asyncio.create_task(
+            launch_server(
+                host=host or "0.0.0.0", port=logging_port, certfile=certfile, keyfile=keyfile
+            )
+        )
+        try:
+            await _run_chute()
+        finally:
+            await asyncio.sleep(30)
+            logging_task.cancel()
+            try:
+                await logging_task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(_logged_run())

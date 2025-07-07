@@ -10,7 +10,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"))
 # Load version.
 here = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(os.path.join(here, "chutes"))
-import _version
+import _version  # noqa
 
 version = _version.version
 

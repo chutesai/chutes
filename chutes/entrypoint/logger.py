@@ -5,13 +5,15 @@ from pathlib import Path
 from typing import Optional, List, AsyncGenerator
 from datetime import datetime
 import aiofiles
-from fastapi import Query, HTTPException, APIRouter
+from fastapi import FastAPI, Query, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
+from chutes.entrypoint._shared import authenticate_request
+import uvicorn
 
 LOG_BASE = os.getenv("LOG_BASE", "/tmp/_chute.log")
 POLL_INTERVAL = 0.25
 
-router = APIRouter()
+app = FastAPI()
 
 
 def get_available_logs() -> List[str]:
@@ -25,6 +27,18 @@ def get_available_logs() -> List[str]:
         if Path(f"{LOG_BASE}.{i}").exists():
             logs.append(str(i))
     return logs
+
+
+async def verify_auth(request: Request):
+    """
+    Dependency to verify authentication for all endpoints.
+    """
+    body_bytes, error_response = await authenticate_request(request)
+    if error_response:
+        raise HTTPException(
+            status_code=error_response.status_code, detail=json.loads(error_response.body)
+        )
+    return body_bytes
 
 
 def get_log_path(filename: str) -> Path:
@@ -69,8 +83,23 @@ async def read_last_n_lines(filepath: Path, n: Optional[int] = None) -> List[str
                 return all_lines[-n:] if len(all_lines) > n else all_lines
 
 
-@router.get("")
-async def list_logs():
+@app.get("/")
+async def root(auth: bytes = Depends(verify_auth)):
+    """
+    Root endpoint - provides API information.
+    """
+    return {
+        "service": "Log Streaming API",
+        "endpoints": {
+            "/logs": "List available log files",
+            "/logs/read/{filename}": "Read log file contents",
+            "/logs/stream": "Stream current log file via SSE",
+        },
+    }
+
+
+@app.get("/logs")
+async def list_logs(auth: bytes = Depends(verify_auth)):
     """
     List available log files.
     """
@@ -91,10 +120,11 @@ async def list_logs():
     return {"logs": log_info}
 
 
-@router.get("/read/{filename}")
+@app.get("/logs/read/{filename}")
 async def read_log(
     filename: str,
     lines: Optional[int] = Query(None, description="Number of lines to read from end (None = all)"),
+    auth: bytes = Depends(verify_auth),
 ):
     """
     Read contents from a log file.
@@ -156,8 +186,9 @@ async def log_streamer(filename: str, backfill: Optional[int] = None) -> AsyncGe
             await asyncio.sleep(POLL_INTERVAL)
 
 
-@router.get("/stream")
+@app.get("/logs/stream")
 async def stream_log(
+    request: Request,
     backfill: Optional[int] = Query(
         None, description="Number of recent lines to send before streaming (None = all)"
     ),
@@ -165,6 +196,11 @@ async def stream_log(
     """
     Stream log updates via SSE, current file only.
     """
+    # Authenticate the request first
+    body_bytes, error_response = await authenticate_request(request)
+    if error_response:
+        return error_response
+
     return StreamingResponse(
         log_streamer("current", backfill),
         media_type="text/event-stream",
@@ -174,3 +210,36 @@ async def stream_log(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def launch_server(
+    host: str = "0.0.0.0",
+    port: int = 8001,
+    certfile: Optional[str] = None,
+    keyfile: Optional[str] = None,
+):
+    """
+    Start the logging server using uvicorn.
+    """
+    config = uvicorn.Config(
+        app=app,
+        host=host,
+        port=port,
+        limit_concurrency=1000,
+        ssl_certfile=certfile,
+        ssl_keyfile=keyfile,
+        log_level="info",
+    )
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
+def main():
+    """
+    Entry point for running the server.
+    """
+    asyncio.run(launch_server())
+
+
+if __name__ == "__main__":
+    main()
