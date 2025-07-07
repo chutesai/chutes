@@ -24,9 +24,9 @@ class Port(BaseModel):
 
     @field_validator("port")
     def validate_port(cls, v):
-        if v == 22 or (8001 < v <= 65535 and v != 8000):
+        if v == 22 or (8001 < v <= 65535):
             return v
-        raise ValueError("Port must be 22 or in range 8002-65535 (excluding 8000)")
+        raise ValueError("Port must be 22 or in range 8002-65535")
 
 
 class Job:
@@ -106,15 +106,17 @@ class Job:
         interval=10,
         max_tries=7,
     )
-    async def _update_job_status(self, job_data: dict, final_result: Any) -> dict:
+    async def _update_job_status(
+        self, job_status_url: str, job_data: dict, final_result: Any
+    ) -> dict:
         """
         Notify an external endpoint that the job completed (or failed).
         """
         async with aiohttp.ClientSession(raise_for_status=True) as session:
-            async with session.post(job_data["job_status_url"], json=final_result) as resp:
+            async with session.post(job_status_url, json=final_result) as resp:
                 return await resp.json()
 
-    async def run(self, dev: bool = False, **job_data):
+    async def run(self, job_status_url: str = None, **job_data):
         """
         Run a job, uploading output files and handling cancellation, etc.
         """
@@ -182,33 +184,34 @@ class Job:
             logger.error(final_result["detail"])
 
         # Update the job object.
-        if not dev:
-            upload_cfg = await self._update_job_status(job_data, final_result)
+        if job_status_url:
             if self.upload and upload_required:
                 output_files = [
                     p
                     for p in glob.glob(os.path.join(tempdir, "**"), recursive=True)
                     if os.path.isfile(p)
                 ]
-                if output_files and "output_storage_urls" in upload_cfg:
-                    sem = asyncio.Semaphore(8)
+                final_result["output_filenames"] = output_files
+            else:
+                final_result["output_filenames"] = []
+            upload_cfg = await self._update_job_status(job_data, final_result)
+            if upload_cfg.get("output_storage_urls"):
+                sem = asyncio.Semaphore(8)
 
-                    async def _wrapped_upload(idx: int):
-                        async with sem:
-                            await self._upload_job_file(
-                                output_files[idx],
-                                upload_cfg["output_storage_urls"][idx],
-                            )
+                async def _wrapped_upload(idx: int):
+                    async with sem:
+                        await self._upload_job_file(
+                            final_result["output_filenames"][idx],
+                            upload_cfg["output_storage_urls"][idx],
+                        )
 
-                    await asyncio.gather(
-                        *[
-                            _wrapped_upload(i)
-                            for i in range(
-                                min(len(output_files), len(upload_cfg["output_storage_urls"]))
-                            )
-                        ]
-                    )
-                    logger.success("Uploaded all output files, job complete!")
+                await asyncio.gather(
+                    *[
+                        _wrapped_upload(i)
+                        for i in range(len(upload_cfg["output_storage_urls"]))
+                    ]
+                )
+                logger.success("Uploaded all output files, job complete!")
 
             # Record job completion.
             elapsed = time.time() - started_at

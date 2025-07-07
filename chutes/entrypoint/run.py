@@ -559,10 +559,12 @@ def run_chute(
         job_id: str | None = None
         job_obj: Job | None = None
         job_method: str | None = None
+        job_status_url: str | None = None
         if token:
             symmetric_key, response = await _gather_devices_and_initialize(token, port_mappings)
             job_id = response.get("job_id")
             job_method = response.get("job_method")
+            job_status_url = response.get("job_status_url")
             if job_method:
                 job_obj = next(j for j in chute._jobs if j.name == job_method)
 
@@ -641,7 +643,7 @@ def run_chute(
 
             async def start_job_with_monitoring(**kwargs):
                 nonlocal job_task
-                job_task = asyncio.create_task(job_obj.run(dev=dev, **kwargs))
+                job_task = asyncio.create_task(job_obj.run(job_status_url=job_status_url, **kwargs))
 
                 async def monitor_job():
                     try:
