@@ -96,7 +96,7 @@ class Job:
     async def _upload_job_file(self, path: str, signed_url: str) -> None:
         async with aiohttp.ClientSession(raise_for_status=True) as session:
             with open(path, "rb") as f:
-                async with session.post(signed_url, data=f) as resp:
+                async with session.put(signed_url, data=f) as resp:
                     logger.success(f"Uploaded job output file: {path}: {await resp.text()}")
 
     @backoff.on_exception(
@@ -114,6 +114,21 @@ class Job:
         """
         async with aiohttp.ClientSession(raise_for_status=True) as session:
             async with session.post(job_status_url, json=final_result) as resp:
+                return await resp.json()
+
+    @backoff.on_exception(
+        backoff.constant,
+        Exception,
+        jitter=None,
+        interval=10,
+        max_tries=7,
+    )
+    async def _mark_job_complete(self, job_status_url: str) -> dict:
+        """
+        Finalize the job.
+        """
+        async with aiohttp.ClientSession(raise_for_status=True) as session:
+            async with session.put(job_status_url, json={"status": "done"}) as resp:
                 return await resp.json()
 
     async def run(self, job_status_url: str = None, **job_data):
@@ -206,12 +221,12 @@ class Job:
                         )
 
                 await asyncio.gather(
-                    *[
-                        _wrapped_upload(i)
-                        for i in range(len(upload_cfg["output_storage_urls"]))
-                    ]
+                    *[_wrapped_upload(i) for i in range(len(upload_cfg["output_storage_urls"]))]
                 )
                 logger.success("Uploaded all output files, job complete!")
+
+            # Final step, mark the job as closed with all files uploaded.
+            await self._mark_job_complete(job_status_url)
 
             # Record job completion.
             elapsed = time.time() - started_at
