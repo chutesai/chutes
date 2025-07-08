@@ -24,9 +24,9 @@ class Port(BaseModel):
 
     @field_validator("port")
     def validate_port(cls, v):
-        if v == 22 or (8001 < v <= 65535):
+        if v == 2202 or (8001 < v <= 65535):
             return v
-        raise ValueError("Port must be 22 or in range 8002-65535")
+        raise ValueError("Port must be 2202 or in range 8002-65535")
 
 
 class Job:
@@ -36,11 +36,13 @@ class Job:
         ports: list[Port] = [],
         timeout: Optional[int] = None,
         upload: Optional[bool] = True,
+        ssh: Optional[bool] = False,
     ):
         self._app = app
         self._timeout = None
         self._ports = None
         self._name = None
+        self._ssh = ssh
         self.timeout = timeout
         self.ports = ports
         self._upload = upload
@@ -53,6 +55,10 @@ class Job:
     @property
     def timeout(self):
         return self._timeout
+
+    @property
+    def ssh(self):
+        return self._ssh
 
     @timeout.setter
     def timeout(self, value: int):
@@ -74,12 +80,16 @@ class Job:
         """
         self._ports = []
         assert isinstance(ports, (list, None))
+        if self._ssh:
+            self._ports.append(Port(name="ssh", port=2202, proto="tcp"))
         if not ports:
             return
         validated = []
         for port in ports:
             assert isinstance(port, (Port, dict))
             validated.append(Port(**port) if isinstance(port, dict) else port)
+        if len(set([p.port for p in validated])) != len(validated):
+            raise ValueError(f"Duplicate port found: {validated}")
         self._ports = validated
 
     @property

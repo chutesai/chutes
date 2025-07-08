@@ -27,6 +27,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import load_chute, miner, authenticate_request
+from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
 import chutes.envdump as envdump
@@ -643,6 +644,7 @@ def run_chute(
 
             async def start_job_with_monitoring(**kwargs):
                 nonlocal job_task
+                ssh_process = None
                 job_task = asyncio.create_task(job_obj.run(job_status_url=job_status_url, **kwargs))
 
                 async def monitor_job():
@@ -653,7 +655,20 @@ def run_chute(
                         logger.error(f"Job failed with error: {e}")
                     finally:
                         logger.info("Job finished, shutting down server...")
+                        if ssh_process:
+                            try:
+                                ssh_process.terminate()
+                                await asyncio.sleep(0.5)
+                                if ssh_process.poll() is None:
+                                    ssh_process.kill()
+                                logger.info("SSH server stopped")
+                            except Exception as e:
+                                logger.error(f"Error stopping SSH server: {e}")
                         server.should_exit = True
+
+                # If the pod defines SSH access, enable it.
+                if job_obj.ssh and job_data.get("_ssh_public_key"):
+                    ssh_process = await setup_ssh_access(job_data["_ssh_public_key"])
 
                 asyncio.create_task(monitor_job())
 
