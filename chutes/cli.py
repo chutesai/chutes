@@ -2,6 +2,7 @@
 
 import os
 import sys
+import glob
 import typer
 from loguru import logger
 from pathlib import Path
@@ -24,6 +25,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "run" and "CHUTE_LD_PRELOAD_INJECTED" no
         env = os.environ.copy()
         env["LD_PRELOAD"] = logger_lib
         env["CHUTE_LD_PRELOAD_INJECTED"] = "1"
+        [os.remove(f) for f in glob.glob("/tmp/_chute*log*")]
         os.execve(sys.executable, [sys.executable] + sys.argv, env)
     else:
         logger.warning("Chutes log intercept lib not found, proceeding with standard logging")

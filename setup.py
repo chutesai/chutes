@@ -54,6 +54,7 @@ setup(
         "pyjwt>=2.10.1",
         "netifaces",
         "pyudev",
+        "aiofiles>=23",
     ],
     extras_require={
         "dev": [

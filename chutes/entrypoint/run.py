@@ -718,7 +718,11 @@ def run_chute(
 
         logging_task = asyncio.create_task(
             launch_server(
-                host=host or "0.0.0.0", port=logging_port, certfile=certfile, keyfile=keyfile
+                host=host or "0.0.0.0",
+                port=logging_port,
+                dev=dev,
+                certfile=certfile,
+                keyfile=keyfile,
             )
         )
         try:
