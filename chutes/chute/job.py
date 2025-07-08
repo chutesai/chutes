@@ -209,6 +209,13 @@ class Job:
                 final_result["output_filenames"] = output_files
             else:
                 final_result["output_filenames"] = []
+            log_files = [
+                path
+                for path in ["/tmp/_chute.log"] + [f"/tmp/_chute.log.{i}" for i in range(1, 5)]
+                if os.path.exists(path)
+            ]
+            if log_files:
+                final_result["output_filenames"] = log_files + final_result["output_filenames"]
             upload_cfg = await self._update_job_status(job_data, final_result)
             if upload_cfg.get("output_storage_urls"):
                 sem = asyncio.Semaphore(8)
