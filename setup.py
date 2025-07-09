@@ -30,6 +30,7 @@ setup(
             "chutes/pyarmor_runtime_006563/*",
             "chutes/pyarmor_runtime_006563/**/*",
             "chutes/envcheck/*.py",
+            "*.so",
         ],
         "chutes.envdump": ["*.so"],
     },

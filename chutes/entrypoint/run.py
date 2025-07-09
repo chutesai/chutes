@@ -435,7 +435,7 @@ async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[st
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
-    from chutes.envdummp import DUMPER
+    from chutes.envdump import DUMPER
 
     # Build the GraVal request based on the GPUs that were actually assigned to this pod.
     body = {"gpus": [], "port_mappings": port_mappings}

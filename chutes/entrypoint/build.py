@@ -233,8 +233,6 @@ async def _build_remote(image, wait=None, public: bool = False, logo_id: str = N
                                             params["offset"] = data["offset"]
                                         elif data.startswith("DONE"):
                                             return
-                                        else:
-                                            logger.warning(data)
                                     return
                             except Exception as exc:
                                 logger.error(f"Error streaming logs, retrying...: {exc}")
