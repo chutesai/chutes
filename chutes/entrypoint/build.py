@@ -216,27 +216,31 @@ async def _build_remote(image, wait=None, public: bool = False, logo_id: str = N
                                         return
 
                                     # Stream the logs.
-                                    async for data_enc in response.content:
+                                    async for data_enc in log_resp.content:
                                         data = data_enc.decode()
                                         if not data or not data.strip():
                                             continue
                                         if data.startswith("data: {"):
                                             data = json.loads(data[6:])
                                             log_data = data["log"]
-                                            log_method = (
-                                                logger.info
-                                                if log_data["log_type"] == "stdout"
-                                                else logger.warning
-                                            )
-                                            log_method(log_data["log"].strip())
+                                            log_method = logger.info
+                                            log_text = f"{log_data}"
+                                            if isinstance(log_data, dict):
+                                                if log_data.get("log_type") != "stdout":
+                                                    log_method = logger.warning
+                                                log_text = log_data.get("log", f"{log_data}")
+                                            log_method(log_text.strip())
                                             params["offset"] = data["offset"]
                                         elif data.startswith("DONE"):
                                             return
+                                        else:
+                                            logger.warning(data)
                                     return
-                            except Exception:
-                                logger.error("Error streaming logs, retrying...")
+                            except Exception as exc:
+                                logger.error(f"Error streaming logs, retrying...: {exc}")
                                 await asyncio.sleep(1)
                                 attempt += 1
+                            await asyncio.sleep(5)
 
 
 async def _image_exists(image: str | Image) -> bool:
