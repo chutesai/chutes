@@ -13,12 +13,9 @@ import uvicorn
 LOG_BASE = os.getenv("LOG_BASE", "/tmp/_chute.log")
 POLL_INTERVAL = 1.0
 
-app = FastAPI(
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None
-)
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.dev = False
+
 
 def get_available_logs() -> List[str]:
     """
@@ -167,19 +164,19 @@ async def log_streamer(filename: str, backfill: Optional[int] = None) -> AsyncGe
     try:
         path = get_log_path(filename)
     except ValueError:
-        yield f'data: {json.dumps({"error": f"Invalid filename: {filename}"})}\n\n'
+        yield f"data: {json.dumps({'error': f'Invalid filename: {filename}'})}\n\n"
         return
     if not path.exists():
-        yield f'data: {json.dumps({"error": f"File does not exist: {path}"})}\n\n'
+        yield f"data: {json.dumps({'error': f'File does not exist: {path}'})}\n\n"
         return
 
-    yield f'data: {json.dumps({"event": "connected", "filename": filename})}\n\n'
+    yield f"data: {json.dumps({'event': 'connected', 'filename': filename})}\n\n"
 
     if backfill is not None and backfill > 0:
         lines = await read_last_n_lines(path, backfill)
         for line in lines:
             if line.strip():
-                yield f'data: {json.dumps({"log": line})}\n\n'
+                yield f"data: {json.dumps({'log': line})}\n\n"
 
     last_position = 0
     if path.exists():
@@ -189,7 +186,7 @@ async def log_streamer(filename: str, backfill: Optional[int] = None) -> AsyncGe
     while True:
         try:
             if not path.exists():
-                yield f'data: {json.dumps({"event": "file_removed", "filename": filename})}\n\n'
+                yield f"data: {json.dumps({'event': 'file_removed', 'filename': filename})}\n\n"
                 break
 
             current_size = path.stat().st_size
@@ -203,16 +200,16 @@ async def log_streamer(filename: str, backfill: Optional[int] = None) -> AsyncGe
 
                     for i, line in enumerate(lines[:-1]):
                         if line.strip():
-                            yield f'data: {json.dumps({"log": line})}\n\n'
+                            yield f"data: {json.dumps({'log': line})}\n\n"
 
                     if new_content.endswith("\n") and lines[-1].strip():
-                        yield f'data: {json.dumps({"log": lines[-1]})}\n\n'
+                        yield f"data: {json.dumps({'log': lines[-1]})}\n\n"
 
                     last_position = current_size
                     consecutive_errors = 0
 
             elif current_size < last_position:
-                yield f'data: {json.dumps({"event": "file_rotated", "filename": filename})}\n\n'
+                yield f"data: {json.dumps({'event': 'file_rotated', 'filename': filename})}\n\n"
                 last_position = 0
             else:
                 if consecutive_errors % 10 == 0:
@@ -221,13 +218,13 @@ async def log_streamer(filename: str, backfill: Optional[int] = None) -> AsyncGe
             await asyncio.sleep(POLL_INTERVAL)
 
         except asyncio.CancelledError:
-            yield f'data: {json.dumps({"event": "stream_cancelled"})}\n\n'
+            yield f"data: {json.dumps({'event': 'stream_cancelled'})}\n\n"
             break
         except Exception as e:
             consecutive_errors += 1
-            yield f'data: {json.dumps({"error": f"Stream error: {str(e)}"})}\n\n'
+            yield f"data: {json.dumps({'error': f'Stream error: {str(e)}'})}\n\n"
             if consecutive_errors > 5:
-                yield f'data: {json.dumps({"event": "too_many_errors", "error": "Stopping stream due to repeated errors"})}\n\n'
+                yield f"data: {json.dumps({'event': 'too_many_errors', 'error': 'Stopping stream due to repeated errors'})}\n\n"
                 break
             await asyncio.sleep(POLL_INTERVAL * 2)
 
@@ -263,9 +260,9 @@ async def test_stream():
 
     async def generate():
         for i in range(5):
-            yield f'data: {json.dumps({"count": i, "time": datetime.now().isoformat()})}\n\n'
+            yield f"data: {json.dumps({'count': i, 'time': datetime.now().isoformat()})}\n\n"
             await asyncio.sleep(1)
-        yield f'data: {json.dumps({"event": "complete"})}\n\n'
+        yield f"data: {json.dumps({'event': 'complete'})}\n\n"
 
     return StreamingResponse(
         generate(),

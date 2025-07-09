@@ -189,19 +189,30 @@ async def _build_remote(image, wait=None, public: bool = False, logo_id: str = N
                     logger.info(
                         f"Uploaded image package: image_id={data['image_id']}, build will run async"
                     )
+
                     # Log streaming.
                     image_id = data["image_id"]
                     if wait:
+                        await asyncio.sleep(5)
                         params = {}
                         attempt = 0
                         while attempt <= 10:
                             try:
+                                headers, _ = sign_request(purpose="images")
                                 async with session.get(
-                                    f"/images/{image_id}/logs", params=params
+                                    f"/images/{image_id}/logs", params=params, headers=headers
                                 ) as log_resp:
-                                    # Full log file already available.
-                                    if log_resp.status == 200:
+                                    # If we have a text/plain response, the image build is done and full logs are available.
+                                    content_type = log_resp.headers.get("Content-Type", "")
+                                    if "text/plain" in content_type:
                                         print(await log_resp.text())
+                                        return
+
+                                    # Error handling.
+                                    if log_resp.status != 200:
+                                        logger.error(
+                                            f"Error streaming build logs: {await log_resp.text()}"
+                                        )
                                         return
 
                                     # Stream the logs.
