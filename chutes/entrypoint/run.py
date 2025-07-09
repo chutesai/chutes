@@ -438,16 +438,20 @@ async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[st
     from chutes.envdump import DUMPER
 
     # Build the GraVal request based on the GPUs that were actually assigned to this pod.
+    logger.info("Collecting GPUs and port mappings...")
     body = {"gpus": [], "port_mappings": port_mappings}
     for idx in range(miner()._device_count):
         body["gpus"].append(miner().get_device_info(idx))
     token_data = jwt.decode(token, options={"verify_signature": False})
     url = token_data.get("url")
-    key = token_data.get("env_key"), "a" * 32
+    key = token_data.get("env_key", "a" * 32)
+
+    logger.info("Collecting full envdump...")
     body["env"] = DUMPER.dump(key)
 
     # Fetch the challenges.
     async with aiohttp.ClientSession(raise_for_status=True) as session:
+        logger.info(f"Collected all environment data, submitting to validator: {url}")
         async with session.post(url, headers={"Authorization": token}, json=body) as resp:
             init_params = await resp.json()
             logger.success(f"Successfully fetched initialization params: {init_params=}")
@@ -455,6 +459,7 @@ async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[st
             # First, we initialize graval on all GPUs from the provided seed.
             miner()._graval_seed = init_params["seed"]
             iterations = init_params.get("iterations", 1)
+            logger.info(f"Generating proofs from seed={miner()._graval_seed}")
             proofs = miner().prove(miner()._graval_seed, iterations=iterations)
 
             # Use GraVal to extract the symmetric key from the challenge.
@@ -462,6 +467,7 @@ async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[st
             bytes_ = base64.b64decode(sym_key["ciphertext"])
             iv = bytes_[:16]
             cipher = bytes_[16:]
+            logger.info("Decrypting payload via proof challenge matrix...")
             symmetric_key = bytes.fromhex(
                 miner().decrypt(cipher, iv, len(cipher), sym_key["device_index"])
             )
@@ -478,6 +484,9 @@ async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[st
             encryptor = cipher.encryptor()
             encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
             response_cipher = iv.hex() + base64.b64encode(encrypted_data).decode()
+            logger.success(
+                f"Completed PoVW challenge, sending back plaintext challenge response: {plaintext}"
+            )
 
             # Post the response to the challenge, which returns job data (if any).
             async with session.put(
@@ -488,7 +497,7 @@ async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[st
                     "proof": proofs,
                 },
             ) as resp:
-                logger.success("Successfully negotiated challenge response")
+                logger.success("Successfully negotiated challenge response!")
                 return symmetric_key, await resp.json()
 
 
