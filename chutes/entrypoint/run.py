@@ -431,7 +431,9 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 self.requests_in_flight.pop(request.request_id, None)
 
 
-async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[str, Any]]) -> dict:
+async def _gather_devices_and_initialize(
+    token: str, host: str, port_mappings: list[dict[str, Any]]
+) -> dict:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
@@ -439,7 +441,7 @@ async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[st
 
     # Build the GraVal request based on the GPUs that were actually assigned to this pod.
     logger.info("Collecting GPUs and port mappings...")
-    body = {"gpus": [], "port_mappings": port_mappings}
+    body = {"gpus": [], "port_mappings": port_mappings, "host": host}
     for idx in range(miner()._device_count):
         body["gpus"].append(miner().get_device_info(idx))
     token_data = jwt.decode(token, options={"verify_signature": False})
@@ -469,7 +471,9 @@ async def _gather_devices_and_initialize(token: str, port_mappings: list[dict[st
             cipher = bytes_[16:]
             logger.info("Decrypting payload via proof challenge matrix...")
             symmetric_key = bytes.fromhex(
-                miner().decrypt(cipher, iv, len(cipher), sym_key["device_index"])
+                miner().decrypt(
+                    init_params["seed"], cipher, iv, len(cipher), sym_key["device_index"]
+                )
             )
 
             # Now, we can respond to the URL by encrypting a payload with the symmetric key and sending it back.
@@ -546,6 +550,7 @@ def run_chute(
                 "external_port": logging_port,
             },
         ]
+        external_host = os.getenv("CHUTES_EXTERNAL_HOST")
         primary_port = os.getenv("CHUTES_PORT_PRIMARY")
         if primary_port and primary_port.isdigit():
             port_mappings[0]["external_port"] = int(primary_port)
@@ -571,7 +576,9 @@ def run_chute(
         job_method: str | None = None
         job_status_url: str | None = None
         if token:
-            symmetric_key, response = await _gather_devices_and_initialize(token, port_mappings)
+            symmetric_key, response = await _gather_devices_and_initialize(
+                token, external_host, port_mappings
+            )
             job_id = response.get("job_id")
             job_method = response.get("job_method")
             job_status_url = response.get("job_status_url")
