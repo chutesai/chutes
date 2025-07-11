@@ -14,6 +14,7 @@ import inspect
 import typer
 import psutil
 import base64
+import secrets
 import orjson as json
 from loguru import logger
 from typing import Optional, Any
@@ -478,18 +479,20 @@ async def _gather_devices_and_initialize(
 
             # Now, we can respond to the URL by encrypting a payload with the symmetric key and sending it back.
             padder = padding.PKCS7(128).padder()
+            new_iv = secrets.token_bytes(16)
             cipher = Cipher(
                 algorithms.AES(symmetric_key),
-                modes.CBC(iv),
+                modes.CBC(new_iv),
                 backend=default_backend(),
             )
             plaintext = sym_key["response_plaintext"]
-            padded_data = padder.update(plaintext) + padder.finalize()
+            padded_data = padder.update(plaintext.encode()) + padder.finalize()
             encryptor = cipher.encryptor()
             encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-            response_cipher = iv.hex() + base64.b64encode(encrypted_data).decode()
+            response_cipher = base64.b64encode(encrypted_data).decode()
             logger.success(
-                f"Completed PoVW challenge, sending back plaintext challenge response: {plaintext}"
+                f"Completed PoVW challenge, sending back: {plaintext=} "
+                f"as {response_cipher=} where iv={new_iv.hex()}"
             )
 
             # Post the response to the challenge, which returns job data (if any).
@@ -498,6 +501,7 @@ async def _gather_devices_and_initialize(
                 headers={"Authorization": token},
                 json={
                     "response": response_cipher,
+                    "iv": new_iv.hex(),
                     "proof": proofs,
                 },
             ) as resp:
