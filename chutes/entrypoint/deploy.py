@@ -41,6 +41,7 @@ async def _deploy(
         "filename": os.path.basename(module.__file__),
         "ref_str": ref_str,
         "code": code,
+        "concurrency": chute.concurrency,
         "cords": [
             {
                 "method": cord._method,
