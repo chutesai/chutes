@@ -31,7 +31,6 @@ from chutes.entrypoint._shared import load_chute, miner, authenticate_request
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
-import chutes.envdump as envdump
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -465,6 +464,32 @@ async def _gather_devices_and_initialize(
             logger.info(f"Generating proofs from seed={miner()._graval_seed}")
             proofs = miner().prove(miner()._graval_seed, iterations=iterations)
 
+            # Run filesystem verification challenge.
+            seed_str = str(init_params["seed"])
+            fsv_hash = None
+            try:
+                logger.info(f"Running filesystem verification challenge with seed={seed_str}")
+                cfsv_path = os.path.join(os.path.dirname(__file__), "..", "cfsv")
+                result = subprocess.run(
+                    ["cfsv", "challenge", "/", seed_str, "full", "/etc/chutesfs.index"],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                for line in result.stdout.strip().split('\n'):
+                    if line.startswith("RESULT:"):
+                        fsv_hash = line.split("RESULT:")[1].strip()
+                        logger.success(f"Filesystem verification hash: {fsv_hash}")
+                        break
+                if not fsv_hash:
+                    logger.warning("Failed to extract filesystem verification hash from cfsv output")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"cfsv challenge failed: {e.stderr}")
+            except Exception as e:
+                logger.error(f"Error running cfsv challenge: {e}")
+            if not fsv_hash:
+                raise Exception("Failed to generate filesystem challenge response.")
+
             # Use GraVal to extract the symmetric key from the challenge.
             sym_key = init_params["symmetric_key"]
             bytes_ = base64.b64decode(sym_key["ciphertext"])
@@ -503,6 +528,7 @@ async def _gather_devices_and_initialize(
                     "response": response_cipher,
                     "iv": new_iv.hex(),
                     "proof": proofs,
+                    "fsv": fsv_hash,
                 },
             ) as resp:
                 logger.success("Successfully negotiated challenge response!")
@@ -588,6 +614,7 @@ def run_chute(
             job_status_url = response.get("job_status_url")
             if job_method:
                 job_obj = next(j for j in chute._jobs if j.name == job_method)
+            job_data = response.get("job_data")
 
         elif not dev:
             logger.error("No GraVal token supplied!")
@@ -635,6 +662,7 @@ def run_chute(
         chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
 
         # New envdump endpoints.
+        import chutes.envdump as envdump
         chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
         chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
         chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
@@ -692,21 +720,8 @@ def run_chute(
 
                 asyncio.create_task(monitor_job())
 
-            async def _start_job(request: Request):
-                nonlocal job_task
-                if job_task is not None:
-                    return {"error": "Job already started"}
-                job_data = await request.json()
-                await start_job_with_monitoring(**job_data)
-                logger.info("Job started successfully")
-                return {"ok": True, "job_id": job_id}
-
-            if dev:
-                await start_job_with_monitoring(**job_data)
-                logger.info("Launched job in dev mode")
-            else:
-                chute.add_api_route("/_start_job", _start_job, methods=["POST"])
-                logger.info("Added job start endpoint, waiting for start signal")
+            await start_job_with_monitoring(**job_data)
+            logger.info("Started job!")
 
             chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
             logger.info("Added shutdown endpoint")

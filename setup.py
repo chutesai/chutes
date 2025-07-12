@@ -31,6 +31,7 @@ setup(
             "chutes/pyarmor_runtime_006563/**/*",
             "chutes/envcheck/*.py",
             "*.so",
+            "cfsv",
         ],
         "chutes.envdump": ["*.so"],
     },
@@ -73,6 +74,7 @@ setup(
     entry_points={
         "console_scripts": [
             "chutes=chutes.cli:app",
+            "cfsv=chutes.cfsv_wrapper:main",
         ],
     },
 )
