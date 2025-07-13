@@ -29,7 +29,6 @@ from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import load_chute
 from chutes.chute import ChutePack
 from chutes.util.context import is_local
-import chutes.envdump as envdump
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -590,6 +589,8 @@ def run_chute(
         chute.add_api_route("/_fs_challenge", _fs_challenge, methods=["POST"])
 
         # New envdump endpoints.
+        import chutes.envdump as envdump
+
         chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
         chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
         chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])

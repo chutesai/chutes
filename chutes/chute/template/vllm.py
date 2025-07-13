@@ -237,13 +237,7 @@ def build_vllm_chute(
 
     # Semi-optimized defaults for code starts (but not overall perf once hot).
     defaults = {
-        "enforce_eager": False,
-        "num_scheduler_steps": 1,
-        "multi_step_stream_outputs": True,
-        "enable_chunked_prefill": False,
-        "enable_prefix_caching": False,
         "disable_log_stats": True,
-        "disable_custom_all_reduce": True,
         "disable_log_requests": True,
     }
     for key, value in defaults.items():
