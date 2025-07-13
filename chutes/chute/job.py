@@ -107,7 +107,8 @@ class Job:
         async with aiohttp.ClientSession(raise_for_status=True) as session:
             with open(path, "rb") as f:
                 data = aiohttp.FormData()
-                data.add_field('file', f, filename=path)
+                data.add_field('file', f, filename=os.path.basename(path))
+                data.add_field('path', path)
                 async with session.put(signed_url, data=data) as resp:
                     logger.success(f"Uploaded job output file: {path}: {await resp.text()}")
 
