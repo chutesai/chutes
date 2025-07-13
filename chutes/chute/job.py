@@ -226,7 +226,7 @@ class Job:
             ]
             if log_files:
                 final_result["output_filenames"] = log_files + final_result["output_filenames"]
-            upload_cfg = await self._update_job_status(job_data, final_result)
+            upload_cfg = await self._update_job_status(job_status_url, job_data, final_result)
             if upload_cfg.get("output_storage_urls"):
                 sem = asyncio.Semaphore(8)
 
