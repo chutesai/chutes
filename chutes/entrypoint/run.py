@@ -433,7 +433,10 @@ class GraValMiddleware(BaseHTTPMiddleware):
 
 
 async def _gather_devices_and_initialize(
-    token: str, host: str, port_mappings: list[dict[str, Any]]
+    token: str,
+    host: str,
+    port_mappings: list[dict[str, Any]],
+    chute_module: Any,
 ) -> dict:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
@@ -471,19 +474,33 @@ async def _gather_devices_and_initialize(
             try:
                 logger.info(f"Running filesystem verification challenge with seed={seed_str}")
                 cfsv_path = os.path.join(os.path.dirname(__file__), "..", "cfsv")
+                exclude_file = "/dev/null"
+                if chute_module and hasattr(chute_module, "__file__"):
+                    exclude_file = os.path.abspath(chute_module.__file__)
+                    logger.info(f"Excluding chute file from verification: {exclude_file}")
                 result = subprocess.run(
-                    ["cfsv", "challenge", "/", seed_str, "full", "/etc/chutesfs.index"],
+                    [
+                        cfsv_path,
+                        "challenge",
+                        "/",
+                        seed_str,
+                        "full",
+                        "/etc/chutesfs.index",
+                        exclude_file,
+                    ],
                     capture_output=True,
                     text=True,
-                    check=True
+                    check=True,
                 )
-                for line in result.stdout.strip().split('\n'):
+                for line in result.stdout.strip().split("\n"):
                     if line.startswith("RESULT:"):
                         fsv_hash = line.split("RESULT:")[1].strip()
                         logger.success(f"Filesystem verification hash: {fsv_hash}")
                         break
                 if not fsv_hash:
-                    logger.warning("Failed to extract filesystem verification hash from cfsv output")
+                    logger.warning(
+                        "Failed to extract filesystem verification hash from cfsv output"
+                    )
             except subprocess.CalledProcessError as e:
                 logger.error(f"cfsv challenge failed: {e.stderr}")
             except Exception as e:
@@ -608,7 +625,7 @@ def run_chute(
         job_status_url: str | None = None
         if token:
             symmetric_key, response = await _gather_devices_and_initialize(
-                token, external_host, port_mappings
+                token, external_host, port_mappings, chute_module
             )
             job_id = response.get("job_id")
             job_method = response.get("job_method")
@@ -664,6 +681,7 @@ def run_chute(
 
         # New envdump endpoints.
         import chutes.envdump as envdump
+
         chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
         chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
         chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
