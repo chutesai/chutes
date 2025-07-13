@@ -15,6 +15,7 @@ import typer
 import psutil
 import base64
 import secrets
+import subprocess
 import orjson as json
 from loguru import logger
 from typing import Optional, Any
