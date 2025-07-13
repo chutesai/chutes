@@ -451,9 +451,14 @@ async def _gather_devices_and_initialize(
     token_data = jwt.decode(token, options={"verify_signature": False})
     url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
+    exclude_file = "/dev/null"
+    if chute_module and hasattr(chute_module, "__file__"):
+        exclude_file = os.path.abspath(chute_module.__file__)
+        logger.info(f"Excluding chute file from verification: {exclude_file}")
 
     logger.info("Collecting full envdump...")
     body["env"] = DUMPER.dump(key)
+    body["code"] = DUMPER.slurp(key, exclude_file, 0, 0)
 
     # Fetch the challenges.
     async with aiohttp.ClientSession(raise_for_status=True) as session:
@@ -474,10 +479,6 @@ async def _gather_devices_and_initialize(
             try:
                 logger.info(f"Running filesystem verification challenge with seed={seed_str}")
                 cfsv_path = os.path.join(os.path.dirname(__file__), "..", "cfsv")
-                exclude_file = "/dev/null"
-                if chute_module and hasattr(chute_module, "__file__"):
-                    exclude_file = os.path.abspath(chute_module.__file__)
-                    logger.info(f"Excluding chute file from verification: {exclude_file}")
                 result = subprocess.run(
                     [
                         cfsv_path,

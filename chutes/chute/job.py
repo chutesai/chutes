@@ -106,7 +106,9 @@ class Job:
     async def _upload_job_file(self, path: str, signed_url: str) -> None:
         async with aiohttp.ClientSession(raise_for_status=True) as session:
             with open(path, "rb") as f:
-                async with session.put(signed_url, data=f) as resp:
+                data = aiohttp.FormData()
+                data.add_field('file', f, filename=path)
+                async with session.put(signed_url, data=data) as resp:
                     logger.success(f"Uploaded job output file: {path}: {await resp.text()}")
 
     @backoff.on_exception(
