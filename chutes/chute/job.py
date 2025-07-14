@@ -108,11 +108,10 @@ class Job:
     ) -> None:
         async with aiohttp.ClientSession(raise_for_status=True) as session:
             with open(full_path, "rb") as f:
-                # Use just the basename for the multipart filename
                 basename = os.path.basename(full_path)
                 data = aiohttp.FormData()
                 data.add_field("file", f, filename=basename)
-                data.add_field("path", relative_filename)  # Send the relative path
+                data.add_field("path", relative_filename)
                 async with session.put(signed_url, data=data) as resp:
                     logger.success(
                         f"Uploaded job output file: {full_path} (as {relative_filename}): {await resp.text()}"
@@ -220,7 +219,7 @@ class Job:
         # Update the job object.
         if job_status_url:
             output_filenames = []
-            files_to_upload = []  # List of tuples: (relative_filename, full_path)
+            files_to_upload = {}
 
             if self.upload and upload_required:
                 output_files = [
@@ -231,7 +230,7 @@ class Job:
                 for full_path in output_files:
                     relative_path = os.path.relpath(full_path, tempdir)
                     output_filenames.append(relative_path)
-                    files_to_upload.append((relative_path, full_path))
+                    files_to_upload[relative_path] = full_path
 
             # Handle log files
             log_files = [
@@ -243,7 +242,7 @@ class Job:
                 # Log files are outside tempdir, so we just use basename
                 basename = os.path.basename(log_path)
                 output_filenames.append(basename)
-                files_to_upload.append((basename, log_path))
+                files_to_upload[basename] = log_path
 
             final_result["output_filenames"] = output_filenames
 
@@ -253,14 +252,20 @@ class Job:
 
                 async def _wrapped_upload(relative_filename: str, full_path: str, url: str):
                     async with sem:
-                        await self._upload_job_file(full_path, relative_filename, url)
+                        try:
+                            await self._upload_job_file(full_path, relative_filename, url)
+                        except Exception as exc:
+                            logger.error(f"Failed to upload {full_path}: {exc}")
 
                 await asyncio.gather(
                     *[
                         _wrapped_upload(
-                            relative_filename, full_path, upload_cfg["output_storage_urls"][i]
+                            relative_filename, files_to_upload[relative_filename], upload_url
                         )
-                        for i, (relative_filename, full_path) in enumerate(files_to_upload)
+                        for relative_filename, upload_url in upload_cfg[
+                            "output_storage_urls"
+                        ].items()
+                        if relative_filename in files_to_upload
                     ]
                 )
                 logger.success("Uploaded all output files, job complete!")
