@@ -103,14 +103,20 @@ class Job:
         interval=10,
         max_tries=7,
     )
-    async def _upload_job_file(self, path: str, signed_url: str) -> None:
+    async def _upload_job_file(
+        self, full_path: str, relative_filename: str, signed_url: str
+    ) -> None:
         async with aiohttp.ClientSession(raise_for_status=True) as session:
-            with open(path, "rb") as f:
+            with open(full_path, "rb") as f:
+                # Use just the basename for the multipart filename
+                basename = os.path.basename(full_path)
                 data = aiohttp.FormData()
-                data.add_field('file', f, filename=os.path.basename(path))
-                data.add_field('path', path)
+                data.add_field("file", f, filename=basename)
+                data.add_field("path", relative_filename)  # Send the relative path
                 async with session.put(signed_url, data=data) as resp:
-                    logger.success(f"Uploaded job output file: {path}: {await resp.text()}")
+                    logger.success(
+                        f"Uploaded job output file: {full_path} (as {relative_filename}): {await resp.text()}"
+                    )
 
     @backoff.on_exception(
         backoff.constant,
@@ -213,35 +219,49 @@ class Job:
 
         # Update the job object.
         if job_status_url:
+            output_filenames = []
+            files_to_upload = []  # List of tuples: (relative_filename, full_path)
+
             if self.upload and upload_required:
                 output_files = [
                     p
                     for p in glob.glob(os.path.join(tempdir, "**"), recursive=True)
                     if os.path.isfile(p)
                 ]
-                final_result["output_filenames"] = output_files
-            else:
-                final_result["output_filenames"] = []
+                for full_path in output_files:
+                    relative_path = os.path.relpath(full_path, tempdir)
+                    output_filenames.append(relative_path)
+                    files_to_upload.append((relative_path, full_path))
+
+            # Handle log files
             log_files = [
                 path
                 for path in ["/tmp/_chute.log"] + [f"/tmp/_chute.log.{i}" for i in range(1, 5)]
                 if os.path.exists(path)
             ]
-            if log_files:
-                final_result["output_filenames"] = log_files + final_result["output_filenames"]
+            for log_path in log_files:
+                # Log files are outside tempdir, so we just use basename
+                basename = os.path.basename(log_path)
+                output_filenames.append(basename)
+                files_to_upload.append((basename, log_path))
+
+            final_result["output_filenames"] = output_filenames
+
             upload_cfg = await self._update_job_status(job_status_url, job_data, final_result)
             if upload_cfg.get("output_storage_urls"):
                 sem = asyncio.Semaphore(8)
 
-                async def _wrapped_upload(idx: int):
+                async def _wrapped_upload(relative_filename: str, full_path: str, url: str):
                     async with sem:
-                        await self._upload_job_file(
-                            final_result["output_filenames"][idx],
-                            upload_cfg["output_storage_urls"][idx],
-                        )
+                        await self._upload_job_file(full_path, relative_filename, url)
 
                 await asyncio.gather(
-                    *[_wrapped_upload(i) for i in range(len(upload_cfg["output_storage_urls"]))]
+                    *[
+                        _wrapped_upload(
+                            relative_filename, full_path, upload_cfg["output_storage_urls"][i]
+                        )
+                        for i, (relative_filename, full_path) in enumerate(files_to_upload)
+                    ]
                 )
                 logger.success("Uploaded all output files, job complete!")
 
