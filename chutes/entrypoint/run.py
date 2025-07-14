@@ -460,6 +460,25 @@ async def _gather_devices_and_initialize(
     body["env"] = DUMPER.dump(key)
     body["code"] = DUMPER.slurp(key, exclude_file, 0, 0)
 
+    # Disk space.
+    disk_gb = token_data.get("disk_gb", 10)
+    cfsv_path = os.path.join(os.path.dirname(__file__), "..", "cfsv")
+    logger.info(f"Checking disk space availability: {disk_gb}GB required")
+    try:
+        result = subprocess.run(
+            [cfsv_path, "sizetest", "/tmp", str(disk_gb)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        logger.success(f"Disk space check passed: {disk_gb}GB available in /tmp")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Disk space check failed: {e.stderr}")
+        raise Exception(f"Insufficient disk space: {disk_gb}GB required in /tmp")
+    except Exception as e:
+        logger.error(f"Error checking disk space: {e}")
+        raise Exception(f"Failed to verify disk space availability: {e}")
+
     # Fetch the challenges.
     async with aiohttp.ClientSession(raise_for_status=True) as session:
         logger.info(f"Collected all environment data, submitting to validator: {url}")
@@ -478,7 +497,6 @@ async def _gather_devices_and_initialize(
             fsv_hash = None
             try:
                 logger.info(f"Running filesystem verification challenge with seed={seed_str}")
-                cfsv_path = os.path.join(os.path.dirname(__file__), "..", "cfsv")
                 result = subprocess.run(
                     [
                         cfsv_path,
