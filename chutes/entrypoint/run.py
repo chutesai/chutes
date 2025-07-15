@@ -186,13 +186,6 @@ async def get_token(request: Request) -> dict[str, Any]:
             return await resp.json()
 
 
-async def is_alive(request: Request):
-    """
-    Liveness probe endpoint for k8s.
-    """
-    return {"alive": True}
-
-
 class Slurp(BaseModel):
     path: str
     start_byte: Optional[int] = 0
@@ -256,7 +249,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
 
         # Authentication...
-        body_bytes, failure_response = await authenticate_request(request, miner())
+        body_bytes, failure_response = await authenticate_request(request)
         if failure_response:
             return failure_response
 
@@ -642,6 +635,9 @@ def run_chute(
         job_obj: Job | None = None
         job_method: str | None = None
         job_status_url: str | None = None
+        server_activated: bool = False
+        activation_url: str | None = None
+        activation_lock = asyncio.Lock()
         if token:
             symmetric_key, response = await _gather_devices_and_initialize(
                 token, external_host, port_mappings, chute_module
@@ -652,6 +648,7 @@ def run_chute(
             if job_method:
                 job_obj = next(j for j in chute._jobs if j.name == job_method)
             job_data = response.get("job_data")
+            activation_url = response.get("activation_url")
 
         elif not dev:
             logger.error("No GraVal token supplied!")
@@ -685,10 +682,24 @@ def run_chute(
 
             return await handle_slurp(request, chute_module)
 
+        async def _handle_liveness(request: Request):
+            nonlocal server_activated, activation_lock, activation_url
+
+            # When we handle the first ping, we can notify the validator that we're now active.
+            if server_activated:
+                return {"alive": True}
+
+            async with activation_lock:
+                async with aiohttp.ClientSession(raise_for_status=True) as session:
+                    async with session.get(activation_url, headers={"Authorization": token}) as resp:
+                        logger.success(f"Instance has been activated: {await resp.text()}")
+                        server_activated = True
+                        return await resp.json()
+
         # Validation endpoints.
         chute.add_api_route("/_ping", pong, methods=["POST"])
         chute.add_api_route("/_token", get_token, methods=["POST"])
-        chute.add_api_route("/_alive", is_alive, methods=["GET"])
+        chute.add_api_route("/_alive", _handle_liveness, methods=["GET"])
         chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
         chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
