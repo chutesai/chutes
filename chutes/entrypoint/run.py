@@ -37,6 +37,9 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 
 
+CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv")
+
+
 def get_all_process_info():
     """
     Return running process info.
@@ -186,6 +189,45 @@ async def get_token(request: Request) -> dict[str, Any]:
             return await resp.json()
 
 
+async def generate_filesystem_hash(salt: str, exclude_file: str, mode: str = "full"):
+    """
+    Generate a hash of the filesystem, in either sparse or full mode.
+    """
+    fsv_hash = None
+    logger.info(
+        f"Running filesystem verification challenge in {mode=} using {salt=} excluding {exclude_file}"
+    )
+    process = await asyncio.create_subprocess_exec(
+        CFSV_PATH,
+        "challenge",
+        "/",
+        salt,
+        mode,
+        "/etc/chutesfs.index",
+        exclude_file,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(
+            process.returncode,
+            [CFSV_PATH, "challenge", "/", salt, mode, "/etc/chutesfs.index", exclude_file],
+            output=stdout.decode("utf-8"),
+            stderr=stderr.decode("utf-8"),
+        )
+    stdout_text = stdout.decode("utf-8")
+    for line in stdout_text.strip().split("\n"):
+        if line.startswith("RESULT:"):
+            fsv_hash = line.split("RESULT:")[1].strip()
+            logger.success(f"Filesystem verification hash: {fsv_hash}")
+            break
+    if not fsv_hash:
+        logger.warning("Failed to extract filesystem verification hash from cfsv output")
+        raise Exception("Failed to generate filesystem challenge response.")
+    return fsv_hash
+
+
 class Slurp(BaseModel):
     path: str
     start_byte: Optional[int] = 0
@@ -309,6 +351,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
             request.scope.get("path", "").endswith(
                 (
                     "/_fs_challenge",
+                    "/_fs_hash",
                     "/_alive",
                     "/_metrics",
                     "/_ping",
@@ -355,6 +398,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
         if request.scope.get("path", "").endswith(
             (
                 "/_fs_challenge",
+                "/_fs_hash",
                 "/_alive",
                 "/_metrics",
                 "/_ping",
@@ -430,7 +474,7 @@ async def _gather_devices_and_initialize(
     host: str,
     port_mappings: list[dict[str, Any]],
     chute_module: Any,
-) -> dict:
+) -> tuple[str, str, dict[str, Any]]:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
@@ -455,11 +499,10 @@ async def _gather_devices_and_initialize(
 
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
-    cfsv_path = os.path.join(os.path.dirname(__file__), "..", "cfsv")
     logger.info(f"Checking disk space availability: {disk_gb}GB required")
     try:
-        result = subprocess.run(
-            [cfsv_path, "sizetest", "/tmp", str(disk_gb)],
+        _ = subprocess.run(
+            [CFSV_PATH, "sizetest", "/tmp", str(disk_gb)],
             capture_output=True,
             text=True,
             check=True,
@@ -487,38 +530,7 @@ async def _gather_devices_and_initialize(
 
             # Run filesystem verification challenge.
             seed_str = str(init_params["seed"])
-            fsv_hash = None
-            try:
-                logger.info(f"Running filesystem verification challenge with seed={seed_str}")
-                result = subprocess.run(
-                    [
-                        cfsv_path,
-                        "challenge",
-                        "/",
-                        seed_str,
-                        "full",
-                        "/etc/chutesfs.index",
-                        exclude_file,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                for line in result.stdout.strip().split("\n"):
-                    if line.startswith("RESULT:"):
-                        fsv_hash = line.split("RESULT:")[1].strip()
-                        logger.success(f"Filesystem verification hash: {fsv_hash}")
-                        break
-                if not fsv_hash:
-                    logger.warning(
-                        "Failed to extract filesystem verification hash from cfsv output"
-                    )
-            except subprocess.CalledProcessError as e:
-                logger.error(f"cfsv challenge failed: {e.stderr}")
-            except Exception as e:
-                logger.error(f"Error running cfsv challenge: {e}")
-            if not fsv_hash:
-                raise Exception("Failed to generate filesystem challenge response.")
+            fsv_hash = await generate_filesystem_hash(seed_str, exclude_file, mode="full")
 
             # Use GraVal to extract the symmetric key from the challenge.
             sym_key = init_params["symmetric_key"]
@@ -528,7 +540,7 @@ async def _gather_devices_and_initialize(
             logger.info("Decrypting payload via proof challenge matrix...")
             device_index = [
                 miner().get_device_info(i)["uuid"] for i in range(miner()._device_count)
-            ]
+            ].index(sym_key["uuid"])
             symmetric_key = bytes.fromhex(
                 miner().decrypt(
                     init_params["seed"],
@@ -569,7 +581,7 @@ async def _gather_devices_and_initialize(
                 },
             ) as resp:
                 logger.success("Successfully negotiated challenge response!")
-                return symmetric_key, await resp.json()
+                return exclude_file, symmetric_key, await resp.json()
 
 
 # Run a chute (which can be an async job or otherwise long-running process).
@@ -644,9 +656,10 @@ def run_chute(
         job_status_url: str | None = None
         server_activated: bool = False
         activation_url: str | None = None
+        exclude_file: str | None = None
         activation_lock = asyncio.Lock()
         if token:
-            symmetric_key, response = await _gather_devices_and_initialize(
+            exclude_file, symmetric_key, response = await _gather_devices_and_initialize(
                 token, external_host, port_mappings, chute_module
             )
             job_id = response.get("job_id")
@@ -705,6 +718,15 @@ def run_chute(
                         server_activated = True
                         return await resp.json()
 
+        async def _handle_fs_hash_challenge(request: Request):
+            nonlocal exclude_file
+            data = await request.json()
+            return {
+                "result": await generate_filesystem_hash(
+                    data["salt"], exclude_file, mode=data.get("mode", "sparse")
+                )
+            }
+
         # Validation endpoints.
         chute.add_api_route("/_ping", pong, methods=["POST"])
         chute.add_api_route("/_token", get_token, methods=["POST"])
@@ -717,6 +739,7 @@ def run_chute(
         chute.add_api_route("/_devices", get_devices, methods=["GET"])
         chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
         chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
+        chute.add_api_route("/_fs_hash", _handle_fs_hash_challenge, methods=["POST"])
 
         # New envdump endpoints.
         import chutes.envdump as envdump
