@@ -526,9 +526,16 @@ async def _gather_devices_and_initialize(
             iv = bytes_[:16]
             cipher = bytes_[16:]
             logger.info("Decrypting payload via proof challenge matrix...")
+            device_index = [
+                miner().get_device_info(i)["uuid"] for i in range(miner()._device_count)
+            ]
             symmetric_key = bytes.fromhex(
                 miner().decrypt(
-                    init_params["seed"], cipher, iv, len(cipher), sym_key["device_index"]
+                    init_params["seed"],
+                    cipher,
+                    iv,
+                    len(cipher),
+                    device_index,
                 )
             )
 
@@ -691,7 +698,9 @@ def run_chute(
 
             async with activation_lock:
                 async with aiohttp.ClientSession(raise_for_status=True) as session:
-                    async with session.get(activation_url, headers={"Authorization": token}) as resp:
+                    async with session.get(
+                        activation_url, headers={"Authorization": token}
+                    ) as resp:
                         logger.success(f"Instance has been activated: {await resp.text()}")
                         server_activated = True
                         return await resp.json()
