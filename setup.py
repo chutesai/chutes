@@ -40,7 +40,7 @@ setup(
         "backoff>=2.2,<3",
         "requests>=2.32",
         "loguru==0.7.2",
-        "fastapi>=0.115",
+        "fastapi>=0.110",
         "uvicorn>=0.32.0",
         "pydantic>=2.9,<3",
         "orjson>=3.10",

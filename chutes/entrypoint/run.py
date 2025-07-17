@@ -272,7 +272,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
 
         # Internal endpoints.
         path = request.scope.get("path", "")
-        if path.endswith(("/_alive", "/_metrics")):
+        if path.endswith("/_metrics"):
             ip = ip_address(request.client.host)
             is_private = (
                 ip.is_private
@@ -352,7 +352,6 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 (
                     "/_fs_challenge",
                     "/_fs_hash",
-                    "/_alive",
                     "/_metrics",
                     "/_ping",
                     "/_procs",
@@ -399,7 +398,6 @@ class GraValMiddleware(BaseHTTPMiddleware):
             (
                 "/_fs_challenge",
                 "/_fs_hash",
-                "/_alive",
                 "/_metrics",
                 "/_ping",
                 "/_procs",
@@ -650,10 +648,8 @@ def run_chute(
         job_obj: Job | None = None
         job_method: str | None = None
         job_status_url: str | None = None
-        server_activated: bool = False
         activation_url: str | None = None
         exclude_file: str | None = None
-        activation_lock = asyncio.Lock()
         if token:
             exclude_file, symmetric_key, response = await _gather_devices_and_initialize(
                 token, external_host, port_mappings, chute_module
@@ -698,21 +694,22 @@ def run_chute(
 
             return await handle_slurp(request, chute_module)
 
-        async def _handle_liveness(request: Request):
-            nonlocal server_activated, activation_lock, activation_url
+        @chute.on_event("startup")
+        async def activate_on_startup():
+            if not activation_url or dev:
+                return
+            for attempt in range(10):
+                await asyncio.sleep(attempt)
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            activation_url, headers={"Authorization": token}
+                        ) as resp:
+                            logger.success(f"Instance activated: {await resp.text()}")
+                            break
 
-            # When we handle the first ping, we can notify the validator that we're now active.
-            if server_activated:
-                return {"alive": True}
-
-            async with activation_lock:
-                async with aiohttp.ClientSession(raise_for_status=True) as session:
-                    async with session.get(
-                        activation_url, headers={"Authorization": token}
-                    ) as resp:
-                        logger.success(f"Instance has been activated: {await resp.text()}")
-                        server_activated = True
-                        return await resp.json()
+                except Exception as e:
+                    logger.error(f"Activation failed: {e}")
 
         async def _handle_fs_hash_challenge(request: Request):
             nonlocal exclude_file
@@ -726,7 +723,6 @@ def run_chute(
         # Validation endpoints.
         chute.add_api_route("/_ping", pong, methods=["POST"])
         chute.add_api_route("/_token", get_token, methods=["POST"])
-        chute.add_api_route("/_alive", _handle_liveness, methods=["GET"])
         chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
         chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
