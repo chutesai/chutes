@@ -91,9 +91,9 @@ async def read_last_n_lines(filepath: Path, n: Optional[int] = None) -> List[str
         return []
 
 
-@app.get("/ping")
+@app.get("/_alive")
 async def pong():
-    return "pong"
+    return {"alive": True}
 
 
 @app.get("/")
