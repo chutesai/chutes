@@ -496,6 +496,7 @@ async def _gather_devices_and_initialize(
     logger.info("Collecting full envdump...")
     body["env"] = DUMPER.dump(key)
     body["code"] = DUMPER.slurp(key, exclude_file, 0, 0)
+    body["fsv"] = await generate_filesystem_hash(token_data["sub"], exclude_file, mode="full")
 
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
@@ -527,10 +528,6 @@ async def _gather_devices_and_initialize(
             iterations = init_params.get("iterations", 1)
             logger.info(f"Generating proofs from seed={miner()._graval_seed}")
             proofs = miner().prove(miner()._graval_seed, iterations=iterations)
-
-            # Run filesystem verification challenge.
-            seed_str = str(init_params["seed"])
-            fsv_hash = await generate_filesystem_hash(seed_str, exclude_file, mode="full")
 
             # Use GraVal to extract the symmetric key from the challenge.
             sym_key = init_params["symmetric_key"]
@@ -577,7 +574,6 @@ async def _gather_devices_and_initialize(
                     "response": response_cipher,
                     "iv": new_iv.hex(),
                     "proof": proofs,
-                    "fsv": fsv_hash,
                 },
             ) as resp:
                 logger.success("Successfully negotiated challenge response!")
