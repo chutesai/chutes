@@ -817,43 +817,30 @@ def run_chute(
         Wrap the actual chute execution with the logging process, which is
         kept alive briefly after the main process terminates.
         """
-        import subprocess
-        import sys
+        from chutes.entrypoint.logger import launch_server
 
         if not dev:
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58
             miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
-        # Start logging server as a separate process
-        logging_cmd = [
-            sys.executable,
-            "-m",
-            "chutes.entrypoint.logger",
-            "--host",
-            host or "0.0.0.0",
-            "--port",
-            str(logging_port),
-        ]
-        if dev:
-            logging_cmd.append("--dev")
-        if certfile:
-            logging_cmd.extend(["--certfile", certfile])
-        if keyfile:
-            logging_cmd.extend(["--keyfile", keyfile])
-        logging_process = subprocess.Popen(
-            logging_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        logging_task = asyncio.create_task(
+            launch_server(
+                host=host or "0.0.0.0",
+                port=logging_port,
+                dev=dev,
+                certfile=certfile,
+                keyfile=keyfile,
+            )
         )
-        await asyncio.sleep(1)
         try:
             await _run_chute()
         finally:
-            # Keep logging alive for 30 seconds after main process ends
             await asyncio.sleep(30)
-            logging_process.terminate()
+            logging_task.cancel()
             try:
-                logging_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                logging_process.kill()
+                await logging_task
+            except asyncio.CancelledError:
+                pass
 
     asyncio.run(_logged_run())

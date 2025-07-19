@@ -1,4 +1,3 @@
-import argparse
 import json
 import asyncio
 import os
@@ -311,22 +310,7 @@ def main():
     """
     Entry point for running the server.
     """
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8001)
-    parser.add_argument("--dev", action="store_true")
-    parser.add_argument("--certfile", default=None)
-    parser.add_argument("--keyfile", default=None)
-    args = parser.parse_args()
-    asyncio.run(
-        launch_server(
-            host=args.host,
-            port=args.port,
-            dev=args.dev,
-            certfile=args.certfile,
-            keyfile=args.keyfile,
-        )
-    )
+    asyncio.run(launch_server())
 
 
 if __name__ == "__main__":
