@@ -833,6 +833,7 @@ def run_chute(
                 keyfile=keyfile,
             )
         )
+        await asyncio.sleep(3)
         try:
             await _run_chute()
         finally:
