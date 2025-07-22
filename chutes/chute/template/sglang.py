@@ -265,9 +265,7 @@ def build_sglang_chute(
             try:
                 print(f"Attempting to download {model_name} to cache...")
                 download_path = await asyncio.to_thread(
-                    snapshot_download,
-                    repo_id=model_name,
-                    **download_kwargs
+                    snapshot_download, repo_id=model_name, **download_kwargs
                 )
                 print(f"Successfully downloaded {model_name} to {download_path}")
                 break

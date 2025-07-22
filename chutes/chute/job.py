@@ -70,6 +70,8 @@ class Job:
 
     @property
     def ports(self):
+        if self._ssh:
+            return (self._ports or []) + [Port(name="ssh", port=2202, proto="tcp")]
         return self._ports
 
     @ports.setter
@@ -80,8 +82,6 @@ class Job:
         """
         self._ports = []
         assert isinstance(ports, (list, None))
-        if self._ssh:
-            self._ports.append(Port(name="ssh", port=2202, proto="tcp"))
         if not ports:
             return
         validated = []
