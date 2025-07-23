@@ -42,6 +42,7 @@ async def _deploy(
         "ref_str": ref_str,
         "code": code,
         "concurrency": chute.concurrency,
+        "revision": chute.revision,
         "cords": [
             {
                 "method": cord._method,

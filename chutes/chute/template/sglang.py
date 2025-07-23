@@ -284,7 +284,7 @@ def build_sglang_chute(
         for attempt in range(5):
             download_kwargs = {}
             if self.revision:
-                download_kwargs["revision"] = m.group(1)
+                download_kwargs["revision"] = self.revision
             try:
                 print(f"Attempting to download {model_name} to cache...")
                 download_path = await asyncio.to_thread(
