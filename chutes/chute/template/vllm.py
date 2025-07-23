@@ -223,7 +223,27 @@ def build_vllm_chute(
     readme: str = "",
     concurrency: int = 32,
     engine_args: Dict[str, Any] = {},
+    revision: str = None,
 ):
+    if engine_args.get("revision"):
+        raise ValueError("revision is now a top-level argument to build_vllm_chute!")
+    if not revision:
+        from chutes.chute.template.helpers import get_current_hf_commit
+
+        suggested_commit = None
+        try:
+            suggested_commit = get_current_hf_commit(model_name)
+        except Exception:
+            ...
+        suggestion = (
+            "Unable to fetch the current refs/heads/main commit from HF, please check the model name."
+            if not suggested_commit
+            else f"The current refs/heads/main commit is: {suggested_commit}"
+        )
+        raise ValueError(
+            f"You must specify revision= to properly lock a model to a given huggingface revision. {suggestion}"
+        )
+
     chute = Chute(
         username=username,
         name=model_name,
@@ -233,6 +253,7 @@ def build_vllm_chute(
         node_selector=node_selector,
         concurrency=concurrency,
         standard_template="vllm",
+        revision=revision,
     )
 
     # Semi-optimized defaults for code starts (but not overall perf once hot).
@@ -293,8 +314,8 @@ def build_vllm_chute(
         download_path = None
         for attempt in range(5):
             download_kwargs = {}
-            if revision := engine_args.get("revision"):
-                download_kwargs["revision"] = revision
+            if self.revision:
+                download_kwargs["revision"] = self.revision
             try:
                 print(f"Attempting to download {model_name} to cache...")
                 download_path = await asyncio.to_thread(

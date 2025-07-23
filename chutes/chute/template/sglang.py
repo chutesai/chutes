@@ -201,7 +201,30 @@ def build_sglang_chute(
     readme: str = "",
     concurrency: int = 32,
     engine_args: str = None,
+    revision: str = None,
 ):
+    # Prevent revision in the code, must be in the top level helper args.
+    m = re.search(r"--revision\s*=?\s*([^ ]+)", engine_args or "", re.I)
+    if m:
+        raise ValueError("Revision is now a top-level argument to build_sglang_chute!")
+
+    if not revision:
+        from chutes.chute.template.helpers import get_current_hf_commit
+
+        suggested_commit = None
+        try:
+            suggested_commit = get_current_hf_commit(model_name)
+        except Exception:
+            ...
+        suggestion = (
+            "Unable to fetch the current refs/heads/main commit from HF, please check the model name."
+            if not suggested_commit
+            else f"The current refs/heads/main commit is: {suggested_commit}"
+        )
+        raise ValueError(
+            f"You must specify revision= to properly lock a model to a given huggingface revision. {suggestion}"
+        )
+
     chute = Chute(
         username=username,
         name=model_name,
@@ -211,6 +234,7 @@ def build_sglang_chute(
         node_selector=node_selector,
         concurrency=concurrency,
         standard_template="vllm",
+        revision=revision,
     )
 
     # Minimal input schema with defaults.
@@ -259,8 +283,7 @@ def build_sglang_chute(
         download_path = None
         for attempt in range(5):
             download_kwargs = {}
-            m = re.search(r"--revision\s*=?\s*([^ ]+)", engine_args, re.I)
-            if m:
+            if self.revision:
                 download_kwargs["revision"] = m.group(1)
             try:
                 print(f"Attempting to download {model_name} to cache...")
@@ -286,6 +309,8 @@ def build_sglang_chute(
         if not engine_args:
             engine_args = ""
         engine_args += f" --tp {gpu_count}"
+        if self.revision:
+            engine_args += f" --revision {self.revision}"
         startup_command = f"python -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args}"
         _ = execute_shell_command(startup_command)
         wait_for_server("http://127.0.0.1:10101")
