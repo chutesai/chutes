@@ -16,6 +16,7 @@ import psutil
 import base64
 import secrets
 import subprocess
+import threading
 import orjson as json
 from loguru import logger
 from typing import Optional, Any
@@ -824,24 +825,26 @@ def run_chute(
             miner()._validator_ss58 = validator_ss58
             miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
-        logging_task = asyncio.create_task(
-            launch_server(
-                host=host or "0.0.0.0",
-                port=logging_port,
-                dev=dev,
-                certfile=certfile,
-                keyfile=keyfile,
+        def run_logging_server():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                launch_server(
+                    host=host or "0.0.0.0",
+                    port=logging_port,
+                    dev=dev,
+                    certfile=certfile,
+                    keyfile=keyfile,
+                )
             )
-        )
+
+        logging_thread = threading.Thread(target=run_logging_server, daemon=True)
+        logging_thread.start()
+
         await asyncio.sleep(3)
         try:
             await _run_chute()
         finally:
             await asyncio.sleep(30)
-            logging_task.cancel()
-            try:
-                await logging_task
-            except asyncio.CancelledError:
-                pass
 
     asyncio.run(_logged_run())
