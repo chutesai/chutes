@@ -14,6 +14,7 @@ import inspect
 import typer
 import psutil
 import base64
+import socket
 import secrets
 import subprocess
 import threading
@@ -468,6 +469,98 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 self.requests_in_flight.pop(request.request_id, None)
 
 
+def start_dummy_socket(port_mapping, symmetric_key):
+    """
+    Start a dummy socket based on the port mapping configuration to validate ports.
+    """
+    proto = port_mapping["proto"].lower()
+    internal_port = port_mapping["internal_port"]
+    response_text = f"response from {proto} {internal_port}"
+    if proto in ["tcp", "http"]:
+        return start_tcp_dummy(internal_port, symmetric_key, response_text)
+    return start_udp_dummy(internal_port, symmetric_key, response_text)
+
+
+def encrypt_response(symmetric_key, plaintext):
+    """
+    Encrypt the response using AES-CBC with PKCS7 padding.
+    """
+    padder = padding.PKCS7(128).padder()
+    new_iv = secrets.token_bytes(16)
+    cipher = Cipher(
+        algorithms.AES(symmetric_key),
+        modes.CBC(new_iv),
+        backend=default_backend(),
+    )
+    padded_data = padder.update(plaintext.encode()) + padder.finalize()
+    encryptor = cipher.encryptor()
+    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+    response_cipher = base64.b64encode(encrypted_data).decode()
+    return new_iv, response_cipher
+
+
+def start_tcp_dummy(port, symmetric_key, response_plaintext):
+    """
+    TCP port check socket.
+    """
+
+    def tcp_handler():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("0.0.0.0", port))
+            sock.listen(1)
+            logger.info(f"TCP socket listening on port {port}")
+            conn, addr = sock.accept()
+            logger.info(f"TCP connection from {addr}")
+            data = conn.recv(1024)
+            logger.info(f"TCP received: {data.decode('utf-8', errors='ignore')}")
+            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
+            full_response = f"{iv.hex()}|{encrypted_response}".encode()
+            conn.send(full_response)
+            logger.info(f"TCP sent encrypted response on port {port}: {full_response=}")
+            conn.close()
+        except Exception as e:
+            logger.info(f"TCP socket error on port {port}: {e}")
+            raise
+        finally:
+            sock.close()
+            logger.info(f"TCP socket on port {port} closed")
+
+    thread = threading.Thread(target=tcp_handler, daemon=True)
+    thread.start()
+    return thread
+
+
+def start_udp_dummy(port, symmetric_key, response_plaintext):
+    """
+    UDP port check socket.
+    """
+
+    def udp_handler():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("0.0.0.0", port))
+            logger.info(f"UDP socket listening on port {port}")
+            data, addr = sock.recvfrom(1024)
+            logger.info(f"UDP received from {addr}: {data.decode('utf-8', errors='ignore')}")
+            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
+            full_response = f"{iv.hex()}|{encrypted_response}".encode()
+            sock.sendto(full_response, addr)
+            logger.info(f"UDP sent encrypted response on port {port}")
+        except Exception as e:
+            logger.info(f"UDP socket error on port {port}: {e}")
+            raise
+        finally:
+            sock.close()
+            logger.info(f"UDP socket on port {port} closed")
+
+    thread = threading.Thread(target=udp_handler, daemon=True)
+    thread.start()
+    return thread
+
+
 async def _gather_devices_and_initialize(
     token: str,
     host: str,
@@ -548,22 +641,19 @@ async def _gather_devices_and_initialize(
             )
 
             # Now, we can respond to the URL by encrypting a payload with the symmetric key and sending it back.
-            padder = padding.PKCS7(128).padder()
-            new_iv = secrets.token_bytes(16)
-            cipher = Cipher(
-                algorithms.AES(symmetric_key),
-                modes.CBC(new_iv),
-                backend=default_backend(),
-            )
             plaintext = sym_key["response_plaintext"]
-            padded_data = padder.update(plaintext.encode()) + padder.finalize()
-            encryptor = cipher.encryptor()
-            encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-            response_cipher = base64.b64encode(encrypted_data).decode()
+            new_iv, response_cipher = encrypt_response(symmetric_key, plaintext)
             logger.success(
                 f"Completed PoVW challenge, sending back: {plaintext=} "
                 f"as {response_cipher=} where iv={new_iv.hex()}"
             )
+
+            # Start up dummy sockets to test port mappings.
+            dummy_socket_threads = []
+            for port_map in port_mappings:
+                if port_map.get("default"):
+                    continue
+                dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
 
             # Post the response to the challenge, which returns job data (if any).
             async with session.put(
@@ -616,12 +706,14 @@ def run_chute(
                 "proto": "tcp",
                 "internal_port": port,
                 "external_port": port,
+                "default": True,
             },
             # Logging server.
             {
                 "proto": "tcp",
                 "internal_port": logging_port,
                 "external_port": logging_port,
+                "default": True,
             },
         ]
         external_host = os.getenv("CHUTES_EXTERNAL_HOST")
@@ -632,13 +724,14 @@ def run_chute(
         if ext_logging_port and ext_logging_port.isdigit():
             port_mappings[1]["external_port"] = int(ext_logging_port)
         for key, value in os.environ.items():
-            port_match = re.match(r"^CHUTES_PORT_(TCP|UDP|HTTP)_[0-9]+", key)
+            port_match = re.match(r"^CHUTES_PORT_(TCP|UDP|HTTP)_([0-9]+)", key)
             if port_match and value.isdigit():
                 port_mappings.append(
                     {
                         "proto": port_match.group(1),
                         "internal_port": int(port_match.group(2)),
                         "external_port": int(value),
+                        "default": False,
                     }
                 )
 
