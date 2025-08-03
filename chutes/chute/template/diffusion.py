@@ -2,6 +2,8 @@ import os
 import re
 import uuid
 import json
+import asyncio
+from loguru import logger
 from io import BytesIO
 from fastapi import Response
 from pydantic import BaseModel, Field
@@ -143,6 +145,7 @@ def build_diffusion_chute(
     tagline: str = "",
     readme: str = "",
     version: Optional[str] = None,
+    revision: Optional[str] = None,
     image: Optional[Union[str, Image]] = DIFFUSION,
     pipeline_args: Optional[dict] = {},
 ):
@@ -154,7 +157,7 @@ def build_diffusion_chute(
         image=image,
         node_selector=node_selector,
         standard_template="diffusion",
-        concurrency=1,
+        concurrency=3,
     )
 
     @chute.on_startup()
@@ -229,6 +232,15 @@ def build_diffusion_chute(
             self.pipeline = single_file_pipeline(model_identifier)
         else:
             # Assume SDXL, fallback to SD
+            from huggingface_hub import snapshot_download
+
+            download_kwargs = {}
+            if revision:
+                download_kwargs["revision"] = revision
+                pipeline_args["revision"] = revision
+
+            logger.info(f"Downloading {model_identifier} with {download_kwargs=}")
+            await asyncio.to_thread(snapshot_download, repo_id=model_identifier, **download_kwargs)
             try:
                 self.pipeline = StableDiffusionXLPipeline.from_pretrained(
                     model_identifier,

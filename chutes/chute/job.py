@@ -260,7 +260,9 @@ class Job:
                 await asyncio.gather(
                     *[
                         _wrapped_upload(
-                            relative_filename, files_to_upload[relative_filename], upload_url
+                            relative_filename,
+                            files_to_upload[relative_filename],
+                            upload_url,
                         )
                         for relative_filename, upload_url in upload_cfg[
                             "output_storage_urls"

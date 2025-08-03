@@ -1,6 +1,7 @@
-import asyncio
-import socket
+import re
 import time
+import socket
+import asyncio
 from loguru import logger
 from pydantic import BaseModel, Field
 from typing import List, Union, Optional, Callable
@@ -73,6 +74,7 @@ def build_tei_chute(
     readme: str = "",
     concurrency: int = 32,
     revision: Optional[str] = None,
+    engine_args: Optional[str] = None,
 ):
     chute = Chute(
         username=username,
@@ -104,7 +106,9 @@ def build_tei_chute(
         ]
         if revision:
             cmd += ["--revision", revision]
-        cmd += ["--port", "8881"]
+        cmd += ["--port", "8881", "--auto-truncate"]
+        if engine_args:
+            cmd += re.sub(r"\s+", "", engine_args.strip()).split(" ")
         self.process = await asyncio.create_subprocess_exec(*cmd, stdout=None, stderr=None)
         started_at = time.time()
         self.running = False
