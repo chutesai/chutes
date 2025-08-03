@@ -1,10 +1,10 @@
-DIFFUSION = "chutes/diffusion:0.32.1"
+DIFFUSION = "chutes/diffusion:0.34.0.po"
 
-# To build this yourself, you can use something like:
+# Example...
 # image = (
-#     Image(username="chutes", name="diffusion", tag="0.32.1", readme="## Diffusion pipelines")
-#     .from_base("parachutes/base-python:3.12.7")
+#     Image(username="chutes", name="diffusion", tag="0.34.0.p0", readme="## Diffusion pipelines")
+#     .from_base("parachutes/python:3.12")
 #     .run_command(
-#         "pip install diffusers==0.32.1 transformers accelerate safetensors xformers protobuf sentencepiece"
+#         "pip install diffusers==0.34.0 transformers accelerate safetensors xformers protobuf sentencepiece"
 #     )
 # )
