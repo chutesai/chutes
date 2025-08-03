@@ -303,6 +303,15 @@ class Cord:
         try:
             if self._passthrough:
                 async with self._passthrough_call(**kwargs) as response:
+                    if not 200 <= response.status < 300:
+                        resp_text = await response.text()
+                        logger.error(
+                            "Failed to generate response from func={self._func.__name__}: {response.status=} -> {resp_text}"
+                        )
+                        raise HTTPException(
+                            status_code=response.status,
+                            detail=resp_text,
+                        )
                     logger.success(
                         f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
                     )
