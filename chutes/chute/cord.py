@@ -304,13 +304,16 @@ class Cord:
             if self._passthrough:
                 async with self._passthrough_call(**kwargs) as response:
                     if not 200 <= response.status < 300:
-                        resp_text = await response.text()
+                        try:
+                            error_detail = await response.json()
+                        except Exception:
+                            error_detail = await response.text()
                         logger.error(
-                            "Failed to generate response from func={self._func.__name__}: {response.status=} -> {resp_text}"
+                            f"Failed to generate response from func={self._func.__name__}: {response.status=} -> {error_detail}"
                         )
                         raise HTTPException(
                             status_code=response.status,
-                            detail=resp_text,
+                            detail=error_detail,
                         )
                     logger.success(
                         f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
@@ -369,6 +372,18 @@ class Cord:
         try:
             if self._passthrough:
                 async with self._passthrough_call(**kwargs) as response:
+                    if not 200 <= response.status < 300:
+                        try:
+                            error_detail = await response.json()
+                        except Exception:
+                            error_detail = await response.text()
+                        logger.error(
+                            f"Failed to generate response from func={self._func.__name__}: {response.status=} -> {error_detail}"
+                        )
+                        raise HTTPException(
+                            status_code=response.status,
+                            detail=error_detail,
+                        )
                     async for content in response.content:
                         if encrypt:
                             yield encrypt(content) + "\n"

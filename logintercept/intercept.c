@@ -45,7 +45,7 @@ static int should_log = 1; // Flag to determine if we should log
 
 // List of programs to ignore
 static const char *ignored_programs[] = {"nvidia-smi", "clinfo", "free",
-                                         "top",        "df",     NULL};
+                                         "top", "findmnt", "df", "top", "ldconfig", NULL};
 
 // Initialize function pointers
 __attribute__((constructor)) static void init(void) {
