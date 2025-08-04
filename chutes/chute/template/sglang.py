@@ -279,6 +279,7 @@ def build_sglang_chute(
         )
 
         from huggingface_hub import snapshot_download
+        from chutes.chute.template.helpers import warmup_model
 
         download_path = None
         for attempt in range(5):
@@ -314,6 +315,7 @@ def build_sglang_chute(
         startup_command = f"python -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args}"
         _ = execute_shell_command(startup_command)
         wait_for_server("http://127.0.0.1:10101")
+        await warmup_model(self)
 
     def _parse_stream_chunk(encoded_chunk):
         chunk = encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()
