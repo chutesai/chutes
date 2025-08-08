@@ -57,6 +57,7 @@ setup(
         "netifaces",
         "pyudev",
         "aiofiles>=23",
+        "semver",
     ],
     extras_require={
         "dev": [

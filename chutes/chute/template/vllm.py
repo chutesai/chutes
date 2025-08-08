@@ -1,6 +1,8 @@
+import re
 import asyncio
 import json
 import os
+import semver
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Callable, Literal, Optional, Union, List
@@ -9,6 +11,16 @@ from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+
+
+def semcomp(input_version: str, target_version: str):
+    """
+    Semver comparison with cleanup.
+    """
+    if not input_version:
+        input_version = "0.0.0"
+    clean_version = re.match(r"^([0-9]+\.[0-9]+\.[0-9]+).*", input_version).group(1)
+    return semver.compare(clean_version, target_version)
 
 
 class DefaultRole(Enum):
@@ -256,15 +268,6 @@ def build_vllm_chute(
         revision=revision,
     )
 
-    # Semi-optimized defaults for code starts (but not overall perf once hot).
-    defaults = {
-        "disable_log_stats": True,
-        "disable_log_requests": True,
-    }
-    for key, value in defaults.items():
-        if key not in engine_args:
-            engine_args[key] = value
-
     # Minimal input schema with defaults.
     class MinifiedMessage(BaseModel):
         role: DefaultRole = DefaultRole.user
@@ -403,6 +406,10 @@ def build_vllm_chute(
                     "chat_template_content_format": extra_args.get("chat_template_content_format"),
                 }
             )
+
+        if semcomp(vv.__version__ or "0.0.0", "0.10.0") < 0:
+            extra_args["disable_log_requests"] = True
+        extra_args["disable_log_stats"] = True
 
         vllm_api_server.chat = lambda s: OpenAIServingChat(
             self.engine,

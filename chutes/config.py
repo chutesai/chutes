@@ -52,7 +52,7 @@ def get_config() -> Config:
                     f"Please set either populate {CONFIG_PATH} or set CHUTES_CONFIG_PATH to alternative/valid config path!"
                 )
         else:
-            logger.debug(f"Loading chutes config from {CONFIG_PATH}...")
+            logger.info(f"Loading chutes config from {CONFIG_PATH}...")
             raw_config = ConfigParser()
             raw_config.read(CONFIG_PATH)
 

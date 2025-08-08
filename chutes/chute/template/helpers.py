@@ -21,7 +21,9 @@ async def prompt_one(model_name: str, base_url: str = "http://127.0.0.1:10101", 
     """
     Send a prompt to the model.
     """
-    async with aiohttp.ClientSession(raise_for_status=True, timeout=aiohttp.ClientTimeout(0)) as session:
+    async with aiohttp.ClientSession(
+        raise_for_status=True, timeout=aiohttp.ClientTimeout(0)
+    ) as session:
         started_at = time.time()
         if not prompt:
             prompt = (
@@ -66,8 +68,17 @@ async def warmup_model(chute, base_url: str = "http://127.0.0.1:10101"):
         multiplier = 1
         while multiplier < 4:
             try:
-                prompt = f"Summarize the following stories:\n\n" + combined_response * multiplier + "\nThe summary is: "
-                await asyncio.gather(*[prompt_one(chute.name, base_url=base_url, prompt=prompt) for idx in range(chute.concurrency)])
+                prompt = (
+                    "Summarize the following stories:\n\n"
+                    + combined_response * multiplier
+                    + "\nThe summary is: "
+                )
+                await asyncio.gather(
+                    *[
+                        prompt_one(chute.name, base_url=base_url, prompt=prompt)
+                        for idx in range(chute.concurrency)
+                    ]
+                )
                 logger.success(f"Warmed up with {multiplier=}")
             except Exception:
                 logger.warning(f"Stopping at {multiplier=}, failed to get response")
