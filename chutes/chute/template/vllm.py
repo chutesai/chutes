@@ -393,13 +393,15 @@ def build_vllm_chute(
             extra_token_args["lora_modules"] = []
             extra_args["base_model_paths"] = base_model_paths
         else:
-            extra_args["models"] = OpenAIServingModels(
+            models_kwargs = dict(
                 engine_client=self.engine,
                 model_config=model_config,
                 base_model_paths=base_model_paths,
                 lora_modules=[],
-                prompt_adapters=[],
             )
+            if semcomp(vv.__version__ or "0.0.0", "0.10.0") < 0:
+                models_kwargs["prompt_adapters"] = []
+            extra_args["models"] = OpenAIServingModels(**models_kwargs)
             extra_token_args.update(
                 {
                     "chat_template": extra_args.get("chat_template"),
