@@ -79,49 +79,6 @@ Access to a single chute.
 chutes keys create --name foo-key --chute-ids 5eda1993-9f4b-5426-972c-61c33dbaf541
 ```
 
-### ⭐ Validators and subnet owners
-
-If you are a validator or subnet owner on Bittensor, you can link your validator/owner key to a chutes account, which will grant free access AND the developer role (without deposit, so you can skip the step below).
-
-#### Provided entrypoint
-
-There is an entrypoint in the `chutes` package for linking validator/owner hotkeys.
-```bash
-chutes link \
-  --hotkey-path ~/.bittensor/wallets/wallet/hotkeys/hotkey \
-  --hotkey-type subnet_owner
-```
-Change `hotkey_type` to validator if you are a validator.
-
-*__Ignore the fact that subnet owners and coldkeys, it's just easier to use hotkey param names consistently!__*
-
-#### Manually
-
-If you do not wish to link the account using the CLI, you can do so directly with http requests.
-
-First, you need to create a signature with your subnet owner/validator key of the string "{hotkey/owner key ss58}:{chutes username}", e.g. in python this would be something like
-
-```python
-from substrateinterface import Keypair
-hotkey_path = "/home/foo/.bittensor/wallets/validator/hotkeys/validator"
-with open(hotkey_path, "r") as infile:
-    hotkey_data = json.loads(infile.read())
-keypair = Keypair.create_from_seed(seed_hex=hotkey_data["secretSeed"])
-signature_string = f"{hotkey_data['ss58Address']}:example-username"
-signature = keypair.sign(signature_string.encode()).hex()
-print(signature)
-```
-
-Then call `GET /users/link_validator` or `GET /users/link_subnet_owner` with a hotkey param and signature param, e.g.:
-```bash
-curl -XGET \
-  -H 'Authorization: Bearer cpk_...' \
-  'https://api.chutes.ai/users/link_validator?hotkey=5Dt7...&signature=9c4e...'
-```
-In this example, the authorization Bearer token value is an API key created from the previous step with `--admin` specified.
-
-*Again, ignore the fact that subnet owners are coldkeys and use the hotkey= param.*
-
 ## 👨‍💻 Enable developer role
 
 To help reduce spam/abuse on the platform, you must deposit tao in your account before you can create images/chutes.  This is fully refundable (minus the Bittensor chain transaction fees).

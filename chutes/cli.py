@@ -12,7 +12,6 @@ from chutes.entrypoint.register import register
 from chutes.entrypoint.build import build_image
 from chutes.entrypoint.report import report_invocation
 from chutes.entrypoint.run import run_chute
-from chutes.entrypoint.link import link_hotkey
 from chutes.entrypoint.fingerprint import change_fingerprint
 from chutes.crud import chutes_app, images_app, api_keys_app
 
@@ -31,10 +30,6 @@ if len(sys.argv) > 1 and sys.argv[1] == "run" and "CHUTE_LD_PRELOAD_INJECTED" no
         logger.warning("Chutes log intercept lib not found, proceeding with standard logging")
 
 app.command(name="register", help="Create an account with the chutes run platform!")(register)
-app.command(
-    name="link",
-    help="Link a validator or subnet owner hotkey to your account, which grants free+developer access!",
-)(link_hotkey)
 app.command(help="Change your fingerprint!", no_args_is_help=True, name="refinger")(
     change_fingerprint
 )
