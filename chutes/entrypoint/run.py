@@ -664,9 +664,16 @@ async def _gather_devices_and_initialize(
                     "iv": new_iv.hex(),
                     "proof": proofs,
                 },
+                raise_for_status=False,
             ) as resp:
-                logger.success("Successfully negotiated challenge response!")
-                return exclude_file, symmetric_key, await resp.json()
+                if resp.ok:
+                    logger.success("Successfully negotiated challenge response!")
+                    return exclude_file, symmetric_key, await resp.json()
+                else:
+                    # log down the reason of failure to the challenge
+                    detail = await resp.text(encoding="utf-8", errors="replace") 
+                    logger.error(f"Failed: {resp.reason} ({resp.status}) {detail}")
+                    resp.raise_for_status()
 
 
 # Run a chute (which can be an async job or otherwise long-running process).
