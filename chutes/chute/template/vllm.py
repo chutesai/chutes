@@ -411,7 +411,7 @@ def build_vllm_chute(
 
         if semcomp(vv.__version__ or "0.0.0", "0.10.0") < 0:
             extra_args["disable_log_requests"] = True
-        extra_args["disable_log_stats"] = True
+            extra_args["disable_log_stats"] = True
 
         vllm_api_server.chat = lambda s: OpenAIServingChat(
             self.engine,
