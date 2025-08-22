@@ -671,7 +671,7 @@ async def _gather_devices_and_initialize(
                     return exclude_file, symmetric_key, await resp.json()
                 else:
                     # log down the reason of failure to the challenge
-                    detail = await resp.text(encoding="utf-8", errors="replace") 
+                    detail = await resp.text(encoding="utf-8", errors="replace")
                     logger.error(f"Failed: {resp.reason} ({resp.status}) {detail}")
                     resp.raise_for_status()
 

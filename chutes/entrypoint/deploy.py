@@ -14,7 +14,12 @@ from chutes.chute import ChutePack
 
 
 async def _deploy(
-    ref_str: str, module: Any, chute: Chute, public: bool = False, logo_id: str = None
+    ref_str: str,
+    module: Any,
+    chute: Chute,
+    public: bool = False,
+    logo_id: str = None,
+    logging_enabled: bool = False,
 ):
     """
     Perform the actual chute deployment.
@@ -36,6 +41,7 @@ async def _deploy(
         "logo_id": logo_id,
         "image": chute.image if isinstance(chute.image, str) else chute.image.uid,
         "public": public,
+        "logging_enabled": logging_enabled,
         "standard_template": chute.standard_template,
         "node_selector": chute.node_selector.dict(),
         "filename": os.path.basename(module.__file__),
@@ -134,13 +140,16 @@ def deploy_chute(
     ),
     debug: bool = typer.Option(False, help="enable debug logging"),
     public: bool = typer.Option(False, help="mark an image as public/available to anyone"),
+    logging_enabled: bool = typer.Option(
+        False, help="flag allowing only the user who created the chute to view the pod logs"
+    ),
 ):
     """
     Deploy a chute to the platform.
     """
 
     async def _deploy_chute():
-        nonlocal config_path, debug, public, chute_ref_str, logo
+        nonlocal config_path, debug, public, logging_enabled, chute_ref_str, logo
         module, chute = load_chute(chute_ref_str, config_path=config_path, debug=debug)
 
         # Get the image reference from the chute.
@@ -158,6 +167,13 @@ def deploy_chute(
             logo_id = await upload_logo(logo)
 
         # Deploy!
-        return await _deploy(chute_ref_str, module, chute, public, logo_id)
+        return await _deploy(
+            chute_ref_str,
+            module,
+            chute,
+            public=public,
+            logo_id=logo_id,
+            logging_enabled=logging_enabled,
+        )
 
     return asyncio.run(_deploy_chute())
