@@ -763,6 +763,11 @@ def run_chute(
             job_data = response.get("job_data")
             activation_url = response.get("activation_url")
 
+            # Secret environment variables, e.g. HF tokens for private models.
+            if response.get("secrets"):
+                for secret_key, secret_value in response["secrets"].items():
+                    os.environ[secret_key] = secret_value
+
         elif not dev:
             logger.error("No GraVal token supplied!")
             sys.exit(1)
