@@ -387,6 +387,13 @@ def build_vllm_chute(
             and int(version_parts[1]) < 7
         ):
             old_vllm = True
+        pre_0_10 = False
+        if not re.search(r"^0\.[1-9]+\.dev", vv.__version__, re.I):
+            try:
+                if semcomp(vv.__version__ or "0.0.0", "0.10.0") < 0:
+                    pre_0_10 = True
+            except Exception:
+                ...
         if old_vllm:
             extra_args["lora_modules"] = []
             extra_args["prompt_adapters"] = []
@@ -399,7 +406,7 @@ def build_vllm_chute(
                 base_model_paths=base_model_paths,
                 lora_modules=[],
             )
-            if semcomp(vv.__version__ or "0.0.0", "0.10.0") < 0:
+            if pre_0_10:
                 models_kwargs["prompt_adapters"] = []
             extra_args["models"] = OpenAIServingModels(**models_kwargs)
             extra_token_args.update(
@@ -409,7 +416,7 @@ def build_vllm_chute(
                 }
             )
 
-        if semcomp(vv.__version__ or "0.0.0", "0.10.0") < 0:
+        if pre_0_10:
             extra_args["disable_log_requests"] = True
             extra_args["disable_log_stats"] = True
 

@@ -18,6 +18,7 @@ import socket
 import secrets
 import subprocess
 import threading
+import traceback
 import orjson as json
 from loguru import logger
 from typing import Optional, Any
@@ -947,9 +948,18 @@ def run_chute(
         logging_thread.start()
 
         await asyncio.sleep(3)
+        exception_raised = False
         try:
             await _run_chute()
+        except Exception as exc:
+            logger.error(
+                f"Unexpected error executing _run_chute(): {str(exc)}\n{traceback.format_exc()}"
+            )
+            exception_raised = True
+            await asyncio.sleep(60)
+            raise
         finally:
-            await asyncio.sleep(30)
+            if not exception_raised:
+                await asyncio.sleep(30)
 
     asyncio.run(_logged_run())
