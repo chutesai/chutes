@@ -41,46 +41,23 @@ static int log_fd = -1;
 static char *program_name = NULL;
 static int should_log = 1;
 
-static int stdout_is_tty = -1;
-static int stderr_is_tty = -1;
-static int original_stdout_fd = -1;
-static int original_stderr_fd = -1;
-
 static const char *ignored_programs[] = {"nvidia-smi", "clinfo",   "free",
                                          "top",        "findmnt",  "df",
                                          "top",        "ldconfig", NULL};
 
-static int should_log_fd(int fd) {
-  struct stat st;
-  if (fd != STDOUT_FILENO && fd != STDERR_FILENO) {
+static int is_dev_null(int fd) {
+  struct stat fd_stat, null_stat;
+
+  if (fstat(fd, &fd_stat) != 0) {
     return 0;
   }
-  if (isatty(fd)) {
-    return 1;
-  }
-  if (fstat(fd, &st) == 0) {
-    if (S_ISCHR(st.st_mode)) {
-      struct stat null_stat;
-      if (stat("/dev/null", &null_stat) == 0) {
-        if (st.st_dev == null_stat.st_dev && st.st_ino == null_stat.st_ino) {
-          return 0;
-        }
-      }
-    }
-    if (S_ISREG(st.st_mode) || S_ISFIFO(st.st_mode)) {
-      return 0;
-    }
-  }
-  return 0;
-}
 
-static int should_log_stream(FILE *stream) {
-  if (stream == stdout) {
-    return should_log_fd(STDOUT_FILENO);
-  } else if (stream == stderr) {
-    return should_log_fd(STDERR_FILENO);
+  if (stat("/dev/null", &null_stat) != 0) {
+    return 0;
   }
-  return 0;
+
+  return (fd_stat.st_dev == null_stat.st_dev &&
+          fd_stat.st_ino == null_stat.st_ino);
 }
 
 __attribute__((constructor)) static void init(void) {
@@ -96,11 +73,6 @@ __attribute__((constructor)) static void init(void) {
   real_fputc = dlsym(RTLD_NEXT, "fputc");
   real_printf = dlsym(RTLD_NEXT, "printf");
   real_vprintf = dlsym(RTLD_NEXT, "vprintf");
-
-  original_stdout_fd = dup(STDOUT_FILENO);
-  original_stderr_fd = dup(STDERR_FILENO);
-  stdout_is_tty = isatty(STDOUT_FILENO);
-  stderr_is_tty = isatty(STDERR_FILENO);
 
   char path[1024];
   ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
@@ -125,12 +97,6 @@ __attribute__((destructor)) static void cleanup(void) {
   }
   if (program_name) {
     free(program_name);
-  }
-  if (original_stdout_fd >= 0) {
-    close(original_stdout_fd);
-  }
-  if (original_stderr_fd >= 0) {
-    close(original_stderr_fd);
   }
 }
 
@@ -218,7 +184,8 @@ ssize_t write(int fd, const void *buf, size_t count) {
     real_write = dlsym(RTLD_NEXT, "write");
   }
 
-  if (should_log && should_log_fd(fd)) {
+  if (should_log && (fd == STDOUT_FILENO || fd == STDERR_FILENO) &&
+      !is_dev_null(fd)) {
     write_to_log(buf, count);
   }
 
@@ -230,7 +197,8 @@ ssize_t writev(int fd, const struct iovec *iov, int iovcnt) {
     real_writev = dlsym(RTLD_NEXT, "writev");
   }
 
-  if (should_log && should_log_fd(fd)) {
+  if (should_log && (fd == STDOUT_FILENO || fd == STDERR_FILENO) &&
+      !is_dev_null(fd)) {
     for (int i = 0; i < iovcnt; i++) {
       write_to_log(iov[i].iov_base, iov[i].iov_len);
     }
@@ -244,7 +212,8 @@ ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset) {
     real_pwrite = dlsym(RTLD_NEXT, "pwrite");
   }
 
-  if (should_log && should_log_fd(fd)) {
+  if (should_log && (fd == STDOUT_FILENO || fd == STDERR_FILENO) &&
+      !is_dev_null(fd)) {
     write_to_log(buf, count);
   }
 
@@ -262,7 +231,7 @@ int printf(const char *format, ...) {
 
   va_start(args, format);
 
-  if (should_log && should_log_fd(STDOUT_FILENO)) {
+  if (should_log && !is_dev_null(STDOUT_FILENO)) {
     va_copy(args_copy, args);
     vsnprintf(buffer, sizeof(buffer), format, args_copy);
     va_end(args_copy);
@@ -284,7 +253,7 @@ int vprintf(const char *format, va_list ap) {
     real_vprintf = dlsym(RTLD_NEXT, "vprintf");
   }
 
-  if (should_log && should_log_fd(STDOUT_FILENO)) {
+  if (should_log && !is_dev_null(STDOUT_FILENO)) {
     va_copy(ap_copy, ap);
     vsnprintf(buffer, sizeof(buffer), format, ap_copy);
     va_end(ap_copy);
@@ -306,11 +275,14 @@ int fprintf(FILE *stream, const char *format, ...) {
 
   va_start(args, format);
 
-  if (should_log && should_log_stream(stream)) {
-    va_copy(args_copy, args);
-    vsnprintf(buffer, sizeof(buffer), format, args_copy);
-    va_end(args_copy);
-    write_to_log(buffer, strlen(buffer));
+  if (should_log && (stream == stdout || stream == stderr)) {
+    int fd = fileno(stream);
+    if (!is_dev_null(fd)) {
+      va_copy(args_copy, args);
+      vsnprintf(buffer, sizeof(buffer), format, args_copy);
+      va_end(args_copy);
+      write_to_log(buffer, strlen(buffer));
+    }
   }
 
   result = real_vfprintf(stream, format, args);
@@ -327,11 +299,14 @@ int vfprintf(FILE *stream, const char *format, va_list ap) {
     real_vfprintf = dlsym(RTLD_NEXT, "vfprintf");
   }
 
-  if (should_log && should_log_stream(stream)) {
-    va_copy(ap_copy, ap);
-    vsnprintf(buffer, sizeof(buffer), format, ap_copy);
-    va_end(ap_copy);
-    write_to_log(buffer, strlen(buffer));
+  if (should_log && (stream == stdout || stream == stderr)) {
+    int fd = fileno(stream);
+    if (!is_dev_null(fd)) {
+      va_copy(ap_copy, ap);
+      vsnprintf(buffer, sizeof(buffer), format, ap_copy);
+      va_end(ap_copy);
+      write_to_log(buffer, strlen(buffer));
+    }
   }
 
   return real_vfprintf(stream, format, ap);
@@ -342,8 +317,11 @@ int fputs(const char *s, FILE *stream) {
     real_fputs = dlsym(RTLD_NEXT, "fputs");
   }
 
-  if (should_log && should_log_stream(stream)) {
-    write_to_log(s, strlen(s));
+  if (should_log && (stream == stdout || stream == stderr)) {
+    int fd = fileno(stream);
+    if (!is_dev_null(fd)) {
+      write_to_log(s, strlen(s));
+    }
   }
 
   return real_fputs(s, stream);
@@ -354,8 +332,11 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     real_fwrite = dlsym(RTLD_NEXT, "fwrite");
   }
 
-  if (should_log && should_log_stream(stream)) {
-    write_to_log(ptr, size * nmemb);
+  if (should_log && (stream == stdout || stream == stderr)) {
+    int fd = fileno(stream);
+    if (!is_dev_null(fd)) {
+      write_to_log(ptr, size * nmemb);
+    }
   }
 
   return real_fwrite(ptr, size, nmemb, stream);
@@ -366,7 +347,7 @@ int puts(const char *s) {
     real_puts = dlsym(RTLD_NEXT, "puts");
   }
 
-  if (should_log && should_log_fd(STDOUT_FILENO)) {
+  if (should_log && !is_dev_null(STDOUT_FILENO)) {
     write_to_log(s, strlen(s));
     write_to_log("\n", 1);
   }
@@ -379,7 +360,7 @@ int putchar(int c) {
     real_putchar = dlsym(RTLD_NEXT, "putchar");
   }
 
-  if (should_log && should_log_fd(STDOUT_FILENO)) {
+  if (should_log && !is_dev_null(STDOUT_FILENO)) {
     char ch = c;
     write_to_log(&ch, 1);
   }
@@ -392,9 +373,12 @@ int fputc(int c, FILE *stream) {
     real_fputc = dlsym(RTLD_NEXT, "fputc");
   }
 
-  if (should_log && should_log_stream(stream)) {
-    char ch = c;
-    write_to_log(&ch, 1);
+  if (should_log && (stream == stdout || stream == stderr)) {
+    int fd = fileno(stream);
+    if (!is_dev_null(fd)) {
+      char ch = c;
+      write_to_log(&ch, 1);
+    }
   }
 
   return real_fputc(c, stream);
