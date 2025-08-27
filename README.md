@@ -13,7 +13,7 @@ Before getting into the weeds, it might be useful to understand the terminology.
 Images are simply docker images that all chutes (applications) will run on within the platform.
 
 Images must meet two requirements:
-- Containt a cuda installation, preferably version 12.2-12.6
+- Contain a cuda installation, preferably version 12.2-12.6
 - Contain a python 3.10+ installation, where `python` and `pip` are contained within the executable path `PATH`
 
 __*Highly recommend you start with our base image: parachutes/base-python:3.12.7*__
@@ -267,7 +267,7 @@ You can also spin up completely arbitrary webservers and do "passthrough" cords 
 
 To see an example of passthrough functions and more complex functionality, see the [vllm template chute/helper](https://github.com/rayonlabs/chutes/blob/main/chutes/chute/template/vllm.py)
 
-It is also very important to specify `concurrency=N` in your `Chute(..)` constructor.  In may cases, e.g. vllm, this can be fairly high (based on max sequences), where in other cases without data parallelism or other cases with contention, you may wish to leave it at the default of 1.
+It is also very important to specify `concurrency=N` in your `Chute(..)` constructor.  In many cases, e.g. vllm, this can be fairly high (based on max sequences), where in other cases without data parallelism or other cases with contention, you may wish to leave it at the default of 1.
 
 ## 🧪 Local testing
 
@@ -293,3 +293,4 @@ curl -XPOST http://127.0.0.1:8000/chat_stream -H 'content-type: application/json
   "logprobs": True,
 }'
 ```
+
