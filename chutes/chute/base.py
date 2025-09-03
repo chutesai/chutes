@@ -40,6 +40,9 @@ class Chute(FastAPI):
         revision: str = None,
         node_selector: NodeSelector = None,
         concurrency: int = 1,
+        max_instances: int = 1,
+        shutdown_after_seconds: int = 300,
+        scaling_threshold: float = 0.75,
         **kwargs,
     ):
         from chutes.chute.cord import Cord
@@ -60,6 +63,9 @@ class Chute(FastAPI):
         self._jobs: list[Job] = []
         self.revision = revision
         self.concurrency = concurrency
+        self.max_instances = max_instances
+        self.scaling_threshold = scaling_threshold
+        self.shutdown_after_seconds = shutdown_after_seconds
         self.docs_url = None
         self.redoc_url = None
 

@@ -202,6 +202,9 @@ def build_sglang_chute(
     concurrency: int = 32,
     engine_args: str = None,
     revision: str = None,
+    max_instances: int = 1,
+    scaling_threshold: float = 0.75,
+    shutdown_after_seconds: int = 300,
 ):
     # Prevent revision in the code, must be in the top level helper args.
     m = re.search(r"--revision\s*=?\s*([^ ]+)", engine_args or "", re.I)
@@ -235,6 +238,9 @@ def build_sglang_chute(
         concurrency=concurrency,
         standard_template="vllm",
         revision=revision,
+        shutdown_after_seconds=shutdown_after_seconds,
+        max_instances=max_instances,
+        scaling_threshold=scaling_threshold,
     )
 
     # Minimal input schema with defaults.

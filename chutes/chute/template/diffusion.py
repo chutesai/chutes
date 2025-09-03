@@ -144,10 +144,14 @@ def build_diffusion_chute(
     node_selector: NodeSelector,
     tagline: str = "",
     readme: str = "",
+    concurrency: int = 3,
     version: Optional[str] = None,
     revision: Optional[str] = None,
     image: Optional[Union[str, Image]] = DIFFUSION,
     pipeline_args: Optional[dict] = {},
+    max_instances: int = 1,
+    scaling_threshold: float = 0.75,
+    shutdown_after_seconds: int = 300,
 ):
     chute = Chute(
         username=username,
@@ -157,7 +161,10 @@ def build_diffusion_chute(
         image=image,
         node_selector=node_selector,
         standard_template="diffusion",
-        concurrency=3,
+        concurrency=concurrency,
+        shutdown_after_seconds=shutdown_after_seconds,
+        max_instances=max_instances,
+        scaling_threshold=scaling_threshold,
     )
 
     @chute.on_startup()

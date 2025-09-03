@@ -75,6 +75,9 @@ def build_tei_chute(
     concurrency: int = 32,
     revision: Optional[str] = None,
     engine_args: Optional[str] = None,
+    max_instances: int = 1,
+    scaling_threshold: float = 0.75,
+    shutdown_after_seconds: int = 300,
 ):
     chute = Chute(
         username=username,
@@ -85,6 +88,9 @@ def build_tei_chute(
         node_selector=node_selector,
         concurrency=concurrency,
         standard_template="tei",
+        shutdown_after_seconds=shutdown_after_seconds,
+        max_instances=max_instances,
+        scaling_threshold=scaling_threshold,
     )
 
     async def _check_tcp_port():

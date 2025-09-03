@@ -236,6 +236,9 @@ def build_vllm_chute(
     concurrency: int = 32,
     engine_args: Dict[str, Any] = {},
     revision: str = None,
+    max_instances: int = 1,
+    scaling_threshold: float = 0.75,
+    shutdown_after_seconds: int = 300,
 ):
     if engine_args.get("revision"):
         raise ValueError("revision is now a top-level argument to build_vllm_chute!")
@@ -266,6 +269,9 @@ def build_vllm_chute(
         concurrency=concurrency,
         standard_template="vllm",
         revision=revision,
+        shutdown_after_seconds=shutdown_after_seconds,
+        max_instances=max_instances,
+        scaling_threshold=scaling_threshold,
     )
 
     # Minimal input schema with defaults.

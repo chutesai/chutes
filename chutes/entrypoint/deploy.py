@@ -11,6 +11,7 @@ from chutes.entrypoint._shared import load_chute, upload_logo
 from chutes.image import Image
 from chutes.util.auth import sign_request
 from chutes.chute import ChutePack
+from chutes._version import version as current_version
 
 
 async def _deploy(
@@ -20,6 +21,7 @@ async def _deploy(
     public: bool = False,
     logo_id: str = None,
     logging_enabled: bool = False,
+    accept_fee: bool = False,
 ):
     """
     Perform the actual chute deployment.
@@ -48,6 +50,9 @@ async def _deploy(
         "ref_str": ref_str,
         "code": code,
         "concurrency": chute.concurrency,
+        "max_instances": chute.max_instances,
+        "scaling_threshold": chute.scaling_threshold,
+        "shutdown_after_seconds": chute.shutdown_after_seconds,
         "revision": chute.revision,
         "cords": [
             {
@@ -84,21 +89,24 @@ async def _deploy(
     }
 
     headers, request_string = sign_request(request_body)
+    headers["X-Chutes-Version"] = current_version
     async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
         async with session.post(
             "/chutes/",
             data=request_string,
             headers=headers,
+            params={"accept_fee": str(accept_fee or False).lower()},
             timeout=aiohttp.ClientTimeout(total=None),
         ) as response:
             data = await response.json()
-            if response.status in (409, 401):
+            if response.status in (409, 401, 402):
                 logger.error(f"{data['detail']}")
             elif response.status != 200:
                 logger.error(f"Unexpected error deploying chute: {await response.text()}")
             else:
+                chute_id = data["chute_id"]
                 logger.success(
-                    f"Successfully deployed chute {chute.name} version={data['version']}, invocation will be available soon"
+                    f"Successfully deployed chute {chute.name} {chute_id=} version={data['version']} invocations will be available soon!"
                 )
 
 
@@ -125,6 +133,29 @@ async def _image_available(image: str | Image, public: bool) -> bool:
     return False
 
 
+async def _can_deploy_public() -> bool:
+    """
+    Check if the user can deploy public chutes.
+    """
+    config = get_config()
+    logger.debug("Checking if user can deploy public chutes...")
+    headers, _ = sign_request(purpose="me")
+    async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
+        async with session.get(
+            "/users/me",
+            headers=headers,
+        ) as response:
+            print(response, await response.json())
+            response.raise_for_status()
+            raw_data = await response.json()
+            permissions_bitmask = raw_data.get("permissions_bitmask", 0)
+            if permissions_bitmask & (
+                1 << 11
+            ) == 1 << 11 or "Allow deploying models publicly." in raw_data.get("permissions", []):
+                return True
+    return False
+
+
 def deploy_chute(
     # TODO: needs to be a nicer way to do this
     chute_ref_str: str = typer.Argument(
@@ -143,13 +174,17 @@ def deploy_chute(
     logging_enabled: bool = typer.Option(
         False, help="flag allowing only the user who created the chute to view the pod logs"
     ),
+    accept_fee: bool = typer.Option(
+        False,
+        help="flag indicating you acknowledge the deployment fee and accept being charged accordingly upon deployment",
+    ),
 ):
     """
     Deploy a chute to the platform.
     """
 
     async def _deploy_chute():
-        nonlocal config_path, debug, public, logging_enabled, chute_ref_str, logo
+        nonlocal config_path, debug, public, logging_enabled, chute_ref_str, logo, accept_fee
         module, chute = load_chute(chute_ref_str, config_path=config_path, debug=debug)
 
         # Get the image reference from the chute.
@@ -159,6 +194,13 @@ def deploy_chute(
         if not await _image_available(chute.image, public):
             image_id = chute.image if isinstance(chute.image, str) else chute.image.uid
             logger.error(f"Image '{image_id}' is not available to be used (yet)!")
+            sys.exit(1)
+
+        # Public flag.
+        if public and not await _can_deploy_public():
+            logger.error(
+                "Public chutes are no longer possible without special permissions, please create the chute as private and use `chutes share ...` command to share with others."
+            )
             sys.exit(1)
 
         # Upload logo, if any.
@@ -174,6 +216,7 @@ def deploy_chute(
             public=public,
             logo_id=logo_id,
             logging_enabled=logging_enabled,
+            accept_fee=accept_fee,
         )
 
     return asyncio.run(_deploy_chute())
