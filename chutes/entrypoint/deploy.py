@@ -145,7 +145,6 @@ async def _can_deploy_public() -> bool:
             "/users/me",
             headers=headers,
         ) as response:
-            print(response, await response.json())
             response.raise_for_status()
             raw_data = await response.json()
             permissions_bitmask = raw_data.get("permissions_bitmask", 0)

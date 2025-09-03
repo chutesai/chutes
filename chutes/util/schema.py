@@ -1,4 +1,5 @@
 import inspect
+from enum import Enum
 from typing import (
     get_type_hints,
     Dict,
@@ -59,6 +60,22 @@ class SchemaExtractor:
         """
         if type_hint is None:
             return {"type": "null"}
+
+        # Handle Enum types
+        if inspect.isclass(type_hint) and issubclass(type_hint, Enum):
+            # Extract enum values
+            enum_values = [e.value for e in type_hint]
+            # Determine the type of the enum values
+            if all(isinstance(v, str) for v in enum_values):
+                return {"type": "string", "enum": enum_values}
+            elif all(isinstance(v, int) for v in enum_values):
+                return {"type": "integer", "enum": enum_values}
+            elif all(isinstance(v, float) for v in enum_values):
+                return {"type": "number", "enum": enum_values}
+            else:
+                # Mixed types or complex values
+                return {"enum": enum_values}
+
         if inspect.isclass(type_hint) and issubclass(type_hint, BaseModel):
             model_schema = type_hint.model_json_schema(ref_template="#/definitions/{model}")
             model_name = type_hint.__name__
@@ -69,6 +86,7 @@ class SchemaExtractor:
                 if "definitions" in model_schema:
                     definitions.update(model_schema["definitions"])
             return {"$ref": f"#/definitions/{model_name}"}
+
         if type_hint in cls.PYTHON_TYPE_TO_JSON_TYPE:
             return cls.PYTHON_TYPE_TO_JSON_TYPE[type_hint]
 
