@@ -17,21 +17,23 @@ def share_chute(
     config_path: str = typer.Option(
         None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
+    remove: bool = typer.Option(False, help="unshare/delete share"),
 ):
     async def _share_chute():
         """
-        Share the chute.
+        Share (or unshare) the chute.
         """
-        nonlocal chute_id, user_id, config_path
+        nonlocal chute_id, user_id, config_path, remove
         config = get_config()
         if config_path:
             os.environ["CHUTES_CONFIG_PATH"] = config_path
         headers, payload_string = sign_request(
             payload={"chute_id_or_name": chute_id, "user_id_or_name": user_id}
         )
+        endpoint = "share" if not remove else "unshare"
         async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
             async with session.post(
-                "/chutes/share",
+                f"/chutes/{endpoint}",
                 data=payload_string,
                 headers=headers,
             ) as response:
