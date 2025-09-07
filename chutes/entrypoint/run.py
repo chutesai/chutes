@@ -699,6 +699,8 @@ def run_chute(
         Run the chute (or job).
         """
         # Load the chute.
+        if dev:
+            os.environ["CHUTES_DEV_MODE"] = "true"
         chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
         if is_local():
             logger.error("Cannot run chutes in local context!")

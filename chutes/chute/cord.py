@@ -443,11 +443,11 @@ class Cord:
         else:
             # Dev mode hacks.
             if not self._passthrough:
-                args = [request.state.decrypted]
+                args = [request.state.decrypted] if request.state.decrypted else []
                 kwargs = {}
             else:
                 args = []
-                kwargs = {"json": request.state.decrypted}
+                kwargs = {"json": request.state.decrypted} if request.state.decrypted else {}
         if not self._passthrough:
             if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
                 try:

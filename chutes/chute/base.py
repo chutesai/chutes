@@ -153,9 +153,15 @@ class Chute(FastAPI):
                 hook()
 
         # Add all of the API endpoints.
+        dev = os.getenv("CHUTES_DEV_MODE", "false").lower() == "true"
         for cord in self._cords:
-            self.add_api_route(cord.path, cord._request_handler, methods=["POST"])
-            logger.info(f"Added new API route: {cord.path} calling {cord._func.__name__}")
+            path = cord.path
+            method = "POST"
+            if dev:
+                path = cord._public_api_path
+                method = cord._public_api_method
+            self.add_api_route(path, cord._request_handler, methods=[method])
+            logger.info(f"Added new API route: {path} calling {cord._func.__name__} via {method}")
             logger.debug(f"  {cord.input_schema=}")
             logger.debug(f"  {cord.minimal_input_schema=}")
             logger.debug(f"  {cord.output_content_type=}")
