@@ -155,6 +155,12 @@ To use the same example `llama1b.py` file outlined in the image building section
 chutes deploy llama1b:chute
 ```
 
+### Deployment fee
+
+You are charged a one-time deployment fee per chute, equivalent to 3 times the hourly rate based on the node selector (meaning, `gpu_count` * cheapest compatible GPU type hourly rate). There is no deployment fee for any updates to existing chutes.
+
+For example, if the `node_selector` has `gpu_count=1` and nothing else, the cheapest compatible GPU is $0.1/hr, so your deployment fee is $0.3.
+
 ### Node selector configuration
 
 Be sure to carefully craft the `node_selector` option within the chute, to ensure the code runs on GPUs appropriate to the task.
