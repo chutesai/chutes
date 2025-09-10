@@ -12,11 +12,12 @@ Before getting into the weeds, it might be useful to understand the terminology.
 
 Images are simply docker images that all chutes (applications) will run on within the platform.
 
-Images must meet two requirements:
+Images must meet a few requirements:
 - Contain a cuda installation, preferably version 12.2-12.6
+- Contain clinfo, opencl dev libraries, clblast, openmi, etc.
 - Contain a python 3.10+ installation, where `python` and `pip` are contained within the executable path `PATH`
 
-__*Highly recommend you start with our base image: parachutes/base-python:3.12.7*__
+__*We HIGHLY, HIGHLY recommend you start with our base image: parachutes/python:3.12 to avoid dependency hell*__
 
 ### 🪂 chute
 
@@ -105,7 +106,7 @@ curl -XPOST https://api.chutes.ai/return_developer_deposit \
 ## 🛠️ Building an image
 
 The first step in getting an application onto the chutes platform is to build an image.
-This SDK includes an image creation helper library as well, and we have a recommended base image which includes python 3.12.7 and all necessary cuda packages: `parachutes/base-python:3.12.7`
+This SDK includes an image creation helper library as well, and we have a recommended base image which includes python 3.12 and all necessary cuda packages: `parachutes/python:3.12`
 
 Here is an entire chutes application, which has an image that includes `vllm` -- let's store it in `llama1b.py`:
 
@@ -116,9 +117,9 @@ from chutes.image import Image
 
 image = (
     Image(username="chutes", name="vllm", tag="0.6.3", readme="## vLLM - fast, flexible llm inference")
-    .from_base("parachutes/base-python:3.12.7")
-    .run_command("pip install --no-cache 'vllm<0.6.4' wheel packaging")
-    .run_command("pip install --no-cache flash-attn")
+    .from_base("parachutes/python:3.12")
+    .run_command("pip install 'vllm<0.6.4' wheel packaging")
+    .run_command("pip install flash-attn")
     .run_command("pip uninstall -y xformers")
 )
 
@@ -259,8 +260,8 @@ from chutes.image import Image
 from chutes.chute import Chute, NodeSelector
 
 image = (
-    Image(username="chutes", name="base-python", tag="3.12.7", readme="## Base python+cuda image for chutes")
-    .from_base("parachutes/base-python:3.12.7")
+    Image(username="chutes", name="foo", tag="0.1", readme="## Base python+cuda image for chutes")
+    .from_base("parachutes/python:3.12")
 )
 
 chute = Chute(
