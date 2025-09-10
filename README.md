@@ -155,6 +155,10 @@ To use the same example `llama1b.py` file outlined in the image building section
 chutes deploy llama1b:chute
 ```
 
+*Note: this will ERROR and show you the deployment fee, as a safety mechanism, so you can confirm you want to accept that fee*
+
+To acknowledge and accept the fee you must pass `--accept-fee`, e.g. `chutes deploy llama1b:chute --accept-fee`
+
 ### Deployment fee
 
 You are charged a one-time deployment fee per chute, equivalent to 3 times the hourly rate based on the node selector (meaning, `gpu_count` * cheapest compatible GPU type hourly rate). There is no deployment fee for any updates to existing chutes.
