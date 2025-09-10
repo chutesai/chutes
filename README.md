@@ -151,8 +151,10 @@ Once you have an image that is built and pushed and ready for use (see above), y
 
 To use the same example `llama1b.py` file outlined in the image building section above, we can deploy the llama-3.2-1b-instruct model with:
 ```bash
-chutes deploy llama1b:chute --public
+chutes deploy llama1b:chute
 ```
+
+### Node selector configuration
 
 Be sure to carefully craft the `node_selector` option within the chute, to ensure the code runs on GPUs appropriate to the task.
 ```python
@@ -168,7 +170,82 @@ node_selector=NodeSelector(
 
 The most important fields are `gpu_count` and `min_vram_gb_per_gpu`.  If you wish to include specific GPUs, you can do so, where the `include` (or `exclude`) fields are the short identifier per model, e.g. `"a6000"`, `"a100"`, etc.  [All supported GPUs and their short identifiers](https://github.com/rayonlabs/chutes-api/blob/main/api/gpu.py)
 
-## ⚙️ Building custom/non-vllm chutes
+### Scaling & billing of user-deployed chutes
+
+All user-created chutes are charged at the standard hourly (per gpu, based on your `gpu_count` value in node selector), based on the cheapest compatible GPU type in the `node_selector` definition: https://api.chutes.ai/pricing
+For example, if your chute can run on either a100 or h100, you are charged as though all instances are a100, even if it happens to deploy on h100s.
+
+You can configure how much the chute will scale up, how quickly it scales up, and how quickly to spin down with the following flags:
+```python
+chute = Chute(
+    ...,
+    concurrency=10,
+    max_instances=3,
+    scaling_threshold=0.5,
+    shutdown_after_seconds=300
+)
+```
+
+#### concurrency (int, default=1)
+This controls the maximum number of requests each instance can handle concurrently, which is dependent entirely on your code. For vLLM and SGLang template chutes, this value can be fairly high, e.g. 32+
+
+#### max_instances (int, default=1)
+Maximum number of instances that can be active at a time.
+
+#### scaling_threshold (float, default=0.75)
+The ratio of average requests in flight per instance that will trigger creation of another instance, when the number of instances is lower than the configured `max_instances` value.  For example, if your `concurrency` is set to 10, and your `scaling_threshold` is 0.5, and `max_instances` is 2 and you have one instance now, you will trigger a scale up of another instance once the platform observes you have 5 or more requests on average in flight consistently (i.e., you are using 50% of the concurrency supported by your chute).
+
+#### shutdown_after_seconds (int, default=300)
+The number of seconds to wait after the last request (per instance) before shutting down the instance to avoid incurring any additional charges.
+
+#### Billable items and mechanism
+
+Deployment fee: You are charged a one-time deployment fee per chute, equivalent to 3 times the hourly rate based on the node selector (meaning, `gpu_count` * cheapest compatible GPU type hourly rate). No deployment fee for any updates to existing chutes.
+
+You are charged the standard hourly rate while any instance is hot, based on your criteria specified above, up through last request timestamp + `shutdown_after_seconds`
+
+You are not charged for "cold start" times (e.g., downloading the model, downloading the chute image, etc.).  You are, however, charged for the `shutdown_after_seconds` seconds of compute while the instance is hot but not actively being called, because it keeps the instance hot.
+
+For example:
+- deploy a chute at 12:00:00 (new chute, one time node-selector based deployment fee, let's say a single 3090 at $0.12/hr = $0.36 total fee)
+  - `max_instances` set to 1, `shutdown_after_seconds` set to 300
+- send requests to the chute and/or call warmup endpoint: 12:00:01 (no charge)
+- first instance becomes hot and ready for use: 12:00:30 (billing at $0.12/hr starts here)
+- continuously send requests to the instance (no per-request inference charges)
+- stop sending requests at 12:05:00
+  - triggers the instance shutdown timer based on `shutdown_after_seconds` for 5 minutes...
+- instance chutes down 12:10:00 (billing stops here)
+
+Total charges are: $0.36 deployment fee + 5 minutes at $0.12/hr of active compute + 5 minutes `shutdown_after_seconds` = $0.38
+
+Now, suppose you want to use that chute again:
+- start requests at 13:00:00
+- instance becomes hot at 13:00:30 (billing starts at $0.12/hr here)
+- stop requests at 13:05:30
+- instance stays hot due to `shutdown_after_seconds` for 5 minutes
+
+Total additional charges = 5 minutes active compute + 5 minute shutdown delay = 10 minutes @ $0.12/hr = $0.02
+
+*If you share a chute with another user, they pay for usage on the chute and those payments are put back into your account as balance to offset the cost of running the chute!*
+
+## 👥 Sharing a chute
+
+For any user-deployed chutes, the chutes are private, but they can be shared. You can either use the `chutes share` entrypoint, or call the API endpoint directly.
+
+```bash
+chutes share --chute-id unsloth/Llama-3.2-1B-Instruct --user-id anotheruser
+```
+
+The `--chute-id` parameter can either be the chute name or the UUID.
+Likewise, `--user-id` can be either the username or the user's UUID.
+
+### Billing
+
+When you share a chute with another user, you authorize that user to trigger the chute to scale up, and *you* as the chute owner are charged the hourly rate while it's running.
+
+When the user you shared the chute with calls the chute, however, they are billed based on either seconds of compute used for custom chutes or our standard LLM/image pricing for vllm/sglang/diffusion models, and the amount they are charged is added back to your (aka the chute owner's) balance.
+
+## ⚙️  Building custom/non-vllm chutes
 
 Chutes are in fact completely arbitrary, so you can customize to your heart's content.
 
