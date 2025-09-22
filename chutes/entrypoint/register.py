@@ -116,6 +116,20 @@ def register(
             logger.error(f"No hotkey found: {hotkey_path}")
             sys.exit(1)
 
+        # Get registration token flow
+        token = "replaceme"
+        if generic_config.api_base_url.startswith("https://api.chutes.ai"):
+            token_url = "https://rtok.chutes.ai/users/registration_token"
+            rprint("\n" + "="*80)
+            rprint("[bold yellow]Registration Token Required[/bold yellow]")
+            rprint(f"Please visit the following URL to get your registration token:")
+            rprint(f"[bold cyan]{token_url}[/bold cyan]")
+            rprint("="*80 + "\n")
+            token = input("Paste your registration token here: ").strip()
+            if not token:
+                logger.error("No token provided. Registration cancelled.")
+                sys.exit(1)
+
         rprint(
             f"\nAttempting to register the user {username} with the wallet located at {os.path.join(wallets_path, wallet, 'hotkeys', hotkey)}.\n"
         )
@@ -147,7 +161,7 @@ def register(
         )
         async with aiohttp.ClientSession(base_url=generic_config.api_base_url) as session:
             async with session.post(
-                "/users/register",
+                f"/users/register?token={token}",
                 data=payload,
                 headers=headers,
             ) as response:
