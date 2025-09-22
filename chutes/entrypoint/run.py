@@ -822,7 +822,7 @@ def run_chute(
 
         async def _handle_fs_hash_challenge(request: Request):
             nonlocal exclude_file
-            data = await request.json()
+            data = request.state.decrypted
             return {
                 "result": await generate_filesystem_hash(
                     data["salt"], exclude_file, mode=data.get("mode", "sparse")

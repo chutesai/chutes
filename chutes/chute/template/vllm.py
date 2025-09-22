@@ -394,9 +394,12 @@ def build_vllm_chute(
         ):
             old_vllm = True
         pre_0_10 = False
-        if not re.search(r"^0\.[1-9]+\.dev", vv.__version__, re.I):
+        if re.search(r"^0\.9\.", vv.__version__):
+            pre_0_10 = True
+        elif not re.search(r"^0\.[1-9]+\.dev", vv.__version__, re.I):
+            ver = ".".join(vv.__version__.split(".")[:3]) if vv.__version__ else "0.0.0"
             try:
-                if semcomp(vv.__version__ or "0.0.0", "0.10.0") < 0:
+                if semcomp(ver, "0.10.0") < 0:
                     pre_0_10 = True
             except Exception:
                 ...
@@ -422,7 +425,7 @@ def build_vllm_chute(
                 }
             )
 
-        if pre_0_10:
+        if pre_0_10 and not re.search(r"^0\.9\.0\.1", vv.__version__):
             extra_args["disable_log_requests"] = True
             extra_args["disable_log_stats"] = True
 
