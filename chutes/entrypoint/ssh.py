@@ -45,11 +45,20 @@ async def setup_ssh_access(ssh_public_key):
             f.write(sshd_config_content)
         if not os.path.exists("/tmp/ssh_host_rsa_key"):
             subprocess.run(
-                ["ssh-keygen", "-t", "rsa", "-f", "/tmp/ssh_host_rsa_key", "-N", ""], check=True
+                ["ssh-keygen", "-t", "rsa", "-f", "/tmp/ssh_host_rsa_key", "-N", ""],
+                check=True,
             )
         if not os.path.exists("/tmp/ssh_host_ed25519_key"):
             subprocess.run(
-                ["ssh-keygen", "-t", "ed25519", "-f", "/tmp/ssh_host_ed25519_key", "-N", ""],
+                [
+                    "ssh-keygen",
+                    "-t",
+                    "ed25519",
+                    "-f",
+                    "/tmp/ssh_host_ed25519_key",
+                    "-N",
+                    "",
+                ],
                 check=True,
             )
         subprocess.Popen(["/usr/sbin/sshd", "-D", "-f", sshd_config_path])

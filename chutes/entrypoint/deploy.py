@@ -171,7 +171,8 @@ def deploy_chute(
     debug: bool = typer.Option(False, help="enable debug logging"),
     public: bool = typer.Option(False, help="mark an image as public/available to anyone"),
     logging_enabled: bool = typer.Option(
-        False, help="flag allowing only the user who created the chute to view the pod logs"
+        False,
+        help="flag allowing only the user who created the chute to view the pod logs",
     ),
     accept_fee: bool = typer.Option(
         False,

@@ -215,7 +215,15 @@ async def generate_filesystem_hash(salt: str, exclude_file: str, mode: str = "fu
     if process.returncode != 0:
         raise subprocess.CalledProcessError(
             process.returncode,
-            [CFSV_PATH, "challenge", "/", salt, mode, "/etc/chutesfs.index", exclude_file],
+            [
+                CFSV_PATH,
+                "challenge",
+                "/",
+                salt,
+                mode,
+                "/etc/chutesfs.index",
+                exclude_file,
+            ],
             output=stdout.decode("utf-8"),
             stderr=stderr.decode("utf-8"),
         )
@@ -755,7 +763,11 @@ def run_chute(
         activation_url: str | None = None
         exclude_file: str | None = None
         if token:
-            exclude_file, symmetric_key, response = await _gather_devices_and_initialize(
+            (
+                exclude_file,
+                symmetric_key,
+                response,
+            ) = await _gather_devices_and_initialize(
                 token, external_host, port_mappings, chute_module
             )
             job_id = response.get("job_id")

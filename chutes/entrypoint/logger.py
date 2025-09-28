@@ -39,7 +39,8 @@ async def verify_auth(request: Request):
     body_bytes, error_response = await authenticate_request(request)
     if error_response:
         raise HTTPException(
-            status_code=error_response.status_code, detail=json.loads(error_response.body)
+            status_code=error_response.status_code,
+            detail=json.loads(error_response.body),
         )
     return body_bytes
 

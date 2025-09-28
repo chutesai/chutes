@@ -200,7 +200,9 @@ async def _build_remote(image, wait=None, public: bool = False, logo_id: str = N
                             try:
                                 headers, _ = sign_request(purpose="images")
                                 async with session.get(
-                                    f"/images/{image_id}/logs", params=params, headers=headers
+                                    f"/images/{image_id}/logs",
+                                    params=params,
+                                    headers=headers,
                                 ) as log_resp:
                                     # If we have a text/plain response, the image build is done and full logs are available.
                                     content_type = log_resp.headers.get("Content-Type", "")

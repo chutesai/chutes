@@ -118,13 +118,15 @@ def register(
 
         # Get registration token flow
         token = "replaceme"
+        registration_url = generic_config.api_base_url.rstrip("/") + "/users/register"
         if generic_config.api_base_url.startswith("https://api.chutes.ai"):
+            registration_url = "https://rtok.chutes.ai/users/register"
             token_url = "https://rtok.chutes.ai/users/registration_token"
-            rprint("\n" + "="*80)
+            rprint("\n" + "=" * 80)
             rprint("[bold yellow]Registration Token Required[/bold yellow]")
-            rprint(f"Please visit the following URL to get your registration token:")
+            rprint("Please visit the following URL to get your registration token:")
             rprint(f"[bold cyan]{token_url}[/bold cyan]")
-            rprint("="*80 + "\n")
+            rprint("=" * 80 + "\n")
             token = input("Paste your registration token here: ").strip()
             if not token:
                 logger.error("No token provided. Registration cancelled.")
@@ -159,9 +161,17 @@ def register(
         logger.debug(
             f"Sending payload: {payload} with headers: {headers}. Signing message was: {sig_str}"
         )
-        async with aiohttp.ClientSession(base_url=generic_config.api_base_url) as session:
+        connector = aiohttp.TCPConnector(
+            family=0,
+            happy_eyeballs_delay=0.750,
+            interleave=1,
+            ttl_dns_cache=300,
+            keepalive_timeout=30,
+            force_close=False,
+        )
+        async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(
-                f"/users/register?token={token}",
+                f"{registration_url}?token={token}",
                 data=payload,
                 headers=headers,
             ) as response:
