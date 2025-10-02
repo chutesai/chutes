@@ -80,22 +80,13 @@ Access to a single chute.
 chutes keys create --name foo-key --chute-ids 5eda1993-9f4b-5426-972c-61c33dbaf541
 ```
 
-## 👨‍💻 Enable developer role
+## 👨‍💻 Developer deposit
 
-To help reduce spam/abuse on the platform, you must deposit tao in your account before you can create images/chutes.  This is fully refundable (minus the Bittensor chain transaction fees).
+*_As of 2025-10-02, this is no longer required! You must have >= $50 balance to build images, and there is a deployment fee (also mentioned in this doc) to deploy chutes_*
 
-The API lists the current developer deposit amount from the `/developer_deposit` endpoint, e.g.:
-```bash
-curl -s https://api.chutes.ai/developer_deposit | jq .
-```
+### Return the developer deposit
 
-The developer deposit address should be in your `~/chutes/config.ini` file, or you can get your information from the `/users/me` endpoint, e.g.:
-```bash
-curl -s https://api.chutes.ai/users/me \
-  -H 'authorization: cpk_...'
-```
-
-To get your deposit back, you must wait at least 7 days since the transfer was made, then POST to the `/return_developer_deposit` endpoint, e.g.:
+To get your deposit back, perform a POST to the `/return_developer_deposit` endpoint, e.g.:
 ```bash
 curl -XPOST https://api.chutes.ai/return_developer_deposit \
   -H 'content-type: application/json' \
