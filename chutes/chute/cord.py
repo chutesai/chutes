@@ -341,7 +341,7 @@ class Cord:
                 return {"json": encrypt(json.dumps(response))}
             return response
         except Exception as exc:
-            logger.error(f"Error performing stream call: {exc}")
+            logger.error(f"Error performing non-streamed call: {exc}")
             status = 500
             raise
         finally:
@@ -461,7 +461,27 @@ class Cord:
                     )
 
         if self._stream:
-            return StreamingResponse(self._remote_stream_call(request, *args, **kwargs))
+            # Wait for the first chunk before returning StreamingResponse
+            # to avoid returning 200 for requests that fail immediately
+            try:
+                generator = self._remote_stream_call(request, *args, **kwargs)
+                first_chunk = await generator.__anext__()
+
+                async def _stream_with_first_chunk():
+                    yield first_chunk
+                    async for chunk in generator:
+                        yield chunk
+
+                return StreamingResponse(_stream_with_first_chunk())
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to initialize stream: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error initializing stream: {e}",
+                )
+
         return await self._remote_call(request, *args, **kwargs)
 
     def __call__(self, func):
