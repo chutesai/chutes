@@ -228,7 +228,7 @@ Now, suppose you want to use that chute again:
 
 Total additional charges = 5 minutes active compute + 5 minute shutdown delay = 10 minutes @ $0.12/hr = $0.02
 
-*If you share a chute with another user, they pay for usage on the chute and those payments are put back into your account as balance to offset the cost of running the chute!*
+*If you share a chute with another user, they also pay standard rates for usage on the chute!*
 
 ## 👥 Sharing a chute
 
@@ -245,7 +245,7 @@ Likewise, `--user-id` can be either the username or the user's UUID.
 
 When you share a chute with another user, you authorize that user to trigger the chute to scale up, and *you* as the chute owner are charged the hourly rate while it's running.
 
-When the user you shared the chute with calls the chute, however, they are billed based on either seconds of compute used for custom chutes or our standard LLM/image pricing for vllm/sglang/diffusion models, and the amount they are charged is added back to your (aka the chute owner's) balance.
+When the user you shared the chute with calls the chute, they are charged the standard rate (dependent on chute type, e.g. per million token for llms, per step on diffusion models, per second otherwise).
 
 ## ⚙️  Building custom/non-vllm chutes
 
