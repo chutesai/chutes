@@ -1,4 +1,4 @@
-SGLANG = "chutes/sglang:0.4.10.post1"
+SGLANG = "chutes/sglang:nightly-2025100200"
 
 # Example...
 # image = (

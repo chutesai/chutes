@@ -1,4 +1,4 @@
-VLLM = "chutes/vllm:0.9.2"
+VLLM = "chutes/vllm:nightly-2025100201"
 
 # Example...
 # image = (
