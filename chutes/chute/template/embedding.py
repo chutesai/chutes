@@ -1,5 +1,6 @@
 import asyncio
 import os
+from loguru import logger
 from pydantic import BaseModel
 from typing import Dict, Any, Callable, List, Optional, Literal
 from chutes.image import Image
@@ -130,7 +131,7 @@ def build_embedding_chute(
 
     if pooling_type == "auto":
         pooling_type = get_optimal_pooling_type(model_name)
-        print(f"🔍 Auto-detected pooling type: {pooling_type} for model {model_name}")
+        logger.info(f"🔍 Auto-detected pooling type: {pooling_type} for model {model_name}")
 
     chute = Chute(
         username=username,
@@ -171,14 +172,14 @@ def build_embedding_chute(
             if self.revision:
                 download_kwargs["revision"] = self.revision
             try:
-                print(f"Attempting to download {model_name} to cache...")
+                logger.info(f"Attempting to download {model_name} to cache...")
                 download_path = await asyncio.to_thread(
                     snapshot_download, repo_id=model_name, **download_kwargs
                 )
-                print(f"Successfully downloaded {model_name} to {download_path}")
+                logger.info(f"Successfully downloaded {model_name} to {download_path}")
                 break
             except Exception as exc:
-                print(f"Failed downloading {model_name} {download_kwargs or ''}: {exc}")
+                logger.info(f"Failed downloading {model_name} {download_kwargs or ''}: {exc}")
             await asyncio.sleep(60)
 
         if not download_path:
@@ -212,14 +213,14 @@ def build_embedding_chute(
             pooler_config["enable_chunked_processing"] = True
             pooler_config["max_embed_len"] = max_embed_len
 
-        print("📋 Embedding Configuration:")
-        print(f"   - Model: {model_name}")
-        print(f"   - GPU Count: {gpu_count}")
-        print(f"   - Pooling Type: {pooling_type}")
-        print(f"   - Chunked Processing: {enable_chunked_processing}")
+        logger.info("📋 Embedding Configuration:")
+        logger.info(f"   - Model: {model_name}")
+        logger.info(f"   - GPU Count: {gpu_count}")
+        logger.info(f"   - Pooling Type: {pooling_type}")
+        logger.info(f"   - Chunked Processing: {enable_chunked_processing}")
         if enable_chunked_processing:
-            print(f"   - Max Embed Length: {max_embed_len} tokens")
-            print("   - Cross-chunk Aggregation: MEAN (automatic)")
+            logger.info(f"   - Max Embed Length: {max_embed_len} tokens")
+            logger.info("   - Cross-chunk Aggregation: MEAN (automatic)")
 
         # Configure engine arguments
         engine_args_config = AsyncEngineArgs(
@@ -273,7 +274,7 @@ def build_embedding_chute(
             chat_template_content_format="string",
         )
 
-        print("✅ Embedding server initialized successfully!")
+        logger.info("✅ Embedding server initialized successfully!")
 
     @chute.cord(
         passthrough_path="/v1/embeddings",
