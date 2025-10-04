@@ -23,6 +23,7 @@ chutes_app = typer.Typer(
 )
 images_app = typer.Typer(no_args_is_help=True, name="images", help="Manage images")
 api_keys_app = typer.Typer(no_args_is_help=True, name="keys", help="Manage API keys")
+secrets_app = typer.Typer(no_args_is_help=True, name="secrets", help="Manage secrets")
 
 
 class ChuteTable:
@@ -62,6 +63,12 @@ class ChuteTable:
                     else "-"
                 ),
             ),
+        ],
+        "secrets": [
+            ("Secret ID", "secret_id"),
+            ("Purpose", "purpose"),
+            ("Key", "key"),
+            ("Created", "created_at"),
         ],
     }
 
@@ -245,3 +252,21 @@ def get_api_key(name_or_id: str = typer.Argument(..., help="Name or ID of API ke
 @api_keys_app.command(name="delete", help="Delete an API key by name or ID")
 def delete_api_key(name_or_id: str = typer.Argument(..., help="Name or ID of API key to delete")):
     return asyncio.run(_delete_object("api_keys", name_or_id))
+
+
+@secrets_app.command(name="list", help="List secrets")
+def list_secrets(
+    limit: int = typer.Option(25, help="Number of secrets to display per page"),
+    page: int = typer.Option(0, help="The page number to display"),
+):
+    return asyncio.run(_list_objects("secrets", limit=limit, page=page))
+
+
+@secrets_app.command(name="get", help="Get a secret by ID")
+def get_secret(secret_id: str = typer.Argument(..., help="ID of secret to get")):
+    return asyncio.run(_get_object("secrets", secret_id))
+
+
+@secrets_app.command(name="delete", help="Delete a secret by ID")
+def delete_secret(secret_id: str = typer.Argument(..., help="ID of secret to delete")):
+    return asyncio.run(_delete_object("secrets", secret_id))

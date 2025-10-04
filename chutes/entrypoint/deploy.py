@@ -20,7 +20,6 @@ async def _deploy(
     chute: Chute,
     public: bool = False,
     logo_id: str = None,
-    logging_enabled: bool = False,
     accept_fee: bool = False,
 ):
     """
@@ -43,7 +42,6 @@ async def _deploy(
         "logo_id": logo_id,
         "image": chute.image if isinstance(chute.image, str) else chute.image.uid,
         "public": public,
-        "logging_enabled": logging_enabled,
         "standard_template": chute.standard_template,
         "node_selector": chute.node_selector.dict(),
         "filename": os.path.basename(module.__file__),
@@ -170,10 +168,6 @@ def deploy_chute(
     ),
     debug: bool = typer.Option(False, help="enable debug logging"),
     public: bool = typer.Option(False, help="mark an image as public/available to anyone"),
-    logging_enabled: bool = typer.Option(
-        False,
-        help="flag allowing only the user who created the chute to view the pod logs",
-    ),
     accept_fee: bool = typer.Option(
         False,
         help="flag indicating you acknowledge the deployment fee and accept being charged accordingly upon deployment",
@@ -184,7 +178,7 @@ def deploy_chute(
     """
 
     async def _deploy_chute():
-        nonlocal config_path, debug, public, logging_enabled, chute_ref_str, logo, accept_fee
+        nonlocal config_path, debug, public, chute_ref_str, logo, accept_fee
         module, chute = load_chute(chute_ref_str, config_path=config_path, debug=debug)
 
         # Get the image reference from the chute.
@@ -215,7 +209,6 @@ def deploy_chute(
             chute,
             public=public,
             logo_id=logo_id,
-            logging_enabled=logging_enabled,
             accept_fee=accept_fee,
         )
 

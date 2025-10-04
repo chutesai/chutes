@@ -15,7 +15,8 @@ from chutes.entrypoint.run import run_chute
 from chutes.entrypoint.fingerprint import change_fingerprint
 from chutes.entrypoint.share import share_chute
 from chutes.entrypoint.warmup import warmup_chute
-from chutes.crud import chutes_app, images_app, api_keys_app
+from chutes.entrypoint.secret import create_secret
+from chutes.crud import chutes_app, images_app, api_keys_app, secrets_app
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -55,6 +56,14 @@ api_keys_app.command(
     name="create",
 )(create_api_key)
 app.add_typer(api_keys_app)
+
+# Secrets
+secrets_app.command(
+    help="Create a secret!",
+    no_args_is_help=True,
+    name="create",
+)(create_secret)
+app.add_typer(secrets_app)
 
 if __name__ == "__main__":
     app()
