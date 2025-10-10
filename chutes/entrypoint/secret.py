@@ -12,7 +12,9 @@ from chutes.util.auth import sign_request
 
 
 def create_secret(
-    purpose: str = typer.Option(..., help="the chute UUID or name (other use-cases in the future?)"),
+    purpose: str = typer.Option(
+        ..., help="the chute UUID or name (other use-cases in the future?)"
+    ),
     key: str = typer.Option(..., help="the secret key"),
     value: str = typer.Option(..., help="the secret value"),
     config_path: str = typer.Option(
@@ -38,7 +40,9 @@ def create_secret(
             ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    logger.success(f"Successfully created secret_id={data['secret_id']} for {purpose=}")
+                    logger.success(
+                        f"Successfully created secret_id={data['secret_id']} for {purpose=}"
+                    )
                 else:
                     logger.error(await response.json())
 

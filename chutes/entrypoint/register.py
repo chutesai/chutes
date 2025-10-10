@@ -194,7 +194,6 @@ def register(
                             "",
                             "[payment]",
                             f"address = {data['payment_address']}",
-                            f"developer_payment_address = {data['developer_payment_address']}",
                         ]
                     )
                     print(updated_config + "\n\n")
@@ -204,15 +203,6 @@ def register(
                         with open(CONFIG_PATH, "w") as outfile:
                             outfile.write(updated_config + "\n")
 
-                    # Try to get developer pricing.
-                    deposit_message = ""
-                    try:
-                        async with session.get("/developer_deposit") as resp:
-                            deposit_info = await resp.json()
-                            tao, usd = deposit_info["tao_estimate"], deposit_info["usd"]
-                            deposit_message = f"\n  Deposit amount is set to ${usd} USD, which is approximately {tao} tao."
-                    except Exception as price_exc:
-                        logger.warning(f"Unable to fetch developer deposit amount: {price_exc}")
                     logger.success(
                         "\n".join(
                             [
@@ -221,7 +211,6 @@ def register(
                                 f"Successfully registered username={data['username']}, with fingerprint {data['fingerprint']}",
                                 "Keep the fingerprint safe as this is account login credentials - do not lose or share it!",
                                 f"  To add balance for your account, send tao to: {data['payment_address']}",
-                                f"  To enable development (create images/chutes), send tao to: {data['developer_payment_address']}{deposit_message}",
                                 "*" * 80,
                             ]
                         )
