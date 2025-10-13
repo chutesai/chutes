@@ -1,3 +1,5 @@
+import os
+import re
 import time
 import random
 import aiohttp
@@ -87,3 +89,26 @@ async def warmup_model(chute, base_url: str = "http://127.0.0.1:10101"):
 
     except Exception as exc:
         logger.warning(f"Failed to warmup with {chute.concurrency=}: {str(exc)}")
+
+
+def set_default_cache_dirs(download_path):
+    for key in [
+        "TRITON_CACHE_DIR",
+        "TORCHINDUCTOR_CACHE_DIR",
+        "FLASHINFER_CACHE_DIR",
+        "XFORMERS_CACHE_DIR",
+        "DG_JIT_CACHE_DIR",
+        "SGL_DG_CACHE_DIR",
+        "SGLANG_DG_CACHE_DIR",
+    ]:
+        if not os.getenv(key):
+            os.environ[key] = os.path.join(download_path, f"_{key.lower()}")
+
+
+def set_nccl_flags(gpu_count, model_name):
+    if gpu_count > 1 and re.search(
+        "h[12]0|b[23]00|5090|l40s|6000 ada|a100|h800|pro 6000|sxm", model_name, re.I
+    ):
+        for key in ["NCCL_P2P_DISABLE", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL"]:
+            if key in os.environ:
+                del os.environ[key]

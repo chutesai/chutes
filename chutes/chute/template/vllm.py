@@ -9,6 +9,7 @@ from typing import Dict, Any, Callable, Literal, Optional, Union, List
 from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
+from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
@@ -338,6 +339,9 @@ def build_vllm_chute(
         if not download_path:
             raise Exception(f"Failed to download {model_name} after 5 attempts")
 
+        # Set torch inductor, flashinfer, etc., cache directories.
+        set_default_cache_dirs(download_path)
+
         try:
             from vllm.entrypoints.openai.serving_engine import BaseModelPath
         except Exception:
@@ -355,6 +359,11 @@ def build_vllm_chute(
         torch.cuda.set_device(0)
         multiprocessing.set_start_method("spawn", force=True)
 
+        # Enable NCCL for multi-GPU on some chips by default.
+        gpu_count = int(os.getenv("CUDA_DEVICE_COUNT", str(torch.cuda.device_count())))
+        gpu_model = torch.cuda.get_device_name(0)
+        set_nccl_flags(gpu_count, gpu_model)
+
         # Tool args.
         if chat_template := engine_args.pop("chat_template", None):
             if len(chat_template) <= 1024 and os.path.exists(chat_template):
@@ -368,7 +377,7 @@ def build_vllm_chute(
         )
 
         # Configure engine arguments
-        gpu_count = int(os.getenv("CUDA_DEVICE_COUNT", str(torch.cuda.device_count())))
+        engine_args.pop("tensor_parallel_size", None)
         engine_args = AsyncEngineArgs(
             model=model_name,
             tensor_parallel_size=gpu_count,

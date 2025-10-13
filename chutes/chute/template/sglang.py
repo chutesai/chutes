@@ -8,6 +8,7 @@ from typing import Dict, Callable, Literal, Optional, Union, List
 from chutes.image import Image
 from chutes.image.standard.sglang import SGLANG
 from chutes.chute import Chute, ChutePack, NodeSelector
+from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags
 
 
 class DefaultRole(Enum):
@@ -287,6 +288,12 @@ def build_sglang_chute(
         from huggingface_hub import snapshot_download
         from chutes.chute.template.helpers import warmup_model
 
+        # Enable NCCL for multi-GPU on some chips by default.
+        gpu_count = int(os.getenv("CUDA_DEVICE_COUNT", str(torch.cuda.device_count())))
+        gpu_model = torch.cuda.get_device_name(0)
+        set_nccl_flags(gpu_count, gpu_model)
+
+        # Download the model.
         download_path = None
         for attempt in range(5):
             download_kwargs = {}
@@ -305,6 +312,9 @@ def build_sglang_chute(
         if not download_path:
             raise Exception(f"Failed to download {model_name} after 5 attempts.")
 
+        # Set torch inductor, flashinfer, etc., cache directories.
+        set_default_cache_dirs(download_path)
+
         # Reset torch.
         torch.cuda.empty_cache()
         torch.cuda.init()
@@ -312,7 +322,6 @@ def build_sglang_chute(
         multiprocessing.set_start_method("spawn", force=True)
 
         # Configure engine arguments
-        gpu_count = int(os.getenv("CUDA_DEVICE_COUNT", str(torch.cuda.device_count())))
         if not engine_args:
             engine_args = ""
         engine_args += f" --tp {gpu_count}"
