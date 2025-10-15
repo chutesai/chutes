@@ -95,7 +95,7 @@ def set_default_cache_dirs(download_path):
     for key in [
         "TRITON_CACHE_DIR",
         "TORCHINDUCTOR_CACHE_DIR",
-        "FLASHINFER_CACHE_DIR",
+        "FLASHINFER_WORKSPACE_BASE",
         "XFORMERS_CACHE_DIR",
         "DG_JIT_CACHE_DIR",
         "SGL_DG_CACHE_DIR",
