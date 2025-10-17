@@ -342,6 +342,9 @@ def build_vllm_chute(
         # Set torch inductor, flashinfer, etc., cache directories.
         set_default_cache_dirs(download_path)
 
+        # Offline mode.
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
         try:
             from vllm.entrypoints.openai.serving_engine import BaseModelPath
         except Exception:

@@ -157,7 +157,7 @@ async def authenticate_request(request: Request) -> tuple[bytes, ORJSONResponse]
         any(not v for v in [miner_hotkey, validator_hotkey, nonce, signature])
         or validator_hotkey != miner()._validator_ss58
         or miner_hotkey != miner()._miner_ss58
-        or int(time.time()) - int(nonce) >= 30
+        or int(time.time()) - int(nonce) >= 540
     ):
         logger.warning(f"Missing auth data: {request.headers}")
         return None, ORJSONResponse(

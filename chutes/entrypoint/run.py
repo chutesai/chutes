@@ -819,18 +819,28 @@ def run_chute(
         async def activate_on_startup():
             if not activation_url or dev:
                 return
+            activated = False
             for attempt in range(10):
                 await asyncio.sleep(attempt)
                 try:
-                    async with aiohttp.ClientSession() as session:
+                    async with aiohttp.ClientSession(raise_for_status=True) as session:
                         async with session.get(
                             activation_url, headers={"Authorization": token}
                         ) as resp:
-                            logger.success(f"Instance activated: {await resp.text()}")
-                            break
+                            if resp.ok:
+                                logger.success(f"Instance activated: {await resp.text()}")
+                                activated = True
+                                break
+                            logger.error(
+                                f"Instance activation failed: {resp.status=}: {await resp.text()}"
+                            )
+                            if resp.status == 423:
+                                break
 
                 except Exception as e:
-                    logger.error(f"Activation failed: {e}")
+                    logger.error(f"Unexpected error attempting to activate instance: {str(e)}")
+            if not activated:
+                raise Exception("Failed to activate instance, aborting...")
 
         async def _handle_fs_hash_challenge(request: Request):
             nonlocal exclude_file

@@ -315,6 +315,9 @@ def build_sglang_chute(
         # Set torch inductor, flashinfer, etc., cache directories.
         set_default_cache_dirs(download_path)
 
+        # Offline mode, since we've already downloaded the model.
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
         # Reset torch.
         torch.cuda.empty_cache()
         torch.cuda.init()
