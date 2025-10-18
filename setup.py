@@ -58,7 +58,7 @@ setup(
         "pyudev",
         "aiofiles>=23",
         "semver",
-        "huggingface_hub[all]",
+        "huggingface_hub",
     ],
     extras_require={
         "dev": [

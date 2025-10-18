@@ -25,9 +25,7 @@ async def prompt_one(
     """
     Send a prompt to the model.
     """
-    async with aiohttp.ClientSession(
-        raise_for_status=True, timeout=aiohttp.ClientTimeout(0)
-    ) as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(0)) as session:
         started_at = time.time()
         if not prompt:
             prompt = (

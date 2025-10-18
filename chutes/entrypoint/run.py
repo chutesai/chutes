@@ -8,6 +8,7 @@ import asyncio
 import aiohttp
 import sys
 import jwt
+import ctypes
 import time
 import uuid
 import inspect
@@ -20,6 +21,7 @@ import subprocess
 import threading
 import traceback
 import orjson as json
+from functools import lru_cache
 from loguru import logger
 from typing import Optional, Any
 from datetime import datetime
@@ -41,6 +43,22 @@ from cryptography.hazmat.primitives import padding
 
 
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv")
+
+
+@lru_cache(maxsize=1)
+def get_netnanny_ref():
+    netnanny = ctypes.CDLL(None, ctypes.RTLD_GLOBAL)
+    netnanny.generate_challenge_response.argtypes = [ctypes.c_char_p]
+    netnanny.generate_challenge_response.restype = ctypes.c_char_p
+    netnanny.verify_challenge.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    netnanny.verify_challenge.restype = ctypes.c_int
+    netnanny.initialize_network_control.argtypes = []
+    netnanny.initialize_network_control.restype = ctypes.c_int
+    netnanny.unlock_network.argtypes = []
+    netnanny.unlock_network.restype = ctypes.c_int
+    netnanny.lock_network.argtypes = []
+    netnanny.lock_network.restype = ctypes.c_int
+    return netnanny
 
 
 def get_all_process_info():
@@ -125,6 +143,18 @@ async def process_fs_challenge(request: Request):
             offset=challenge.offset,
             length=challenge.length,
         ),
+        media_type="text/plain",
+    )
+
+
+async def process_netnanny_challenge(request: Request):
+    """
+    Process a NetNanny challenge.
+    """
+    challenge = request.state.decrypted.get("challenge", "foo")
+    netnanny = get_netnanny_ref()
+    return Response(
+        content=netnanny.generate_challenge_response(challenge),
         media_type="text/plain",
     )
 
@@ -716,6 +746,34 @@ def run_chute(
 
         chute = chute.chute if isinstance(chute, ChutePack) else chute
 
+        # Configure net-nanny.
+        try:
+            netnanny = get_netnanny_ref()
+            challenge = secrets.token_hex(16).encode("utf-8")
+            response = netnanny.generate_challenge_response(challenge)
+            if not response:
+                logger.error("NetNanny validation failed: no response")
+                sys.exit(137)
+            if netnanny.verify_challenge(challenge, response) != 1:
+                logger.error("NetNanny validation failed: invalid response")
+                sys.exit(137)
+            if netnanny.initialize_network_control() != 0:
+                logger.error("Failed to initialize network control")
+                sys.exit(137)
+            if netnanny.unlock_network() != 0:
+                logger.error("Failed to unlock network")
+                sys.exit(137)
+            logger.debug("NetNanny initialized and network unlocked")
+        except (OSError, AttributeError) as e:
+            logger.error(f"NetNanny library not properly loaded: {e}")
+            sys.exit(137)
+        if not dev and os.getenv("CHUTES_NETNANNY_UNSAFE", "") == "1":
+            logger.error("NetNanny library not loaded system wide!")
+            sys.exit(137)
+        if not dev and os.getpid() != 1:
+            logger.error(f"Must be PID 1 (container entrypoint), but got PID {os.getpid()}")
+            sys.exit(137)
+
         # Load token and port mappings from the environment.
         token = os.getenv("CHUTES_LAUNCH_JWT")
         port_mappings = [
@@ -799,6 +857,13 @@ def run_chute(
         # Run the chute's initialization code.
         await chute.initialize()
 
+        # Disable networking if specified.
+        if not chute.allow_external_egress:
+            if netnanny.lock_network() != 0:
+                logger.error("Failed to unlock network")
+                sys.exit(137)
+            logger.success("Successfully enabled NetNanny.")
+
         # Encryption/rate-limiting middleware setup.
         if dev:
             chute.add_middleware(DevMiddleware)
@@ -863,6 +928,7 @@ def run_chute(
         chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
         chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
         chute.add_api_route("/_fs_hash", _handle_fs_hash_challenge, methods=["POST"])
+        chute.add_api_route("/_netnanny_challenge", process_netnanny_challenge, methods=["POST"])
 
         # New envdump endpoints.
         import chutes.envdump as envdump

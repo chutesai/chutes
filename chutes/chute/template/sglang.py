@@ -206,6 +206,7 @@ def build_sglang_chute(
     max_instances: int = 1,
     scaling_threshold: float = 0.75,
     shutdown_after_seconds: int = 300,
+    allow_external_egress: bool = False,
 ):
     # Prevent revision in the code, must be in the top level helper args.
     m = re.search(r"--revision\s*=?\s*([^ ]+)", engine_args or "", re.I)
@@ -242,6 +243,7 @@ def build_sglang_chute(
         shutdown_after_seconds=shutdown_after_seconds,
         max_instances=max_instances,
         scaling_threshold=scaling_threshold,
+        allow_external_egress=allow_external_egress,
     )
 
     # Minimal input schema with defaults.
@@ -314,9 +316,6 @@ def build_sglang_chute(
 
         # Set torch inductor, flashinfer, etc., cache directories.
         set_default_cache_dirs(download_path)
-
-        # Offline mode, since we've already downloaded the model.
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
         # Reset torch.
         torch.cuda.empty_cache()

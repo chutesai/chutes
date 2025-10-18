@@ -240,6 +240,7 @@ def build_vllm_chute(
     max_instances: int = 1,
     scaling_threshold: float = 0.75,
     shutdown_after_seconds: int = 300,
+    allow_external_egress: bool = False,
 ):
     if engine_args.get("revision"):
         raise ValueError("revision is now a top-level argument to build_vllm_chute!")
@@ -273,6 +274,7 @@ def build_vllm_chute(
         shutdown_after_seconds=shutdown_after_seconds,
         max_instances=max_instances,
         scaling_threshold=scaling_threshold,
+        allow_external_egress=allow_external_egress,
     )
 
     # Minimal input schema with defaults.
@@ -341,9 +343,6 @@ def build_vllm_chute(
 
         # Set torch inductor, flashinfer, etc., cache directories.
         set_default_cache_dirs(download_path)
-
-        # Offline mode.
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
         try:
             from vllm.entrypoints.openai.serving_engine import BaseModelPath
