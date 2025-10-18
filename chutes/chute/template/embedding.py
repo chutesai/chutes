@@ -87,6 +87,7 @@ def build_embedding_chute(
     pooling_type: str = "auto",
     max_embed_len: int = 3072000,
     enable_chunked_processing: bool = True,
+    allow_external_egress: bool = False,
 ):
     """
     Build a vLLM embedding chute with enhanced chunked processing support.
@@ -146,6 +147,7 @@ def build_embedding_chute(
         shutdown_after_seconds=shutdown_after_seconds,
         max_instances=max_instances,
         scaling_threshold=scaling_threshold,
+        allow_external_egress=allow_external_egress,
     )
 
     @chute.on_startup()

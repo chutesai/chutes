@@ -43,6 +43,7 @@ class Chute(FastAPI):
         max_instances: int = 1,
         shutdown_after_seconds: int = 300,
         scaling_threshold: float = 0.75,
+        allow_external_egress: bool = True,
         **kwargs,
     ):
         from chutes.chute.cord import Cord
@@ -66,6 +67,7 @@ class Chute(FastAPI):
         self.max_instances = max_instances
         self.scaling_threshold = scaling_threshold
         self.shutdown_after_seconds = shutdown_after_seconds
+        self.allow_external_egress = allow_external_egress
         self.docs_url = None
         self.redoc_url = None
 

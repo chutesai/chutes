@@ -20,17 +20,20 @@ from chutes.crud import chutes_app, images_app, api_keys_app, secrets_app
 
 app = typer.Typer(no_args_is_help=True)
 
-# Inject the logging intercept library.
+# Inject our custom libs.
 if len(sys.argv) > 1 and sys.argv[1] == "run" and "CHUTE_LD_PRELOAD_INJECTED" not in os.environ:
     logger_lib = Path(__file__).parent / "chutes-logintercept.so"
-    if os.path.exists(logger_lib):
-        env = os.environ.copy()
-        env["LD_PRELOAD"] = logger_lib
-        env["CHUTE_LD_PRELOAD_INJECTED"] = "1"
-        [os.remove(f) for f in glob.glob("/tmp/_chute*log*")]
-        os.execve(sys.executable, [sys.executable] + sys.argv, env)
-    else:
-        logger.warning("Chutes log intercept lib not found, proceeding with standard logging")
+    netnanny_lib = Path(__file__).parent / "chutes-netnanny.so"
+    env = os.environ.copy()
+    injected_libs = env.get("LD_PRELOAD", "").split(":")
+    if netnanny_lib not in injected_libs:
+        logger.warning("NetNanny was not injected system wide")
+        env["CHUTES_NETNANNY_UNSAFE"] = "1"
+    # Forcefully replace LD_PRELOAD to only our libs.
+    env["LD_PRELOAD"] = ":".join([str(logger_lib), str(netnanny_lib)])
+    env["CHUTE_LD_PRELOAD_INJECTED"] = "1"
+    [os.remove(f) for f in glob.glob("/tmp/_chute*log*")]
+    os.execve(sys.executable, [sys.executable] + sys.argv, env)
 
 app.command(name="register", help="Create an account with the chutes run platform!")(register)
 app.command(help="Change your fingerprint!", no_args_is_help=True, name="refinger")(
