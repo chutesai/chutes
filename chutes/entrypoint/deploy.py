@@ -51,6 +51,7 @@ async def _deploy(
         "max_instances": chute.max_instances,
         "scaling_threshold": chute.scaling_threshold,
         "shutdown_after_seconds": chute.shutdown_after_seconds,
+        "allow_external_egress": chute.allow_external_egress,
         "revision": chute.revision,
         "cords": [
             {

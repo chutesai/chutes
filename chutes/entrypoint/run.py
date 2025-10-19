@@ -736,16 +736,6 @@ def run_chute(
         """
         Run the chute (or job).
         """
-        # Load the chute.
-        if dev:
-            os.environ["CHUTES_DEV_MODE"] = "true"
-        chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
-        if is_local():
-            logger.error("Cannot run chutes in local context!")
-            sys.exit(1)
-
-        chute = chute.chute if isinstance(chute, ChutePack) else chute
-
         # Configure net-nanny.
         try:
             netnanny = get_netnanny_ref()
@@ -773,6 +763,16 @@ def run_chute(
         if not dev and os.getpid() != 1:
             logger.error(f"Must be PID 1 (container entrypoint), but got PID {os.getpid()}")
             sys.exit(137)
+
+        # Load the chute.
+        if dev:
+            os.environ["CHUTES_DEV_MODE"] = "true"
+        chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
+        if is_local():
+            logger.error("Cannot run chutes in local context!")
+            sys.exit(1)
+
+        chute = chute.chute if isinstance(chute, ChutePack) else chute
 
         # Load token and port mappings from the environment.
         token = os.getenv("CHUTES_LAUNCH_JWT")

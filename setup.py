@@ -41,7 +41,7 @@ setup(
         "requests>=2.32",
         "loguru==0.7.2",
         "fastapi>=0.110",
-        "uvicorn>=0.32.0",
+        "uvicorn>=0.32.0,<0.38",
         "pydantic>=2.9,<3",
         "orjson>=3.10",
         "fickling==0.1.3",
