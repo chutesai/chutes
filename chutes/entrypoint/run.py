@@ -857,13 +857,6 @@ def run_chute(
         # Run the chute's initialization code.
         await chute.initialize()
 
-        # Disable networking if specified.
-        if not chute.allow_external_egress:
-            if netnanny.lock_network() != 0:
-                logger.error("Failed to unlock network")
-                sys.exit(137)
-            logger.success("Successfully enabled NetNanny.")
-
         # Encryption/rate-limiting middleware setup.
         if dev:
             chute.add_middleware(DevMiddleware)
@@ -883,6 +876,11 @@ def run_chute(
         @chute.on_event("startup")
         async def activate_on_startup():
             if not activation_url or dev:
+                if not chute.allow_external_egress:
+                    if netnanny.lock_network() != 0:
+                        logger.error("Failed to unlock network")
+                        sys.exit(137)
+                    logger.success("Successfully enabled NetNanny.")
                 return
             activated = False
             for attempt in range(10):
@@ -895,6 +893,11 @@ def run_chute(
                             if resp.ok:
                                 logger.success(f"Instance activated: {await resp.text()}")
                                 activated = True
+                                if not chute.allow_external_egress:
+                                    if netnanny.lock_network() != 0:
+                                        logger.error("Failed to unlock network")
+                                        sys.exit(137)
+                                    logger.success("Successfully enabled NetNanny.")
                                 break
                             logger.error(
                                 f"Instance activation failed: {resp.status=}: {await resp.text()}"

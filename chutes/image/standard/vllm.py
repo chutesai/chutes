@@ -1,16 +1,16 @@
 VLLM = "chutes/vllm:nightly-2025100201"
 
 # Example...
+# from chutes.image import Image
 # image = (
 #     Image(
 #         username="chutes",
 #         name="vllm",
-#         tag="0.9.2",
+#         tag="nightly-2025100200",
 #         readme="## vLLM - fast, flexible llm inference",
 #     )
 #     .from_base("parachutes/python:3.12")
-#     .run_command("pip install --no-cache wheel packaging qwen-vl-utils[decord]")
-#     .run_command("pip install --upgrade vllm==0.9.2")
-#     .run_command("pip install https://download.pytorch.org/whl/cu128/flashinfer/flashinfer_python-0.2.6.post1%2Bcu128torch2.7-cp39-abi3-linux_x86_64.whl")
-#     .run_command("pip install --no-cache blobfile datasets accelerate")
+#     .run_command("pip install --no-cache wheel packaging blobfile tiktoken 'qwen-vl-utils==0.0.14'")
+#     .run_command("pip install -U vllm --torch-backend=cu128 --extra-index-url https://wheels.vllm.ai/nightly flashinfer-python accelerate")
+#     .run_command("pip install -U git+https://github.com/huggingface/transformers.git 'numpy<2.3'")
 # )

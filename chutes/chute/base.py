@@ -6,7 +6,7 @@ import os
 import asyncio
 import uuid
 from loguru import logger
-from typing import Any, List
+from typing import List, Tuple, Callable
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict
 from chutes.image import Image
@@ -58,8 +58,9 @@ class Chute(FastAPI):
         self._image = image
         self._standard_template = standard_template
         self._node_selector = node_selector
-        self._startup_hooks = []
-        self._shutdown_hooks = []
+        # Store hooks as list of tuples: (priority, hook_function)
+        self._startup_hooks: List[Tuple[int, Callable]] = []
+        self._shutdown_hooks: List[Tuple[int, Callable]] = []
         self._cords: list[Cord] = []
         self._jobs: list[Job] = []
         self.revision = revision
@@ -107,9 +108,13 @@ class Chute(FastAPI):
     def standard_template(self):
         return self._standard_template
 
-    def _on_event(self, hooks: List[Any]):
+    def _on_event(self, hooks: List[Tuple[int, Callable]], priority: int = 50):
         """
         Decorator to register a function for an event type, e.g. startup/shutdown.
+
+        Args:
+            hooks: List to store the hook functions
+            priority: Execution priority (lower values execute first, default=50)
         """
 
         def decorator(func):
@@ -118,29 +123,57 @@ class Chute(FastAPI):
                 async def async_wrapper(*args, **kwargs):
                     return await func(self, *args, **kwargs)
 
-                hooks.append(async_wrapper)
+                hooks.append((priority, async_wrapper))
                 return async_wrapper
             else:
 
                 def sync_wrapper(*args, **kwargs):
                     func(self, *args, **kwargs)
 
-                hooks.append(sync_wrapper)
+                hooks.append((priority, sync_wrapper))
                 return sync_wrapper
 
         return decorator
 
-    def on_startup(self):
+    def on_startup(self, priority: int = 50):
         """
         Wrapper around _on_event for startup events.
-        """
-        return self._on_event(self._startup_hooks)
 
-    def on_shutdown(self):
+        Args:
+            priority: Execution priority (lower values execute first, default=50).
+                     Common values: 0-20 for early initialization,
+                     30-70 for normal operations, 80-100 for late initialization.
+
+        Example:
+            @app.on_startup(priority=10)  # Runs early
+            async def init_database(app):
+                await setup_db()
+
+            @app.on_startup(priority=90)  # Runs late
+            def log_startup(app):
+                logger.info("Application started")
+        """
+        return self._on_event(self._startup_hooks, priority)
+
+    def on_shutdown(self, priority: int = 50):
         """
         Wrapper around _on_event for shutdown events.
+
+        Args:
+            priority: Execution priority (lower values execute first, default=50).
+                     Common values: 0-20 for critical cleanup,
+                     30-70 for normal cleanup, 80-100 for final cleanup.
+
+        Example:
+            @app.on_shutdown(priority=10)  # Runs early
+            async def close_connections(app):
+                await close_db()
+
+            @app.on_shutdown(priority=90)  # Runs late
+            def final_logging(app):
+                logger.info("Shutdown complete")
         """
-        return self._on_event(self._shutdown_hooks)
+        return self._on_event(self._shutdown_hooks, priority)
 
     async def initialize(self):
         """
@@ -148,7 +181,11 @@ class Chute(FastAPI):
         """
         if not is_remote():
             return
-        for hook in self._startup_hooks:
+
+        # Sort hooks by priority before execution
+        sorted_startup_hooks = sorted(self._startup_hooks, key=lambda x: x[0])
+
+        for priority, hook in sorted_startup_hooks:
             if asyncio.iscoroutinefunction(hook):
                 await hook()
             else:
