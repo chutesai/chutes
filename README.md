@@ -279,6 +279,7 @@ chute = Chute(
         # include: Optional[List[str]] = None
         # exclude: Optional[List[str]] = None
     ),
+    allow_external_egress=False,
 )
 
 
@@ -347,6 +348,10 @@ You can also spin up completely arbitrary webservers and do "passthrough" cords 
 To see an example of passthrough functions and more complex functionality, see the [vllm template chute/helper](https://github.com/rayonlabs/chutes/blob/main/chutes/chute/template/vllm.py)
 
 It is also very important to specify `concurrency=N` in your `Chute(..)` constructor.  In many cases, e.g. vllm, this can be fairly high (based on max sequences), where in other cases without data parallelism or other cases with contention, you may wish to leave it at the default of 1.
+
+`allow_external_egress=(True|False)` is a flag indicating if network connections should be blocked after the chute has finished running all on_startup(..) hooks (e.g. downloading model weights, which obviously require networking). This won't block local connections, e.g. if you use sglang or comfyui or other daemon and proxy requests from the chute, those will be allowed, but for example you won't be able to fetch remote assets if this is disabled.
+
+By default, allow_external_egress is __true__ for all custom chutes and most templates, but __false__ for vllm, sglang, and embedding templates!! This means, for example, if you are running sglang/vllm for a vision language model such as qwen3-vl variants, you should add `allow_external_egress=True` to the `Chute(..)` constructor to allow `image_url`.
 
 ## 🧪 Local testing
 
