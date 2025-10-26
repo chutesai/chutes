@@ -327,6 +327,10 @@ def build_sglang_chute(
         if not engine_args:
             engine_args = ""
         engine_args += f" --tp {gpu_count}"
+        if "--enable-cache-report" not in engine_args:
+            engine_args += " --enable-cache-report"
+        if "--enable-return-hidden-states" not in engine_args:
+            engine_args += " --enable-return-hidden-states"
         if self.revision:
             engine_args += f" --revision {self.revision}"
         startup_command = f"python -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args}"
