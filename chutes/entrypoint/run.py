@@ -10,7 +10,6 @@ import sys
 import jwt
 import ssl
 import site
-import glob
 import ctypes
 import time
 import uuid
@@ -159,7 +158,7 @@ def process_netnanny_challenge(chute, request: Request):
     challenge = request.state.decrypted.get("challenge", "foo")
     netnanny = get_netnanny_ref()
     return {
-        "hash": netnanny.generate_challenge_response(challenge),
+        "hash": netnanny.generate_challenge_response(challenge.encode()),
         "allow_external_egress": chute.allow_external_egress,
     }
 
@@ -665,6 +664,7 @@ async def _gather_devices_and_initialize(
     port_mappings: list[dict[str, Any]],
     chute_module: Any,
     chute: Any,
+    inspecto_hash: str,
 ) -> tuple[str, str, dict[str, Any]]:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
@@ -690,25 +690,14 @@ async def _gather_devices_and_initialize(
     body["run_code"] = DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
     body["run_path"] = os.path.abspath(__file__)
     body["py_dirs"] = list(set(site.getsitepackages() + [site.getusersitepackages()]))
-    for d in body["py_dirs"]:
-        all_files = (
-            glob.glob(os.path.join(d, "*.pth"))
-            + glob.glob(os.path.join(d, "sitecustomize.py"))
-            + glob.glob(os.path.join(d, "usercustomize.py"))
-        )
-        if all_files:
-            logger.error(f"Found py overrides, aborting: {all_files=}")
-            sys.exit(137)
-
-    # Inspecto verification.
-    from chutes.inspecto import generate_hash
-
-    body["inspecto"] = await generate_hash(hash_type="chute", challenge=token_data["sub"])
+    body["inspecto"] = inspecto_hash
 
     # NetNanny configuration.
     netnanny = get_netnanny_ref()
     body["egress"] = chute.allow_external_egress
-    body["netnanny_hash"] = netnanny.generate_challenge_response(token_data["sub"])
+    body["netnanny_hash"] = netnanny.generate_challenge_response(
+        token_data["sub"].encode()
+    ).decode()
     body["fsv"] = await generate_filesystem_hash(token_data["sub"], exclude_file, mode="full")
 
     # Disk space.
@@ -846,6 +835,15 @@ def run_chute(
             logger.error(f"Must be PID 1 (container entrypoint), but got PID {os.getpid()}")
             sys.exit(137)
 
+        # Generate inspecto hash.
+        token = os.getenv("CHUTES_LAUNCH_JWT")
+        inspecto_hash = None
+        if not dev:
+            from chutes.inspecto import generate_hash
+
+            token_data = jwt.decode(token, options={"verify_signature": False})
+            inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
+
         # Load the chute.
         if dev:
             os.environ["CHUTES_DEV_MODE"] = "true"
@@ -857,7 +855,6 @@ def run_chute(
         chute = chute.chute if isinstance(chute, ChutePack) else chute
 
         # Load token and port mappings from the environment.
-        token = os.getenv("CHUTES_LAUNCH_JWT")
         port_mappings = [
             # Main chute pod.
             {
@@ -908,7 +905,12 @@ def run_chute(
                 symmetric_key,
                 response,
             ) = await _gather_devices_and_initialize(
-                token, external_host, port_mappings, chute_module, chute
+                token,
+                external_host,
+                port_mappings,
+                chute_module,
+                chute,
+                inspecto_hash,
             )
             job_id = response.get("job_id")
             job_method = response.get("job_method")
