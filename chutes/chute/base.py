@@ -43,7 +43,7 @@ class Chute(FastAPI):
         max_instances: int = 1,
         shutdown_after_seconds: int = 300,
         scaling_threshold: float = 0.75,
-        allow_external_egress: bool = True,
+        allow_external_egress: bool = False,
         **kwargs,
     ):
         from chutes.chute.cord import Cord

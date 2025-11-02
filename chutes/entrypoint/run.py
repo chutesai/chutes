@@ -8,9 +8,11 @@ import asyncio
 import aiohttp
 import sys
 import jwt
+import ssl
 import ctypes
 import time
 import uuid
+import errno
 import inspect
 import typer
 import psutil
@@ -21,6 +23,7 @@ import subprocess
 import threading
 import traceback
 import orjson as json
+from aiohttp import ClientError
 from functools import lru_cache
 from loguru import logger
 from typing import Optional, Any
@@ -147,16 +150,16 @@ async def process_fs_challenge(request: Request):
     )
 
 
-async def process_netnanny_challenge(request: Request):
+def process_netnanny_challenge(chute, request: Request):
     """
     Process a NetNanny challenge.
     """
     challenge = request.state.decrypted.get("challenge", "foo")
     netnanny = get_netnanny_ref()
-    return Response(
-        content=netnanny.generate_challenge_response(challenge),
-        media_type="text/plain",
-    )
+    return {
+        "hash": netnanny.generate_challenge_response(challenge),
+        "allow_external_egress": chute.allow_external_egress,
+    }
 
 
 async def handle_slurp(request: Request, chute_module):
@@ -215,11 +218,65 @@ async def get_token(request: Request) -> dict[str, Any]:
         "endpoint", "https://api.chutes.ai/instances/token_check"
     )
     salt = request.state.decrypted.get("salt", 42)
-    async with aiohttp.ClientSession(trust_env=True) as session:
+    async with aiohttp.ClientSession() as session:
         async with session.get(endpoint, params={"salt": salt}) as resp:
             if hasattr(request.state, "_encrypt"):
                 return {"json": request.state._encrypt(await resp.text())}
             return await resp.json()
+
+
+def _conn_err_info(exc: BaseException) -> str:
+    """
+    Update error info for connectivity tests to be readable.
+    """
+    if isinstance(exc, OSError):
+        name = {
+            errno.ENETUNREACH: "ENETUNREACH",
+            errno.EHOSTUNREACH: "EHOSTUNREACH",
+            errno.ECONNREFUSED: "ECONNREFUSED",
+            errno.ETIMEDOUT: "ETIMEDOUT",
+        }.get(exc.errno)
+        if name:
+            return f"{name}: {exc}"
+    return str(exc)
+
+
+async def check_connectivity(request: Request) -> dict[str, Any]:
+    """
+    Check if network access is allowed.
+    """
+    endpoint = request.state.decrypted.get(
+        "endpoint", "https://api.chutes.ai/instances/token_check"
+    )
+    timeout = aiohttp.ClientTimeout(total=8, connect=4, sock_connect=4, sock_read=6)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(endpoint) as resp:
+                data = await resp.read()
+                b64_body = base64.b64encode(data).decode("ascii")
+                return {
+                    "connection_established": True,
+                    "status_code": resp.status,
+                    "body": b64_body,
+                    "content_type": resp.headers.get("Content-Type"),
+                    "error": None,
+                }
+    except (asyncio.TimeoutError, ssl.SSLError, ClientError, OSError) as e:
+        return {
+            "connection_established": False,
+            "status_code": None,
+            "body": None,
+            "content_type": None,
+            "error": _conn_err_info(e),
+        }
+    except Exception as e:
+        return {
+            "connection_established": False,
+            "status_code": None,
+            "body": None,
+            "content_type": None,
+            "error": str(e),
+        }
 
 
 async def generate_filesystem_hash(salt: str, exclude_file: str, mode: str = "full"):
@@ -605,6 +662,7 @@ async def _gather_devices_and_initialize(
     host: str,
     port_mappings: list[dict[str, Any]],
     chute_module: Any,
+    chute: Any,
 ) -> tuple[str, str, dict[str, Any]]:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
@@ -627,6 +685,18 @@ async def _gather_devices_and_initialize(
     logger.info("Collecting full envdump...")
     body["env"] = DUMPER.dump(key)
     body["code"] = DUMPER.slurp(key, exclude_file, 0, 0)
+    body["run_code"] = DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
+    body["run_path"] = os.path.abspath(__file__)
+
+    # Inspecto verification.
+    from chutes.inspecto import generate_hash
+
+    body["inspecto"] = await generate_hash(hash_type="chute", challenge=token_data["sub"])
+
+    # NetNanny configuration.
+    netnanny = get_netnanny_ref()
+    body["egress"] = chute.allow_external_egress
+    body["netnanny_hash"] = netnanny.generate_challenge_response(token_data["sub"])
     body["fsv"] = await generate_filesystem_hash(token_data["sub"], exclude_file, mode="full")
 
     # Disk space.
@@ -826,7 +896,7 @@ def run_chute(
                 symmetric_key,
                 response,
             ) = await _gather_devices_and_initialize(
-                token, external_host, port_mappings, chute_module
+                token, external_host, port_mappings, chute_module, chute
             )
             job_id = response.get("job_id")
             job_method = response.get("job_method")
@@ -931,7 +1001,12 @@ def run_chute(
         chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
         chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
         chute.add_api_route("/_fs_hash", _handle_fs_hash_challenge, methods=["POST"])
-        chute.add_api_route("/_netnanny_challenge", process_netnanny_challenge, methods=["POST"])
+        chute.add_api_route("/_connectivity", check_connectivity, methods=["POST"])
+
+        def _handle_nn(request: Request):
+            return process_netnanny_challenge(chute, request)
+
+        chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
 
         # New envdump endpoints.
         import chutes.envdump as envdump
