@@ -35,6 +35,7 @@ from uvicorn import Config, Server
 from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from chutes.entrypoint.verify import GpuVerifier
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import load_chute, miner, authenticate_request
@@ -165,7 +166,6 @@ def process_netnanny_challenge(chute, request: Request):
         "hash": netnanny.generate_challenge_response(challenge.encode()),
         "allow_external_egress": chute.allow_external_egress,
     }
-
 
 async def handle_slurp(request: Request, chute_module):
     """
@@ -685,8 +685,6 @@ async def _gather_devices_and_initialize(
     # Build the GraVal request based on the GPUs that were actually assigned to this pod.
     logger.info("Collecting GPUs and port mappings...")
     body = {"gpus": [], "port_mappings": port_mappings, "host": host}
-    for idx in range(miner()._device_count):
-        body["gpus"].append(miner().get_device_info(idx))
     token_data = jwt.decode(token, options={"verify_signature": False})
     url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
@@ -725,73 +723,18 @@ async def _gather_devices_and_initialize(
         logger.error(f"Error checking disk space: {e}")
         raise Exception(f"Failed to verify disk space availability: {e}")
 
-    # Fetch the challenges.
-    async with aiohttp.ClientSession(raise_for_status=True) as session:
-        logger.info(f"Collected all environment data, submitting to validator: {url}")
-        async with session.post(url, headers={"Authorization": token}, json=body) as resp:
-            init_params = await resp.json()
-            logger.success(f"Successfully fetched initialization params: {init_params=}")
+    # Start up dummy sockets to test port mappings.
+    dummy_socket_threads = []
+    for port_map in port_mappings:
+        if port_map.get("default"):
+            continue
+        dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
 
-            # First, we initialize graval on all GPUs from the provided seed.
-            miner()._graval_seed = init_params["seed"]
-            iterations = init_params.get("iterations", 1)
-            logger.info(f"Generating proofs from seed={miner()._graval_seed}")
-            proofs = miner().prove(miner()._graval_seed, iterations=iterations)
+    
+    verifier = GpuVerifier.create(token_data, url, body)
+    symmetric_key, response = await verifier.verify_devices()
 
-            # Use GraVal to extract the symmetric key from the challenge.
-            sym_key = init_params["symmetric_key"]
-            bytes_ = base64.b64decode(sym_key["ciphertext"])
-            iv = bytes_[:16]
-            cipher = bytes_[16:]
-            logger.info("Decrypting payload via proof challenge matrix...")
-            device_index = [
-                miner().get_device_info(i)["uuid"] for i in range(miner()._device_count)
-            ].index(sym_key["uuid"])
-            symmetric_key = bytes.fromhex(
-                miner().decrypt(
-                    init_params["seed"],
-                    cipher,
-                    iv,
-                    len(cipher),
-                    device_index,
-                )
-            )
-
-            # Now, we can respond to the URL by encrypting a payload with the symmetric key and sending it back.
-            plaintext = sym_key["response_plaintext"]
-            new_iv, response_cipher = encrypt_response(symmetric_key, plaintext)
-            logger.success(
-                f"Completed PoVW challenge, sending back: {plaintext=} "
-                f"as {response_cipher=} where iv={new_iv.hex()}"
-            )
-
-            # Start up dummy sockets to test port mappings.
-            dummy_socket_threads = []
-            for port_map in port_mappings:
-                if port_map.get("default"):
-                    continue
-                dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
-
-            # Post the response to the challenge, which returns job data (if any).
-            async with session.put(
-                url,
-                headers={"Authorization": token},
-                json={
-                    "response": response_cipher,
-                    "iv": new_iv.hex(),
-                    "proof": proofs,
-                },
-                raise_for_status=False,
-            ) as resp:
-                if resp.ok:
-                    logger.success("Successfully negotiated challenge response!")
-                    return egress, symmetric_key, await resp.json()
-                else:
-                    # log down the reason of failure to the challenge
-                    detail = await resp.text(encoding="utf-8", errors="replace")
-                    logger.error(f"Failed: {resp.reason} ({resp.status}) {detail}")
-                    resp.raise_for_status()
-
+    return egress, symmetric_key, response
 
 # Run a chute (which can be an async job or otherwise long-running process).
 def run_chute(

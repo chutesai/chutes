@@ -65,6 +65,7 @@ setup(
             "black",
             "flake8",
             "wheel",
+            "pytest"
         ],
     },
     classifiers=[

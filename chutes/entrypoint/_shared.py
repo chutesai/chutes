@@ -1,5 +1,7 @@
+import base64
 import os
 import re
+import secrets
 import sys
 import time
 import hashlib
@@ -16,7 +18,9 @@ from chutes.config import get_config
 from chutes.util.auth import sign_request
 from fastapi import Request, status
 from fastapi.responses import ORJSONResponse
-
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import padding
 
 CHUTE_REF_RE = re.compile(r"^[a-z][a-z0-9_]*:[a-z][a-z0-9_]+$", re.I)
 
@@ -180,3 +184,20 @@ async def authenticate_request(request: Request) -> tuple[bytes, ORJSONResponse]
             content={"detail": "go away (sig)"},
         )
     return body_bytes, None
+
+def encrypt_response(symmetric_key, plaintext):
+    """
+    Encrypt the response using AES-CBC with PKCS7 padding.
+    """
+    padder = padding.PKCS7(128).padder()
+    new_iv = secrets.token_bytes(16)
+    cipher = Cipher(
+        algorithms.AES(symmetric_key),
+        modes.CBC(new_iv),
+        backend=default_backend(),
+    )
+    padded_data = padder.update(plaintext.encode()) + padder.finalize()
+    encryptor = cipher.encryptor()
+    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+    response_cipher = base64.b64encode(encrypted_data).decode()
+    return new_iv, response_cipher
