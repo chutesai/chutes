@@ -9,6 +9,8 @@ import aiohttp
 import sys
 import jwt
 import ssl
+import site
+import glob
 import ctypes
 import time
 import uuid
@@ -687,6 +689,16 @@ async def _gather_devices_and_initialize(
     body["code"] = DUMPER.slurp(key, exclude_file, 0, 0)
     body["run_code"] = DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
     body["run_path"] = os.path.abspath(__file__)
+    body["py_dirs"] = list(set(site.getsitepackages() + [site.getusersitepackages()]))
+    for d in body["py_dirs"]:
+        all_files = (
+            glob.glob(os.path.join(d, "*.pth"))
+            + glob.glob(os.path.join(d, "sitecustomize.py"))
+            + glob.glob(os.path.join(d, "usercustomize.py"))
+        )
+        if all_files:
+            logger.error(f"Found py overrides, aborting: {all_files=}")
+            sys.exit(137)
 
     # Inspecto verification.
     from chutes.inspecto import generate_hash
