@@ -808,6 +808,10 @@ def run_chute(
         """
         Run the chute (or job).
         """
+        if generate_inspecto_hash and (miner_ss58 or validator_ss58):
+            logger.error("Cannot set --generate-inspecto-hash for real runtime")
+            sys.exit(137)
+
         # Configure net-nanny.
         netnanny = get_netnanny_ref()
         challenge = secrets.token_hex(16).encode("utf-8")
