@@ -802,51 +802,58 @@ def run_chute(
     dev: bool = typer.Option(False, help="dev/local mode"),
     dev_job_data_path: str = typer.Option(None, help="dev mode: job payload JSON path"),
     dev_job_method: str = typer.Option(None, help="dev mode: job method"),
+    generate_inspecto_hash: bool = typer.Option(False, help="only generate inspecto hash and exit"),
 ):
     async def _run_chute():
         """
         Run the chute (or job).
         """
         # Configure net-nanny.
-        try:
-            netnanny = get_netnanny_ref()
-            challenge = secrets.token_hex(16).encode("utf-8")
-            response = netnanny.generate_challenge_response(challenge)
-            if not response:
-                logger.error("NetNanny validation failed: no response")
+        netnanny = get_netnanny_ref()
+        challenge = secrets.token_hex(16).encode("utf-8")
+        response = netnanny.generate_challenge_response(challenge)
+        if not generate_inspecto_hash:
+            try:
+                if not response:
+                    logger.error("NetNanny validation failed: no response")
+                    sys.exit(137)
+                if netnanny.verify(challenge, response, 0) != 1:
+                    logger.error("NetNanny validation failed: invalid response")
+                    sys.exit(137)
+                if netnanny.initialize_network_control() != 0:
+                    logger.error("Failed to initialize network control")
+                    sys.exit(137)
+                if netnanny.unlock_network() != 0:
+                    logger.error("Failed to unlock network")
+                    sys.exit(137)
+                response = netnanny.generate_challenge_response(challenge)
+                if netnanny.verify(challenge, response, 1) != 1:
+                    logger.error("NetNanny validation failed: invalid response")
+                    sys.exit(137)
+                logger.debug("NetNanny initialized and network unlocked")
+            except (OSError, AttributeError) as e:
+                logger.error(f"NetNanny library not properly loaded: {e}")
                 sys.exit(137)
-            if netnanny.verify(challenge, response, 0) != 1:
-                logger.error("NetNanny validation failed: invalid response")
+            if not dev and os.getenv("CHUTES_NETNANNY_UNSAFE", "") == "1":
+                logger.error("NetNanny library not loaded system wide!")
                 sys.exit(137)
-            if netnanny.initialize_network_control() != 0:
-                logger.error("Failed to initialize network control")
+            if not dev and os.getpid() != 1:
+                logger.error(f"Must be PID 1 (container entrypoint), but got PID {os.getpid()}")
                 sys.exit(137)
-            if netnanny.unlock_network() != 0:
-                logger.error("Failed to unlock network")
-                sys.exit(137)
-            response = netnanny.generate_challenge_response(challenge)
-            if netnanny.verify(challenge, response, 1) != 1:
-                logger.error("NetNanny validation failed: invalid response")
-                sys.exit(137)
-            logger.debug("NetNanny initialized and network unlocked")
-        except (OSError, AttributeError) as e:
-            logger.error(f"NetNanny library not properly loaded: {e}")
-            sys.exit(137)
-        if not dev and os.getenv("CHUTES_NETNANNY_UNSAFE", "") == "1":
-            logger.error("NetNanny library not loaded system wide!")
-            sys.exit(137)
-        if not dev and os.getpid() != 1:
-            logger.error(f"Must be PID 1 (container entrypoint), but got PID {os.getpid()}")
-            sys.exit(137)
 
         # Generate inspecto hash.
         token = os.getenv("CHUTES_LAUNCH_JWT")
         inspecto_hash = None
-        if not dev:
-            from chutes.inspecto import generate_hash
 
+        from chutes.inspecto import generate_hash
+
+        if not (dev or generate_inspecto_hash):
             token_data = jwt.decode(token, options={"verify_signature": False})
             inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
+        elif generate_inspecto_hash:
+            inspecto_hash = await generate_hash(hash_type="base")
+            print(inspecto_hash)
+            return
 
         # Load the chute.
         if dev:
@@ -1112,10 +1119,14 @@ def run_chute(
         """
         from chutes.entrypoint.logger import launch_server
 
-        if not dev:
+        if not (dev or generate_inspecto_hash):
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58
             miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
+
+        if generate_inspecto_hash:
+            await _run_chute()
+            return
 
         def run_logging_server():
             loop = asyncio.new_event_loop()
