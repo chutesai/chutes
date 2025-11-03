@@ -54,8 +54,8 @@ def get_netnanny_ref():
     netnanny = ctypes.CDLL(None, ctypes.RTLD_GLOBAL)
     netnanny.generate_challenge_response.argtypes = [ctypes.c_char_p]
     netnanny.generate_challenge_response.restype = ctypes.c_char_p
-    netnanny.verify_challenge.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-    netnanny.verify_challenge.restype = ctypes.c_int
+    netnanny.verify.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint8]
+    netnanny.verify.restype = ctypes.c_int
     netnanny.initialize_network_control.argtypes = []
     netnanny.initialize_network_control.restype = ctypes.c_int
     netnanny.unlock_network.argtypes = []
@@ -815,7 +815,7 @@ def run_chute(
             if not response:
                 logger.error("NetNanny validation failed: no response")
                 sys.exit(137)
-            if netnanny.verify_challenge(challenge, response) != 1:
+            if netnanny.verify(challenge, response, 0) != 1:
                 logger.error("NetNanny validation failed: invalid response")
                 sys.exit(137)
             if netnanny.initialize_network_control() != 0:
@@ -823,6 +823,10 @@ def run_chute(
                 sys.exit(137)
             if netnanny.unlock_network() != 0:
                 logger.error("Failed to unlock network")
+                sys.exit(137)
+            response = netnanny.generate_challenge_response(challenge)
+            if netnanny.verify(challenge, response, 1) != 1:
+                logger.error("NetNanny validation failed: invalid response")
                 sys.exit(137)
             logger.debug("NetNanny initialized and network unlocked")
         except (OSError, AttributeError) as e:
