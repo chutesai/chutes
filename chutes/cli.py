@@ -21,7 +21,12 @@ from chutes.crud import chutes_app, images_app, api_keys_app, secrets_app
 app = typer.Typer(no_args_is_help=True)
 
 # Inject our custom libs.
-if len(sys.argv) > 1 and sys.argv[1] == "run" and "CHUTE_LD_PRELOAD_INJECTED" not in os.environ:
+if (
+    len(sys.argv) > 1
+    and sys.argv[1] == "run"
+    and "CHUTE_LD_PRELOAD_INJECTED" not in os.environ
+    and "--dev" not in sys.argv
+):
     logger_lib = Path(__file__).parent / "chutes-logintercept.so"
     netnanny_lib = Path(__file__).parent / "chutes-netnanny.so"
     env = os.environ.copy()

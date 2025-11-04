@@ -813,10 +813,10 @@ def run_chute(
             sys.exit(137)
 
         # Configure net-nanny.
-        netnanny = get_netnanny_ref()
-        challenge = secrets.token_hex(16).encode("utf-8")
-        response = netnanny.generate_challenge_response(challenge)
+        netnanny = get_netnanny_ref() if not dev else None
         if not (dev or generate_inspecto_hash):
+            challenge = secrets.token_hex(16).encode("utf-8")
+            response = netnanny.generate_challenge_response(challenge)
             try:
                 if not response:
                     logger.error("NetNanny validation failed: no response")
@@ -974,13 +974,14 @@ def run_chute(
 
         @chute.on_event("startup")
         async def activate_on_startup():
-            if not activation_url or dev:
+            if not dev:
                 if not chute.allow_external_egress:
                     if netnanny.lock_network() != 0:
                         logger.error("Failed to unlock network")
                         sys.exit(137)
-                    logger.success("Successfully enabled NetNanny.")
-                return
+                    logger.success("Successfully enabled NetNanny network lock.")
+                if not activation_url:
+                    return
             activated = False
             for attempt in range(10):
                 await asyncio.sleep(attempt)
@@ -992,11 +993,6 @@ def run_chute(
                             if resp.ok:
                                 logger.success(f"Instance activated: {await resp.text()}")
                                 activated = True
-                                if not chute.allow_external_egress:
-                                    if netnanny.lock_network() != 0:
-                                        logger.error("Failed to unlock network")
-                                        sys.exit(137)
-                                    logger.success("Successfully enabled NetNanny.")
                                 break
                             logger.error(
                                 f"Instance activation failed: {resp.status=}: {await resp.text()}"
