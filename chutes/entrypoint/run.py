@@ -974,12 +974,6 @@ def run_chute(
 
         @chute.on_event("startup")
         async def activate_on_startup():
-            if not dev:
-                if not chute.allow_external_egress:
-                    if netnanny.lock_network() != 0:
-                        logger.error("Failed to unlock network")
-                        sys.exit(137)
-                    logger.success("Successfully enabled NetNanny network lock.")
             if not activation_url:
                 return
             activated = False
@@ -993,6 +987,11 @@ def run_chute(
                             if resp.ok:
                                 logger.success(f"Instance activated: {await resp.text()}")
                                 activated = True
+                                if not dev and not chute.allow_external_egress:
+                                    if netnanny.lock_network() != 0:
+                                        logger.error("Failed to unlock network")
+                                        sys.exit(137)
+                                    logger.success("Successfully enabled NetNanny network lock.")
                                 break
                             logger.error(
                                 f"Instance activation failed: {resp.status=}: {await resp.text()}"
