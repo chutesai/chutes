@@ -816,7 +816,7 @@ def run_chute(
         netnanny = get_netnanny_ref()
         challenge = secrets.token_hex(16).encode("utf-8")
         response = netnanny.generate_challenge_response(challenge)
-        if not generate_inspecto_hash:
+        if not (dev or generate_inspecto_hash):
             try:
                 if not response:
                     logger.error("NetNanny validation failed: no response")
