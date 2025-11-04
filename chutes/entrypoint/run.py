@@ -980,8 +980,8 @@ def run_chute(
                         logger.error("Failed to unlock network")
                         sys.exit(137)
                     logger.success("Successfully enabled NetNanny network lock.")
-                if not activation_url:
-                    return
+            if not activation_url:
+                return
             activated = False
             for attempt in range(10):
                 await asyncio.sleep(attempt)
