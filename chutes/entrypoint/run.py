@@ -464,6 +464,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_sig",
                     "/_toca",
                     "/_eslurp",
+                    "/_connectivity",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -510,6 +511,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_sig",
                 "/_toca",
                 "/_eslurp",
+                "/_connectivity",
             )
         ):
             return await self._dispatch(request, call_next)
