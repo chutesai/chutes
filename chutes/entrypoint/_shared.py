@@ -12,6 +12,7 @@ import importlib
 import importlib.util
 from io import BytesIO
 from functools import lru_cache
+import jwt
 from loguru import logger
 from typing import List, Dict, Any, Tuple
 from chutes.config import get_config
@@ -31,6 +32,23 @@ def miner():
 
     return Miner()
 
+@lru_cache(maxsize=1)
+def get_launch_token():
+    token = os.getenv("CHUTES_LAUNCH_JWT")
+    return token
+
+@lru_cache(maxsize=1)
+def get_launch_token_data():
+    token_data = {}
+    token = get_launch_token()
+    if token:
+        token_data = jwt.decode(token, options={"verify_signature": False})
+    return token_data
+
+@lru_cache(maxsize=1)
+def is_tee_env():
+    token_data = get_launch_token_data()
+    return token_data.get("env_type", "graval") == "tee"
 
 class FakeStreamWriter:
     """

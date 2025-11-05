@@ -9,25 +9,24 @@ from urllib.parse import urljoin, urlparse
 import aiohttp
 from loguru import logger
 
-from chutes.entrypoint._shared import encrypt_response, miner
+from chutes.entrypoint._shared import encrypt_response, get_launch_token, get_launch_token_data, is_tee_env, miner
 from chutes.util.auth import sign_request
 
 
 class GpuVerifier:
 
-    def __init__(self, token_data, url, body):
-        self._token_data = token_data
+    def __init__(self, url, body):
+        self._token = get_launch_token()
         self._url = url
         self._body = body
 
     @classmethod
-    def create(cls, token_data, url, body) -> "GpuVerifier":
+    def create(cls, url, body) -> "GpuVerifier":
         
-        env_type = token_data.get("env_type", "graval")
-        if env_type == "tee":
-            return TeeGpuVerifier(token_data, url, body)
+        if is_tee_env():
+            return TeeGpuVerifier(url, body)
         else:
-            return GravalGpuVerifier(token_data, url, body)
+            return GravalGpuVerifier(url, body)
 
     @abstractmethod
     async def verify_devices(self):
@@ -37,7 +36,7 @@ class GravalGpuVerifier(GpuVerifier):
     
     async def verify_devices(self):
         # Fetch the challenges.
-        token = self._token_data
+        token = self._token
         url = self._url
         body = self._body
 
@@ -148,37 +147,46 @@ class TeeGpuVerifier(GpuVerifier):
 
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         
-        url = f"https://attestation-service.attestation-system.svc.cluster.local.:8443/server/nvtrust/evidence"
+        url = "https://attestation-service-internal.attestation-system.svc.cluster.local.:8443/server/nvtrust/evidence"
+        nonce = await self._get_nonce()
         params = {
-            "name": "chute",
-            "nonce": self._get_nonce(),
+            "name": os.environ.get("HOSTNAME"),
+            "nonce": nonce,
             "gpu_ids": os.environ.get("NVIDIA_VISIBLE_DEVICES")
         }
         async with aiohttp.ClientSession(connector=connector, raise_for_status=True) as http_session:
             async with http_session.get(url, params=params) as resp:
                 logger.success(f"Successfully retrieved attestation evidence.")
-                return await resp.text()
+                evidence = json.loads(await resp.json())
+                return nonce, evidence
 
     async def verify_devices(self):
-        # Fetch the challenges.
-        token = self._token_data
-        url = self._url
+        token = self._token
+        url = urljoin(f"{self._url}/", "attest")
         body = self._body
 
         body["gpus"] = await self.gather_gpus()
-        body["gpu_evidence"] = await self._get_gpu_evidence()
+        nonce, evidence = await self._get_gpu_evidence()
+        body["gpu_evidence"] = evidence
         async with aiohttp.ClientSession(raise_for_status=True) as session:
+            headers = {
+                "Authorization": token,
+                "X-Chutes-Nonce": nonce
+            }
             logger.info(f"Collected all environment data, submitting to validator: {url}")
-            async with session.post(url, headers={"Authorization": token}, json=body) as resp:
+            async with session.post(url, headers=headers, json=body) as resp:
                 data = await resp.json()
                 return data['symmetric_key'], data
 
     async def gather_gpus(self):
         devices = []
         async with self._attestation_session() as http_session:
-            headers, _ = sign_request(purpose="devices")
+            url = "https://attestation-service-internal.attestation-system.svc.cluster.local.:8443/server/devices"
+            params = {
+                "gpu_ids": os.environ.get("NVIDIA_VISIBLE_DEVICES")
+            }
             async with http_session.get(
-                f"https://attestation-service.attesation-system.svc.cluster.local.:8443/server/devices", headers=headers
+                url=url, params=params
             ) as resp:
                 devices = await resp.json()
                 logger.success(f"Retrieved {len(devices)} GPUs.")

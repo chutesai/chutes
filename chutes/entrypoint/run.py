@@ -38,7 +38,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from chutes.entrypoint.verify import GpuVerifier
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
-from chutes.entrypoint._shared import load_chute, miner, authenticate_request
+from chutes.entrypoint._shared import get_launch_token, get_launch_token_data, is_tee_env, load_chute, miner, authenticate_request
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
@@ -671,7 +671,6 @@ def start_udp_dummy(port, symmetric_key, response_plaintext):
 
 
 async def _gather_devices_and_initialize(
-    token: str,
     host: str,
     port_mappings: list[dict[str, Any]],
     chute_abspath: str,
@@ -680,21 +679,23 @@ async def _gather_devices_and_initialize(
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
-    from chutes.envdump import DUMPER
 
     # Build the GraVal request based on the GPUs that were actually assigned to this pod.
     logger.info("Collecting GPUs and port mappings...")
     body = {"gpus": [], "port_mappings": port_mappings, "host": host}
-    token_data = jwt.decode(token, options={"verify_signature": False})
+    token_data = get_launch_token_data()
     url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
 
-    logger.info("Collecting full envdump...")
-    body["env"] = DUMPER.dump(key)
-    body["run_code"] = DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
+    if not is_tee_env():
+        from chutes.envdump import DUMPER
+        logger.info("Collecting full envdump...")
+        body["env"] = DUMPER.dump(key)
+        body["run_code"] = DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
+        body["inspecto"] = inspecto_hash
+
     body["run_path"] = os.path.abspath(__file__)
     body["py_dirs"] = list(set(site.getsitepackages() + [site.getusersitepackages()]))
-    body["inspecto"] = inspecto_hash
 
     # NetNanny configuration.
     netnanny = get_netnanny_ref()
@@ -730,8 +731,8 @@ async def _gather_devices_and_initialize(
             continue
         dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
 
-    
-    verifier = GpuVerifier.create(token_data, url, body)
+    # Verify GPUs for symmetric key
+    verifier = GpuVerifier.create(url, body)
     symmetric_key, response = await verifier.verify_devices()
 
     return egress, symmetric_key, response
@@ -849,18 +850,19 @@ def run_chute(
                 sys.exit(137)
 
         # Generate inspecto hash.
-        token = os.getenv("CHUTES_LAUNCH_JWT")
+        token = get_launch_token()
         inspecto_hash = None
 
-        from chutes.inspecto import generate_hash
+        if not is_tee_env():
+            from chutes.inspecto import generate_hash
 
-        if not (dev or generate_inspecto_hash):
-            token_data = jwt.decode(token, options={"verify_signature": False})
-            inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
-        elif generate_inspecto_hash:
-            inspecto_hash = await generate_hash(hash_type="base")
-            print(inspecto_hash)
-            return
+            if not (dev or generate_inspecto_hash):
+                token_data = get_launch_token_data()
+                inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
+            elif generate_inspecto_hash:
+                inspecto_hash = await generate_hash(hash_type="base")
+                print(inspecto_hash)
+                return
 
         if dev:
             os.environ["CHUTES_DEV_MODE"] = "true"
@@ -922,7 +924,6 @@ def run_chute(
                 symmetric_key,
                 response,
             ) = await _gather_devices_and_initialize(
-                token,
                 external_host,
                 port_mappings,
                 chute_abspath,
@@ -1136,10 +1137,10 @@ def run_chute(
         """
         from chutes.entrypoint.logger import launch_server
 
-        if not (dev or generate_inspecto_hash):
-            miner()._miner_ss58 = miner_ss58
-            miner()._validator_ss58 = validator_ss58
-            miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
+        if not (dev or generate_inspecto_hash) and not is_tee_env():
+                miner()._miner_ss58 = miner_ss58
+                miner()._validator_ss58 = validator_ss58
+                miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
         if generate_inspecto_hash:
             await _run_chute()
