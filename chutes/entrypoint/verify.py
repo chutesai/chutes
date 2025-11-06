@@ -152,7 +152,7 @@ class TeeGpuVerifier(GpuVerifier):
         params = {
             "name": os.environ.get("HOSTNAME"),
             "nonce": nonce,
-            "gpu_ids": os.environ.get("NVIDIA_VISIBLE_DEVICES")
+            "gpu_ids": os.environ.get("CHUTES_NVIDIA_DEVICES")
         }
         async with aiohttp.ClientSession(connector=connector, raise_for_status=True) as http_session:
             async with http_session.get(url, params=params) as resp:
@@ -175,6 +175,7 @@ class TeeGpuVerifier(GpuVerifier):
             }
             logger.info(f"Collected all environment data, submitting to validator: {url}")
             async with session.post(url, headers=headers, json=body) as resp:
+                logger.info("Successfully verified instance with validator.")
                 data = await resp.json()
                 return data['symmetric_key'], data
 
@@ -183,7 +184,7 @@ class TeeGpuVerifier(GpuVerifier):
         async with self._attestation_session() as http_session:
             url = "https://attestation-service-internal.attestation-system.svc.cluster.local.:8443/server/devices"
             params = {
-                "gpu_ids": os.environ.get("NVIDIA_VISIBLE_DEVICES")
+                "gpu_ids": os.environ.get("CHUTES_NVIDIA_DEVICES")
             }
             async with http_session.get(
                 url=url, params=params
