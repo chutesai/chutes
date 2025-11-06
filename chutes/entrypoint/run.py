@@ -465,6 +465,9 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_toca",
                     "/_eslurp",
                     "/_connectivity",
+                    "/_netnanny_challenge",
+                    "/_fs_hash",
+                    "/_fs_challenge",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -512,6 +515,9 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_toca",
                 "/_eslurp",
                 "/_connectivity",
+                "/_netnanny_challenge",
+                "/_fs_hash",
+                "/_fs_challenge",
             )
         ):
             return await self._dispatch(request, call_next)
