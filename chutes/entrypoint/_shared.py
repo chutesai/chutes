@@ -22,15 +22,24 @@ from fastapi.responses import ORJSONResponse
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
+from substrateinterface import Keypair
 
 CHUTE_REF_RE = re.compile(r"^[a-z][a-z0-9_]*:[a-z][a-z0-9_]+$", re.I)
 
+class TeeMiner:
+    def __init__(self):
+        self._validator_ss58: str | None = None
+        self._miner_ss58: str | None = None
+        self._keypair: Keypair | None = None
 
 @lru_cache(maxsize=1)
 def miner():
-    from graval import Miner
+    if is_tee_env():
+        return TeeMiner()
+    else:
+        from graval import Miner
 
-    return Miner()
+        return Miner()
 
 @lru_cache(maxsize=1)
 def get_launch_token():

@@ -1052,12 +1052,13 @@ def run_chute(
         chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
 
         # New envdump endpoints.
-        import chutes.envdump as envdump
+        if not is_tee_env():
+            import chutes.envdump as envdump
 
-        chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
-        chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
-        chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
-        chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
+            chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
+            chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
+            chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
+            chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
 
         logger.success("Added all chutes internal endpoints.")
 
@@ -1137,10 +1138,10 @@ def run_chute(
         """
         from chutes.entrypoint.logger import launch_server
 
-        if not (dev or generate_inspecto_hash) and not is_tee_env():
-                miner()._miner_ss58 = miner_ss58
-                miner()._validator_ss58 = validator_ss58
-                miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
+        if not (dev or generate_inspecto_hash):
+            miner()._miner_ss58 = miner_ss58
+            miner()._validator_ss58 = validator_ss58
+            miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
 
         if generate_inspecto_hash:
             await _run_chute()
