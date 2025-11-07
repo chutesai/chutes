@@ -177,7 +177,8 @@ class TeeGpuVerifier(GpuVerifier):
             async with session.post(url, headers=headers, json=body) as resp:
                 logger.info("Successfully verified instance with validator.")
                 data = await resp.json()
-                return data['symmetric_key'], data
+                symmetric_key = bytes.fromhex(data['symmetric_key'])
+                return symmetric_key, data
 
     async def gather_gpus(self):
         devices = []
