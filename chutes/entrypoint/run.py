@@ -835,6 +835,37 @@ def run_chute(
                 if netnanny.initialize_network_control() != 0:
                     logger.error("Failed to initialize network control")
                     sys.exit(137)
+
+                # Ensure policy is respected.
+                netnanny.lock_network()
+                request_succeeded = False
+                try:
+                    async with aiohttp.ClientSession(raise_for_status=True) as session:
+                        async with session.get("https://api.chutes.ai/_lbping"):
+                            request_succeeded = True
+                            logger.error("Should not have been able to ping external https!")
+                except Exception:
+                    ...
+                if request_succeeded:
+                    logger.error("Network policy not properly enabled, tampering detected...")
+                    sys.exit(137)
+                try:
+                    async with aiohttp.ClientSession(raise_for_status=True) as session:
+                        async with session.get(
+                            "https://proxy.chutes.ai/misc/proxy?url=ping"
+                        ) as resp:
+                            request_succeeded = True
+                            logger.success(
+                                f"Successfully pinged proxy endpoint: {await resp.text()}"
+                            )
+                except Exception:
+                    ...
+                if not request_succeeded:
+                    logger.error(
+                        "Network policy not properly enabled, failed to connect to proxy URL!"
+                    )
+                    sys.exit(137)
+                # Keep network unlocked for initialization (download models etc.)
                 if netnanny.unlock_network() != 0:
                     logger.error("Failed to unlock network")
                     sys.exit(137)
