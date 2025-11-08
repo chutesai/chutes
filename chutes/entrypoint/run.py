@@ -62,6 +62,10 @@ def get_netnanny_ref():
     netnanny.unlock_network.restype = ctypes.c_int
     netnanny.lock_network.argtypes = []
     netnanny.lock_network.restype = ctypes.c_int
+    netnanny.set_secure_fs.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    netnanny.set_secure_fs.restype = ctypes.c_int
+    netnanny.set_secure_env.argtypes = []
+    netnanny.set_secure_env.restype = ctypes.c_int
     return netnanny
 
 
@@ -670,10 +674,9 @@ async def _gather_devices_and_initialize(
     token: str,
     host: str,
     port_mappings: list[dict[str, Any]],
-    chute_module: Any,
-    chute: Any,
+    chute_abspath: str,
     inspecto_hash: str,
-) -> tuple[str, str, dict[str, Any]]:
+) -> tuple[bool, str, dict[str, Any]]:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
@@ -687,14 +690,9 @@ async def _gather_devices_and_initialize(
     token_data = jwt.decode(token, options={"verify_signature": False})
     url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
-    exclude_file = "/dev/null"
-    if chute_module and hasattr(chute_module, "__file__"):
-        exclude_file = os.path.abspath(chute_module.__file__)
-        logger.info(f"Excluding chute file from verification: {exclude_file}")
 
     logger.info("Collecting full envdump...")
     body["env"] = DUMPER.dump(key)
-    body["code"] = DUMPER.slurp(key, exclude_file, 0, 0)
     body["run_code"] = DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
     body["run_path"] = os.path.abspath(__file__)
     body["py_dirs"] = list(set(site.getsitepackages() + [site.getusersitepackages()]))
@@ -702,11 +700,12 @@ async def _gather_devices_and_initialize(
 
     # NetNanny configuration.
     netnanny = get_netnanny_ref()
-    body["egress"] = chute.allow_external_egress
+    egress = token_data.get("egress", False)
+    body["egress"] = egress
     body["netnanny_hash"] = netnanny.generate_challenge_response(
         token_data["sub"].encode()
     ).decode()
-    body["fsv"] = await generate_filesystem_hash(token_data["sub"], exclude_file, mode="full")
+    body["fsv"] = await generate_filesystem_hash(token_data["sub"], chute_abspath, mode="full")
 
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
@@ -786,7 +785,7 @@ async def _gather_devices_and_initialize(
             ) as resp:
                 if resp.ok:
                     logger.success("Successfully negotiated challenge response!")
-                    return exclude_file, symmetric_key, await resp.json()
+                    return egress, symmetric_key, await resp.json()
                 else:
                     # log down the reason of failure to the challenge
                     detail = await resp.text(encoding="utf-8", errors="replace")
@@ -816,6 +815,12 @@ def run_chute(
         """
         Run the chute (or job).
         """
+        if not (dev or generate_inspecto_hash):
+            preload = os.getenv("LD_PRELOAD")
+            if preload != "/usr/local/lib/chutes-netnanny.so:/usr/local/lib/chutes-logintercept.so":
+                logger.error(f"LD_PRELOAD not set to expected values: {os.getenv('LD_PRELOAD')}")
+                sys.exit(137)
+
         if generate_inspecto_hash and (miner_ss58 or validator_ss58):
             logger.error("Cannot set --generate-inspecto-hash for real runtime")
             sys.exit(137)
@@ -825,6 +830,9 @@ def run_chute(
         if not (dev or generate_inspecto_hash):
             challenge = secrets.token_hex(16).encode("utf-8")
             response = netnanny.generate_challenge_response(challenge)
+            if netnanny.set_secure_env() != 0:
+                logger.error("NetNanny failed to set secure environment, aborting")
+                sys.exit(137)
             try:
                 if not response:
                     logger.error("NetNanny validation failed: no response")
@@ -921,18 +929,20 @@ def run_chute(
         job_method: str | None = None
         job_status_url: str | None = None
         activation_url: str | None = None
-        exclude_file: str | None = None
+        allow_external_egress: bool | None = False
+
+        chute_filename = os.path.basename(chute_ref_str.split(":")[-1] + ".py")
+        chute_abspath: str = os.path.abspath(os.path.join(os.getcwd(), chute_filename))
         if token:
             (
-                exclude_file,
+                allow_external_egress,
                 symmetric_key,
                 response,
             ) = await _gather_devices_and_initialize(
                 token,
                 external_host,
                 port_mappings,
-                chute_module,
-                chute,
+                chute_abspath,
                 inspecto_hash,
             )
             job_id = response.get("job_id")
@@ -942,6 +952,13 @@ def run_chute(
                 job_obj = next(j for j in chute._jobs if j.name == job_method)
             job_data = response.get("job_data")
             activation_url = response.get("activation_url")
+            code = response.get("code")
+            fs_key = response.get("fs_key")
+            if not netnanny.set_secure_fs(chute_abspath.encode(), fs_key.encode()) != 0:
+                logger.error("NetNanny failed to set secure FS, aborting!")
+                sys.exit(137)
+            with open(chute_abspath, "w") as outfile:
+                outfile.write(code)
 
             # Secret environment variables, e.g. HF tokens for private models.
             if response.get("secrets"):
@@ -995,7 +1012,7 @@ def run_chute(
                             if resp.ok:
                                 logger.success(f"Instance activated: {await resp.text()}")
                                 activated = True
-                                if not dev and not chute.allow_external_egress:
+                                if not dev and not allow_external_egress:
                                     if netnanny.lock_network() != 0:
                                         logger.error("Failed to unlock network")
                                         sys.exit(137)
@@ -1013,11 +1030,11 @@ def run_chute(
                 raise Exception("Failed to activate instance, aborting...")
 
         async def _handle_fs_hash_challenge(request: Request):
-            nonlocal exclude_file
+            nonlocal chute_abspath
             data = request.state.decrypted
             return {
                 "result": await generate_filesystem_hash(
-                    data["salt"], exclude_file, mode=data.get("mode", "sparse")
+                    data["salt"], chute_abspath, mode=data.get("mode", "sparse")
                 )
             }
 
