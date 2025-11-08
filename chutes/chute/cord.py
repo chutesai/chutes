@@ -276,7 +276,7 @@ class Cord:
             f"Received passthrough call, passing along to {self.passthrough_path} via {self._method}"
         )
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(connect=5.0, total=600.0),
+            timeout=aiohttp.ClientTimeout(connect=5.0, total=900.0),
             read_bufsize=8 * 1024 * 1024,
             base_url=f"http://127.0.0.1:{self._passthrough_port or 8000}",
         ) as session:
