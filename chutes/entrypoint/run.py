@@ -906,15 +906,11 @@ def run_chute(
             print(inspecto_hash)
             return
 
-        # Load the chute.
         if dev:
             os.environ["CHUTES_DEV_MODE"] = "true"
-        chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
         if is_local():
             logger.error("Cannot run chutes in local context!")
             sys.exit(1)
-
-        chute = chute.chute if isinstance(chute, ChutePack) else chute
 
         # Load token and port mappings from the environment.
         port_mappings = [
@@ -979,8 +975,6 @@ def run_chute(
             job_id = response.get("job_id")
             job_method = response.get("job_method")
             job_status_url = response.get("job_status_url")
-            if job_method:
-                job_obj = next(j for j in chute._jobs if j.name == job_method)
             job_data = response.get("job_data")
             activation_url = response.get("activation_url")
             code = response.get("code")
@@ -999,6 +993,13 @@ def run_chute(
         elif not dev:
             logger.error("No GraVal token supplied!")
             sys.exit(1)
+
+        # Now we have the chute code available, either because it's dev and the file is plain text here,
+        # or it's prod and we've fetched the code from the validator and stored it securely.
+        chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
+        chute = chute.chute if isinstance(chute, ChutePack) else chute
+        if job_method:
+            job_obj = next(j for j in chute._jobs if j.name == job_method)
 
         # Configure dev method job payload/method/etc.
         if dev and dev_job_data_path:
