@@ -321,7 +321,7 @@ def build_image(
         current_directory = os.getcwd()
         if include_cwd:
             image._directives.append(ADD(source=".", dest="/app"))
-        else:
+        elif local:
             module_name, chute_name = chute_ref_str.split(":")
             module = importlib.import_module(module_name)
             module_path = os.path.abspath(module.__file__)

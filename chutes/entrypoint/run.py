@@ -977,7 +977,7 @@ def run_chute(
             job_status_url = response.get("job_status_url")
             job_data = response.get("job_data")
             activation_url = response.get("activation_url")
-            code = response.get("code")
+            code = response["code"]
             fs_key = response.get("fs_key")
             if fs_key and netnanny.set_secure_fs(chute_abspath.encode(), fs_key.encode()) != 0:
                 logger.error("NetNanny failed to set secure FS, aborting!")
