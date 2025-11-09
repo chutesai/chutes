@@ -532,7 +532,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
             if len(self.requests_in_flight) >= self.concurrency:
                 purge_keys = []
                 for key, val in self.requests_in_flight.items():
-                    if now - val >= 600:
+                    if now - val >= 900:
                         logger.warning(
                             f"Assuming this request is no longer in flight, killing: {key}"
                         )
