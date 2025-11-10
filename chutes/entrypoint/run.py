@@ -826,7 +826,17 @@ def run_chute(
             sys.exit(137)
 
         # Configure net-nanny.
-        netnanny = get_netnanny_ref() if not dev else None
+        netnanny = get_netnanny_ref() if not (dev or generate_inspecto_hash) else None
+
+        # If the LD_PRELOAD is already in place, unlock network in dev mode.
+        if dev:
+            try:
+                netnanny = get_netnanny_ref()
+                netnanny.initialize_network_control()
+                netnanny.unlock_network()
+            except AttributeError:
+                ...
+
         if not (dev or generate_inspecto_hash):
             challenge = secrets.token_hex(16).encode("utf-8")
             response = netnanny.generate_challenge_response(challenge)
@@ -958,7 +968,7 @@ def run_chute(
         activation_url: str | None = None
         allow_external_egress: bool | None = False
 
-        chute_filename = os.path.basename(chute_ref_str.split(":")[-1] + ".py")
+        chute_filename = os.path.basename(chute_ref_str.split(":")[0] + ".py")
         chute_abspath: str = os.path.abspath(os.path.join(os.getcwd(), chute_filename))
         if token:
             (
