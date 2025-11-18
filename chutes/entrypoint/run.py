@@ -62,7 +62,7 @@ def get_netnanny_ref():
     netnanny.unlock_network.restype = ctypes.c_int
     netnanny.lock_network.argtypes = []
     netnanny.lock_network.restype = ctypes.c_int
-    netnanny.set_secure_fs.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    netnanny.set_secure_fs.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
     netnanny.set_secure_fs.restype = ctypes.c_int
     netnanny.set_secure_env.argtypes = []
     netnanny.set_secure_env.restype = ctypes.c_int
@@ -820,6 +820,9 @@ def run_chute(
             if preload != "/usr/local/lib/chutes-netnanny.so:/usr/local/lib/chutes-logintercept.so":
                 logger.error(f"LD_PRELOAD not set to expected values: {os.getenv('LD_PRELOAD')}")
                 sys.exit(137)
+            if set(k.lower() for k in os.environ) & {"http_proxy", "https_proxy"}:
+                logger.error("HTTP(s) proxy detected, refusing to run.")
+                sys.exit(137)
 
         if generate_inspecto_hash and (miner_ss58 or validator_ss58):
             logger.error("Cannot set --generate-inspecto-hash for real runtime")
@@ -988,8 +991,13 @@ def run_chute(
             job_data = response.get("job_data")
             activation_url = response.get("activation_url")
             code = response["code"]
-            fs_key = response.get("fs_key")
-            if fs_key and netnanny.set_secure_fs(chute_abspath.encode(), fs_key.encode()) != 0:
+            fs_key = response["fs_key"]
+            encrypted_cache = response.get("efs") is True
+            if (
+                fs_key
+                and netnanny.set_secure_fs(chute_abspath.encode(), fs_key.encode(), encrypted_cache)
+                != 0
+            ):
                 logger.error("NetNanny failed to set secure FS, aborting!")
                 sys.exit(137)
             with open(chute_abspath, "w") as outfile:

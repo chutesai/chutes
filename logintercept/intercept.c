@@ -43,7 +43,7 @@ static int should_log = 1;
 
 static const char *ignored_programs[] = {"nvidia-smi", "clinfo",   "free",
                                          "top",        "findmnt",  "df",
-                                         "top",        "ldconfig", NULL};
+                                         "top",        "ldconfig", "curl", NULL};
 
 static int is_dev_null(int fd) {
   struct stat fd_stat, null_stat;
@@ -58,6 +58,90 @@ static int is_dev_null(int fd) {
 
   return (fd_stat.st_dev == null_stat.st_dev &&
           fd_stat.st_ino == null_stat.st_ino);
+}
+
+static int check_if_ignored(const char *prog) {
+  for (const char **ignored = ignored_programs; *ignored != NULL; ignored++) {
+    if (strcmp(prog, *ignored) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int check_shell_command(void) {
+  FILE *cmdline_file = fopen("/proc/self/cmdline", "r");
+  if (!cmdline_file) {
+    return 0;
+  }
+
+  char cmdline[4096];
+  size_t bytes_read = fread(cmdline, 1, sizeof(cmdline) - 1, cmdline_file);
+  fclose(cmdline_file);
+
+  if (bytes_read == 0) {
+    return 0;
+  }
+
+  cmdline[bytes_read] = '\0';
+
+  // Parse cmdline: arguments are separated by null bytes
+  size_t pos = 0;
+  char *shell_name = NULL;
+  char *dash_c_arg = NULL;
+  char *command_str = NULL;
+
+  // First arg is the shell name
+  if (pos < bytes_read) {
+    shell_name = &cmdline[pos];
+    pos += strlen(shell_name) + 1;
+  }
+
+  // Look for "-c" argument
+  while (pos < bytes_read) {
+    char *arg = &cmdline[pos];
+    if (strcmp(arg, "-c") == 0) {
+      dash_c_arg = arg;
+      pos += strlen(arg) + 1;
+      if (pos < bytes_read) {
+        command_str = &cmdline[pos];
+        break;
+      }
+    }
+    pos += strlen(arg) + 1;
+  }
+
+  // If we found "sh -c 'command ...'", parse the command
+  if (command_str && dash_c_arg) {
+    // Skip leading whitespace
+    while (*command_str && (*command_str == ' ' || *command_str == '\t')) {
+      command_str++;
+    }
+
+    // Extract the first token (the actual command)
+    char command_copy[256];
+    size_t i = 0;
+    while (*command_str && *command_str != ' ' && *command_str != '\t' &&
+           i < sizeof(command_copy) - 1) {
+      command_copy[i++] = *command_str++;
+    }
+    command_copy[i] = '\0';
+
+    // Get just the basename if it's a path
+    char *cmd_basename = strrchr(command_copy, '/');
+    if (cmd_basename) {
+      cmd_basename++;
+    } else {
+      cmd_basename = command_copy;
+    }
+
+    // Check if this command should be ignored
+    if (check_if_ignored(cmd_basename)) {
+      return 1;
+    }
+  }
+
+  return 0;
 }
 
 __attribute__((constructor)) static void init(void) {
@@ -80,11 +164,13 @@ __attribute__((constructor)) static void init(void) {
     path[len] = '\0';
     program_name = strdup(basename(path));
 
-    for (const char **ignored = ignored_programs; *ignored != NULL; ignored++) {
-      if (strcmp(program_name, *ignored) == 0) {
-        should_log = 0;
-        break;
-      }
+    // Check if the program itself is ignored
+    if (check_if_ignored(program_name)) {
+      should_log = 0;
+    }
+    // Check if this is a shell running an ignored command via -c
+    else if (check_shell_command()) {
+      should_log = 0;
     }
   } else {
     program_name = strdup("unknown");
@@ -143,9 +229,24 @@ static void get_timestamp(char *buffer, size_t size) {
   strftime(buffer, size, "%Y-%m-%dT%H:%M:%S", tm_info);
 }
 
+static int is_only_whitespace(const void *buf, size_t count) {
+  const char *str = (const char *)buf;
+  for (size_t i = 0; i < count; i++) {
+    if (str[i] != '\n' && str[i] != '\r' && str[i] != '\t' && str[i] != ' ') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 static void write_to_log(const void *buf, size_t count) {
   if (count == 0 || !should_log)
     return;
+
+  // Skip logging if the content is only whitespace
+  if (is_only_whitespace(buf, count))
+    return;
+
   pthread_mutex_lock(&log_mutex);
   struct stat st;
   if (stat(LOG_FILE, &st) == 0 && st.st_size > MAX_LOG_SIZE) {
@@ -353,6 +454,7 @@ int puts(const char *s) {
   }
 
   return real_puts(s);
+
 }
 
 int putchar(int c) {

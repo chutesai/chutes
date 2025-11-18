@@ -52,6 +52,7 @@ async def _deploy(
         "scaling_threshold": chute.scaling_threshold,
         "shutdown_after_seconds": chute.shutdown_after_seconds,
         "allow_external_egress": chute.allow_external_egress,
+        "encrypted_fs": chute.encrypted_fs,
         "revision": chute.revision,
         "cords": [
             {

@@ -19,6 +19,7 @@ from chutes.image.directive.add import ADD
 from chutes.image.directive.generic_run import RUN
 from chutes.entrypoint._shared import load_chute, FakeStreamWriter, upload_logo
 from chutes.util.auth import sign_request
+from chutes._version import version as current_version
 
 
 def expand_context_files(paths, cwd):
@@ -170,6 +171,7 @@ async def _build_remote(image, wait=None, public: bool = False, logo_id: str = N
             headers, payload_string = sign_request(payload=raw_data)
             headers["Content-Type"] = payload.content_type
             headers["Content-Length"] = str(len(raw_data))
+            headers["X-Chutes-Version"] = current_version
             async with session.post(
                 "/images/",
                 data=raw_data,
