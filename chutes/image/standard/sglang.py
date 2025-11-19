@@ -1,4 +1,4 @@
-SGLANG = "chutes/sglang:nightly-2025101900"
+SGLANG = "chutes/sglang:nightly-2025111800"
 
 # Example...
 # from chutes.image import Image

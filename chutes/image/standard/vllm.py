@@ -1,4 +1,4 @@
-VLLM = "chutes/vllm:nightly-2025100201"
+VLLM = "chutes/vllm:nightly-2025111700"
 
 # Example...
 # from chutes.image import Image

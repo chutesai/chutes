@@ -14,7 +14,7 @@ from chutes.util.context import is_remote
 
 
 class Image:
-    default_base_image = "nvidia/cuda:12.2.2-devel-ubuntu22.04"
+    default_base_image = "parachutes/python:3.12"
 
     def __init__(self, username: str, name: str, tag: str, readme: str = ""):
         """

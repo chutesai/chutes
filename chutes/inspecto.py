@@ -2,7 +2,6 @@
 import chutes
 import chutes.chute
 import chutes.chute.template
-import chutes.chute.template.tei
 import chutes.chute.template.helpers
 import chutes.chute.template.diffusion
 import chutes.chute.template.vllm
@@ -54,7 +53,6 @@ import chutes.image.directive.generic_run
 import chutes.image.directive.user
 import chutes.image
 import chutes.image.standard
-import chutes.image.standard.tei
 import chutes.image.standard.diffusion
 import chutes.image.standard.vllm
 import chutes.image.standard.sglang
