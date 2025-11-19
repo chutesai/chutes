@@ -45,6 +45,7 @@ class Chute(FastAPI):
         scaling_threshold: float = 0.75,
         allow_external_egress: bool = False,
         encrypted_fs: bool = False,
+        passthrough_headers: dict = {},
         **kwargs,
     ):
         from chutes.chute.cord import Cord
@@ -71,6 +72,7 @@ class Chute(FastAPI):
         self.shutdown_after_seconds = shutdown_after_seconds
         self.allow_external_egress = allow_external_egress
         self.encrypted_fs = encrypted_fs
+        self.passthrough_headers = passthrough_headers
         self.docs_url = None
         self.redoc_url = None
 

@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import re
+import sys
+import uuid
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Dict, Callable, Literal, Optional, Union, List
@@ -282,13 +284,12 @@ def build_sglang_chute(
         # Imports here to avoid needing sglang installed to build the chutes remotely.
         import torch
         import multiprocessing
+        import subprocess
         from sglang.utils import (
-            execute_shell_command,
             wait_for_server,
         )
-
         from huggingface_hub import snapshot_download
-        from chutes.chute.template.helpers import warmup_model
+        from chutes.chute.template.helpers import warmup_model, validate_auth
 
         # Enable NCCL for multi-GPU on some chips by default.
         gpu_count = int(os.getenv("CUDA_DEVICE_COUNT", str(torch.cuda.device_count())))
@@ -333,10 +334,15 @@ def build_sglang_chute(
             engine_args += " --enable-return-hidden-states"
         if self.revision:
             engine_args += f" --revision {self.revision}"
-        startup_command = f"python -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args}"
-        _ = execute_shell_command(startup_command)
-        wait_for_server("http://127.0.0.1:10101")
-        await warmup_model(self)
+        api_key = str(uuid.uuid4())
+        startup_command = f"{sys.executable} -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args} --api-key {api_key}"
+        command = startup_command.replace("\\\n", " ").replace("\\", " ")
+        parts = command.split()
+        subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=os.environ.copy())
+        wait_for_server("http://127.0.0.1:10101", api_key=api_key)
+        self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
+        await warmup_model(self, api_key=api_key)
+        await validate_auth(self, api_key=api_key)
 
     def _parse_stream_chunk(encoded_chunk):
         chunk = encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()

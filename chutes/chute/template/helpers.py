@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import uuid
 import random
 import aiohttp
 import asyncio
@@ -20,7 +21,11 @@ def get_current_hf_commit(model_name: str):
 
 
 async def prompt_one(
-    model_name: str, base_url: str = "http://127.0.0.1:10101", prompt: str = None
+    model_name: str,
+    base_url: str = "http://127.0.0.1:10101",
+    prompt: str = None,
+    api_key: str = None,
+    require_status: int = None,
 ) -> str:
     """
     Send a prompt to the model.
@@ -29,7 +34,7 @@ async def prompt_one(
         started_at = time.time()
         if not prompt:
             prompt = (
-                "The following is a very long, extraordinarily detailed and verbose story about "
+                "They started to tell a long, extraordinarily detailed and verbose story about "
                 + random.choice(
                     [
                         "apples",
@@ -42,12 +47,20 @@ async def prompt_one(
                         "zebras",
                     ]
                 )
-                + ": "
             )
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         async with session.post(
             f"{base_url}/v1/completions",
             json={"model": model_name, "prompt": prompt, "max_tokens": 1000},
+            headers=headers,
         ) as resp:
+            if require_status:
+                assert (
+                    resp.status == require_status
+                ), f"Expected to receive status code {require_status}, received {resp.status}"
+                return await resp.json()
             if resp.status == 200:
                 result = await resp.json()
                 delta = time.time() - started_at
@@ -61,7 +74,19 @@ async def prompt_one(
             resp.raise_for_status()
 
 
-async def warmup_model(chute, base_url: str = "http://127.0.0.1:10101"):
+async def validate_auth(chute, base_url: str = "http://127.0.0.1:10101", api_key: str = None):
+    """
+    Validate authorization for the engine.
+    """
+    if not api_key or api_key == "None":
+        await prompt_one(chute.name, base_url=base_url, api_key="None")
+        return
+    await prompt_one(chute.name, base_url=base_url, api_key=api_key)
+    await prompt_one(chute.name, base_url=base_url, api_key=None, require_status=401)
+    await prompt_one(chute.name, base_url=base_url, api_key=str(uuid.uuid4()), require_status=401)
+
+
+async def warmup_model(chute, base_url: str = "http://127.0.0.1:10101", api_key: str = None):
     """
     Warm up a model on startup.
     """
@@ -69,9 +94,12 @@ async def warmup_model(chute, base_url: str = "http://127.0.0.1:10101"):
 
     # Test simple prompts at max concurrency.
     responses = await asyncio.gather(
-        *[prompt_one(chute.name, base_url=base_url) for idx in range(chute.concurrency)]
+        *[
+            prompt_one(chute.name, base_url=base_url, api_key=api_key)
+            for idx in range(chute.concurrency)
+        ]
     )
-    assert all(responses)
+    assert all(isinstance(r, str) or r for r in responses)
     combined_response = "\n\n".join(responses) + "\n\n"
     logger.info("Now with larger context...")
 
@@ -80,22 +108,22 @@ async def warmup_model(chute, base_url: str = "http://127.0.0.1:10101"):
         prompt = (
             "Summarize the following stories:\n\n"
             + combined_response * multiplier
-            + "\nThe summary is: "
+            + "\nThe summary is:"
         )
         responses = await asyncio.gather(
             *[
-                prompt_one(chute.name, base_url=base_url, prompt=prompt)
+                prompt_one(chute.name, base_url=base_url, prompt=prompt, api_key=api_key)
                 for idx in range(chute.concurrency)
             ]
         )
-        if all(responses):
+        if all(isinstance(r, str) or r for r in responses):
             logger.success(f"Warmed up with {multiplier=}")
         else:
             logger.warning(f"Stopping at {multiplier=}")
             break
 
     # One final prompt to make sure large context didn't crash it.
-    assert await prompt_one(chute.name, base_url=base_url)
+    assert await prompt_one(chute.name, base_url=base_url, api_key=api_key)
 
 
 def set_default_cache_dirs(download_path):
