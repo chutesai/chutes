@@ -388,7 +388,6 @@ def build_vllm_chute(
 
         # Initialize engine directly in the main process
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
-        model_config = self.engine.model_config
 
         base_model_paths = [
             BaseModelPath(name=chute.name, model_path=chute.name),
@@ -422,7 +421,6 @@ def build_vllm_chute(
         else:
             models_kwargs = dict(
                 engine_client=self.engine,
-                model_config=model_config,
                 base_model_paths=base_model_paths,
                 lora_modules=[],
             )
@@ -442,7 +440,6 @@ def build_vllm_chute(
 
         vllm_api_server.chat = lambda s: OpenAIServingChat(
             self.engine,
-            model_config=model_config,
             response_role="assistant",
             request_logger=None,
             return_tokens_as_token_ids=True,
@@ -450,7 +447,6 @@ def build_vllm_chute(
         )
         vllm_api_server.completion = lambda s: OpenAIServingCompletion(
             self.engine,
-            model_config=model_config,
             request_logger=None,
             return_tokens_as_token_ids=True,
             **{
@@ -468,14 +464,12 @@ def build_vllm_chute(
         models_arg = base_model_paths if old_vllm else extra_args["models"]
         vllm_api_server.tokenization = lambda s: OpenAIServingTokenization(
             self.engine,
-            model_config,
             models_arg,
             request_logger=None,
             **extra_token_args,
         )
         self.state.openai_serving_tokenization = OpenAIServingTokenization(
             self.engine,
-            model_config,
             models_arg,
             request_logger=None,
             **extra_token_args,

@@ -234,7 +234,6 @@ def build_embedding_chute(
 
         # Initialize engine
         self.engine = AsyncLLMEngine.from_engine_args(engine_args_config)
-        model_config = self.engine.model_config
 
         base_model_paths = [
             BaseModelPath(name=chute.name, model_path=chute.name),
@@ -260,7 +259,6 @@ def build_embedding_chute(
         else:
             models_arg = OpenAIServingModels(
                 engine_client=self.engine,
-                model_config=model_config,
                 base_model_paths=base_model_paths,
                 lora_modules=[],
             )
@@ -269,7 +267,6 @@ def build_embedding_chute(
         # Initialize embedding serving
         vllm_api_server.embedding = lambda s: OpenAIServingEmbedding(
             self.engine,
-            model_config,
             models_arg,
             request_logger=None,
             chat_template=None,
