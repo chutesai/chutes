@@ -388,7 +388,7 @@ def build_vllm_chute(
 
         # Initialize engine directly in the main process
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
-        model_config = await self.engine.model_config
+        model_config = self.engine.model_config
 
         base_model_paths = [
             BaseModelPath(name=chute.name, model_path=chute.name),
