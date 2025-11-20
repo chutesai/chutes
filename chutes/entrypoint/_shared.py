@@ -1,5 +1,7 @@
+import base64
 import os
 import re
+import secrets
 import sys
 import time
 import hashlib
@@ -10,23 +12,52 @@ import importlib
 import importlib.util
 from io import BytesIO
 from functools import lru_cache
+import jwt
 from loguru import logger
 from typing import List, Dict, Any, Tuple
 from chutes.config import get_config
 from chutes.util.auth import sign_request
 from fastapi import Request, status
 from fastapi.responses import ORJSONResponse
-
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import padding
+from substrateinterface import Keypair
 
 CHUTE_REF_RE = re.compile(r"^[a-z][a-z0-9_]*:[a-z][a-z0-9_]+$", re.I)
 
+class TeeMiner:
+    def __init__(self):
+        self._validator_ss58: str | None = None
+        self._miner_ss58: str | None = None
+        self._keypair: Keypair | None = None
 
 @lru_cache(maxsize=1)
 def miner():
-    from graval import Miner
+    if is_tee_env():
+        return TeeMiner()
+    else:
+        from graval import Miner
 
-    return Miner()
+        return Miner()
 
+@lru_cache(maxsize=1)
+def get_launch_token():
+    token = os.getenv("CHUTES_LAUNCH_JWT")
+    return token
+
+@lru_cache(maxsize=1)
+def get_launch_token_data():
+    token_data = {}
+    token = get_launch_token()
+    if token:
+        token_data = jwt.decode(token, options={"verify_signature": False})
+    return token_data
+
+@lru_cache(maxsize=1)
+def is_tee_env():
+    token_data = get_launch_token_data()
+    return token_data.get("env_type", "graval") == "tee"
 
 class FakeStreamWriter:
     """
@@ -180,3 +211,20 @@ async def authenticate_request(request: Request) -> tuple[bytes, ORJSONResponse]
             content={"detail": "go away (sig)"},
         )
     return body_bytes, None
+
+def encrypt_response(symmetric_key, plaintext):
+    """
+    Encrypt the response using AES-CBC with PKCS7 padding.
+    """
+    padder = padding.PKCS7(128).padder()
+    new_iv = secrets.token_bytes(16)
+    cipher = Cipher(
+        algorithms.AES(symmetric_key),
+        modes.CBC(new_iv),
+        backend=default_backend(),
+    )
+    padded_data = padder.update(plaintext.encode()) + padder.finalize()
+    encryptor = cipher.encryptor()
+    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+    response_cipher = base64.b64encode(encrypted_data).decode()
+    return new_iv, response_cipher

@@ -35,9 +35,10 @@ from uvicorn import Config, Server
 from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from chutes.entrypoint.verify import GpuVerifier
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
-from chutes.entrypoint._shared import load_chute, miner, authenticate_request
+from chutes.entrypoint._shared import get_launch_token, get_launch_token_data, is_tee_env, load_chute, miner, authenticate_request
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
@@ -165,7 +166,6 @@ def process_netnanny_challenge(chute, request: Request):
         "hash": netnanny.generate_challenge_response(challenge.encode()),
         "allow_external_egress": chute.allow_external_egress,
     }
-
 
 async def handle_slurp(request: Request, chute_module):
     """
@@ -671,7 +671,6 @@ def start_udp_dummy(port, symmetric_key, response_plaintext):
 
 
 async def _gather_devices_and_initialize(
-    token: str,
     host: str,
     port_mappings: list[dict[str, Any]],
     chute_abspath: str,
@@ -680,23 +679,23 @@ async def _gather_devices_and_initialize(
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
-    from chutes.envdump import DUMPER
 
     # Build the GraVal request based on the GPUs that were actually assigned to this pod.
     logger.info("Collecting GPUs and port mappings...")
     body = {"gpus": [], "port_mappings": port_mappings, "host": host}
-    for idx in range(miner()._device_count):
-        body["gpus"].append(miner().get_device_info(idx))
-    token_data = jwt.decode(token, options={"verify_signature": False})
+    token_data = get_launch_token_data()
     url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
 
-    logger.info("Collecting full envdump...")
-    body["env"] = DUMPER.dump(key)
-    body["run_code"] = DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
+    if not is_tee_env():
+        from chutes.envdump import DUMPER
+        logger.info("Collecting full envdump...")
+        body["env"] = DUMPER.dump(key)
+        body["run_code"] = DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
+        body["inspecto"] = inspecto_hash
+
     body["run_path"] = os.path.abspath(__file__)
     body["py_dirs"] = list(set(site.getsitepackages() + [site.getusersitepackages()]))
-    body["inspecto"] = inspecto_hash
 
     # NetNanny configuration.
     netnanny = get_netnanny_ref()
@@ -725,73 +724,18 @@ async def _gather_devices_and_initialize(
         logger.error(f"Error checking disk space: {e}")
         raise Exception(f"Failed to verify disk space availability: {e}")
 
-    # Fetch the challenges.
-    async with aiohttp.ClientSession(raise_for_status=True) as session:
-        logger.info(f"Collected all environment data, submitting to validator: {url}")
-        async with session.post(url, headers={"Authorization": token}, json=body) as resp:
-            init_params = await resp.json()
-            logger.success(f"Successfully fetched initialization params: {init_params=}")
+    # Start up dummy sockets to test port mappings.
+    dummy_socket_threads = []
+    for port_map in port_mappings:
+        if port_map.get("default"):
+            continue
+        dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
 
-            # First, we initialize graval on all GPUs from the provided seed.
-            miner()._graval_seed = init_params["seed"]
-            iterations = init_params.get("iterations", 1)
-            logger.info(f"Generating proofs from seed={miner()._graval_seed}")
-            proofs = miner().prove(miner()._graval_seed, iterations=iterations)
+    # Verify GPUs for symmetric key
+    verifier = GpuVerifier.create(url, body)
+    symmetric_key, response = await verifier.verify_devices()
 
-            # Use GraVal to extract the symmetric key from the challenge.
-            sym_key = init_params["symmetric_key"]
-            bytes_ = base64.b64decode(sym_key["ciphertext"])
-            iv = bytes_[:16]
-            cipher = bytes_[16:]
-            logger.info("Decrypting payload via proof challenge matrix...")
-            device_index = [
-                miner().get_device_info(i)["uuid"] for i in range(miner()._device_count)
-            ].index(sym_key["uuid"])
-            symmetric_key = bytes.fromhex(
-                miner().decrypt(
-                    init_params["seed"],
-                    cipher,
-                    iv,
-                    len(cipher),
-                    device_index,
-                )
-            )
-
-            # Now, we can respond to the URL by encrypting a payload with the symmetric key and sending it back.
-            plaintext = sym_key["response_plaintext"]
-            new_iv, response_cipher = encrypt_response(symmetric_key, plaintext)
-            logger.success(
-                f"Completed PoVW challenge, sending back: {plaintext=} "
-                f"as {response_cipher=} where iv={new_iv.hex()}"
-            )
-
-            # Start up dummy sockets to test port mappings.
-            dummy_socket_threads = []
-            for port_map in port_mappings:
-                if port_map.get("default"):
-                    continue
-                dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
-
-            # Post the response to the challenge, which returns job data (if any).
-            async with session.put(
-                url,
-                headers={"Authorization": token},
-                json={
-                    "response": response_cipher,
-                    "iv": new_iv.hex(),
-                    "proof": proofs,
-                },
-                raise_for_status=False,
-            ) as resp:
-                if resp.ok:
-                    logger.success("Successfully negotiated challenge response!")
-                    return egress, symmetric_key, await resp.json()
-                else:
-                    # log down the reason of failure to the challenge
-                    detail = await resp.text(encoding="utf-8", errors="replace")
-                    logger.error(f"Failed: {resp.reason} ({resp.status}) {detail}")
-                    resp.raise_for_status()
-
+    return egress, symmetric_key, response
 
 # Run a chute (which can be an async job or otherwise long-running process).
 def run_chute(
@@ -906,18 +850,19 @@ def run_chute(
                 sys.exit(137)
 
         # Generate inspecto hash.
-        token = os.getenv("CHUTES_LAUNCH_JWT")
+        token = get_launch_token()
         inspecto_hash = None
 
-        from chutes.inspecto import generate_hash
+        if not is_tee_env():
+            from chutes.inspecto import generate_hash
 
-        if not (dev or generate_inspecto_hash):
-            token_data = jwt.decode(token, options={"verify_signature": False})
-            inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
-        elif generate_inspecto_hash:
-            inspecto_hash = await generate_hash(hash_type="base")
-            print(inspecto_hash)
-            return
+            if not (dev or generate_inspecto_hash):
+                token_data = get_launch_token_data()
+                inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
+            elif generate_inspecto_hash:
+                inspecto_hash = await generate_hash(hash_type="base")
+                print(inspecto_hash)
+                return
 
         if dev:
             os.environ["CHUTES_DEV_MODE"] = "true"
@@ -979,7 +924,6 @@ def run_chute(
                 symmetric_key,
                 response,
             ) = await _gather_devices_and_initialize(
-                token,
                 external_host,
                 port_mappings,
                 chute_abspath,
@@ -1108,12 +1052,13 @@ def run_chute(
         chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
 
         # New envdump endpoints.
-        import chutes.envdump as envdump
+        if not is_tee_env():
+            import chutes.envdump as envdump
 
-        chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
-        chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
-        chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
-        chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
+            chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
+            chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
+            chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
+            chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
 
         logger.success("Added all chutes internal endpoints.")
 
