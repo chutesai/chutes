@@ -7,7 +7,6 @@ import re
 import asyncio
 import aiohttp
 import sys
-import jwt
 import ssl
 import site
 import ctypes

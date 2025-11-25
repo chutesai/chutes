@@ -9,8 +9,7 @@ from urllib.parse import urljoin, urlparse
 import aiohttp
 from loguru import logger
 
-from chutes.entrypoint._shared import encrypt_response, get_launch_token, get_launch_token_data, is_tee_env, miner
-from chutes.util.auth import sign_request
+from chutes.entrypoint._shared import encrypt_response, get_launch_token, is_tee_env, miner
 
 
 class GpuVerifier:
@@ -134,7 +133,7 @@ class TeeGpuVerifier(GpuVerifier):
         url = urljoin(validator_url, "/servers/nonce")
         async with aiohttp.ClientSession(raise_for_status=True) as http_session:
             async with http_session.get(url) as resp:
-                logger.success(f"Successfully retrieved nonce for attestation evidence.")
+                logger.success("Successfully retrieved nonce for attestation evidence.")
                 data = await resp.json()
                 return data['nonce']
 
@@ -156,7 +155,7 @@ class TeeGpuVerifier(GpuVerifier):
         }
         async with aiohttp.ClientSession(connector=connector, raise_for_status=True) as http_session:
             async with http_session.get(url, params=params) as resp:
-                logger.success(f"Successfully retrieved attestation evidence.")
+                logger.success("Successfully retrieved attestation evidence.")
                 evidence = json.loads(await resp.json())
                 return nonce, evidence
 

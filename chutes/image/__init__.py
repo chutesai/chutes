@@ -26,7 +26,9 @@ class Image:
         self.tag = tag
         self.readme = readme
         self.username = username
-        self._uid = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{username}/{self.name}:{self.tag}"))
+        self._uid = str(
+            uuid.uuid5(uuid.NAMESPACE_OID, f"{username}/{self.name}:{self.tag}".lower())
+        )
         self._directives = [
             FROM(self.default_base_image),
         ]
