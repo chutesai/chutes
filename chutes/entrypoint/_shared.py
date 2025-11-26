@@ -26,11 +26,13 @@ from substrateinterface import Keypair
 
 CHUTE_REF_RE = re.compile(r"^[a-z][a-z0-9_]*:[a-z][a-z0-9_]+$", re.I)
 
+
 class TeeMiner:
     def __init__(self):
         self._validator_ss58: str | None = None
         self._miner_ss58: str | None = None
         self._keypair: Keypair | None = None
+
 
 @lru_cache(maxsize=1)
 def miner():
@@ -41,10 +43,12 @@ def miner():
 
         return Miner()
 
+
 @lru_cache(maxsize=1)
 def get_launch_token():
     token = os.getenv("CHUTES_LAUNCH_JWT")
     return token
+
 
 @lru_cache(maxsize=1)
 def get_launch_token_data():
@@ -54,10 +58,12 @@ def get_launch_token_data():
         token_data = jwt.decode(token, options={"verify_signature": False})
     return token_data
 
+
 @lru_cache(maxsize=1)
 def is_tee_env():
     token_data = get_launch_token_data()
     return token_data.get("env_type", "graval") == "tee"
+
 
 class FakeStreamWriter:
     """
@@ -211,6 +217,7 @@ async def authenticate_request(request: Request) -> tuple[bytes, ORJSONResponse]
             content={"detail": "go away (sig)"},
         )
     return body_bytes, None
+
 
 def encrypt_response(symmetric_key, plaintext):
     """

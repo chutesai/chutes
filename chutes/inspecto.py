@@ -27,6 +27,7 @@ import chutes.entrypoint.secret
 import chutes.entrypoint.deploy
 import chutes.entrypoint.run
 import chutes.entrypoint.register
+import chutes.entrypoint.verify
 import chutes.util
 import chutes.util.context
 import chutes.util.schema
@@ -75,6 +76,7 @@ async def generate_hash(hash_type: str = "base", challenge: str = None):
     if result:
         return result.decode()
     return result
+
 
 if __name__ == "__main__":
     print(asyncio.run(generate_hash()))

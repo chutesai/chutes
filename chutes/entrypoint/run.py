@@ -37,13 +37,21 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from chutes.entrypoint.verify import GpuVerifier
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
-from chutes.entrypoint._shared import get_launch_token, get_launch_token_data, is_tee_env, load_chute, miner, authenticate_request
+from chutes.entrypoint._shared import (
+    get_launch_token,
+    get_launch_token_data,
+    load_chute,
+    miner,
+    authenticate_request,
+)
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
+from chutes.inspecto import generate_hash
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
+import chutes.envdump as envdump
 
 
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv")
@@ -165,6 +173,7 @@ def process_netnanny_challenge(chute, request: Request):
         "hash": netnanny.generate_challenge_response(challenge.encode()),
         "allow_external_egress": chute.allow_external_egress,
     }
+
 
 async def handle_slurp(request: Request, chute_module):
     """
@@ -686,12 +695,10 @@ async def _gather_devices_and_initialize(
     url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
 
-    if not is_tee_env():
-        from chutes.envdump import DUMPER
-        logger.info("Collecting full envdump...")
-        body["env"] = DUMPER.dump(key)
-        body["run_code"] = DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
-        body["inspecto"] = inspecto_hash
+    logger.info("Collecting full envdump...")
+    body["env"] = envdump.DUMPER.dump(key)
+    body["run_code"] = envdump.DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
+    body["inspecto"] = inspecto_hash
 
     body["run_path"] = os.path.abspath(__file__)
     body["py_dirs"] = list(set(site.getsitepackages() + [site.getusersitepackages()]))
@@ -735,6 +742,7 @@ async def _gather_devices_and_initialize(
     symmetric_key, response = await verifier.verify_devices()
 
     return egress, symmetric_key, response
+
 
 # Run a chute (which can be an async job or otherwise long-running process).
 def run_chute(
@@ -852,16 +860,13 @@ def run_chute(
         token = get_launch_token()
         inspecto_hash = None
 
-        if not is_tee_env():
-            from chutes.inspecto import generate_hash
-
-            if not (dev or generate_inspecto_hash):
-                token_data = get_launch_token_data()
-                inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
-            elif generate_inspecto_hash:
-                inspecto_hash = await generate_hash(hash_type="base")
-                print(inspecto_hash)
-                return
+        if not (dev or generate_inspecto_hash):
+            token_data = get_launch_token_data()
+            inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
+        elif generate_inspecto_hash:
+            inspecto_hash = await generate_hash(hash_type="base")
+            print(inspecto_hash)
+            return
 
         if dev:
             os.environ["CHUTES_DEV_MODE"] = "true"
@@ -1051,13 +1056,10 @@ def run_chute(
         chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
 
         # New envdump endpoints.
-        if not is_tee_env():
-            import chutes.envdump as envdump
-
-            chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
-            chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
-            chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
-            chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
+        chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
+        chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
+        chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
+        chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
 
         logger.success("Added all chutes internal endpoints.")
 
