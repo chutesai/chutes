@@ -858,10 +858,9 @@ def run_chute(
 
         # Generate inspecto hash.
         token = get_launch_token()
+        token_data = get_launch_token_data()
         inspecto_hash = None
-
         if not (dev or generate_inspecto_hash):
-            token_data = get_launch_token_data()
             inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
         elif generate_inspecto_hash:
             inspecto_hash = await generate_hash(hash_type="base")
