@@ -27,6 +27,7 @@ def semcomp(input_version: str, target_version: str):
 class DefaultRole(Enum):
     user = "user"
     assistant = "assistant"
+    developer = "developer"
 
 
 class ChatMessage(BaseModel):

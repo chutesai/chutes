@@ -16,6 +16,7 @@ from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags
 class DefaultRole(Enum):
     user = "user"
     assistant = "assistant"
+    developer = "developer"
 
 
 class ChatMessage(BaseModel):
