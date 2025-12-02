@@ -44,6 +44,9 @@ def get_generic_config() -> GenericConfig:
 def get_config() -> Config:
     global _config
     if _config is None:
+        # You need to initialize raw_config before the conditional or handle missing config properly.
+        raw_config = ConfigParser()
+         
         # def load_config(self):
         if not os.path.exists(CONFIG_PATH):
             os.makedirs(os.path.dirname(os.path.abspath(CONFIG_PATH)), exist_ok=True)
@@ -53,7 +56,6 @@ def get_config() -> Config:
                 )
         else:
             logger.info(f"Loading chutes config from {CONFIG_PATH}...")
-            raw_config = ConfigParser()
             raw_config.read(CONFIG_PATH)
 
             try:
