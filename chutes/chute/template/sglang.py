@@ -336,10 +336,20 @@ def build_sglang_chute(
         if self.revision:
             engine_args += f" --revision {self.revision}"
         api_key = str(uuid.uuid4())
-        startup_command = f"{sys.executable} -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args} --api-key {api_key}"
-        command = startup_command.replace("\\\n", " ").replace("\\", " ")
-        parts = command.split()
-        subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=os.environ.copy())
+        # Fixed unsanitized engine_args passed to subprocess
+        startup_command = [
+            sys.executable,
+            "-m",
+            "sglang.launch_server",
+            "--host", "127.0.0.1",
+            "--port", "10101",
+            "--model-path", model_name,
+            "--api-key", api_key,
+        ]
+        if engine_args:
+            import shlex
+            startup_command.extend(shlex.split(engine_args))
+        subprocess.Popen(startup_command, text=True, stderr=subprocess.STDOUT, env=os.environ.copy())
         wait_for_server("http://127.0.0.1:10101", api_key=api_key)
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
         await warmup_model(self, api_key=api_key)
