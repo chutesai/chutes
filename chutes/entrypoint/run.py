@@ -178,8 +178,13 @@ def process_netnanny_challenge(chute, request: Request):
 async def handle_slurp(request: Request, chute_module):
     """
     Read part or all of a file.
+    
+    SECURITY: Restricts file access to authorized directories to prevent
+    arbitrary file read attacks (e.g., /etc/passwd, /root/.ssh/id_rsa).
     """
     slurp = Slurp(**request.state.decrypted)
+    
+    # Special cases for module source code
     if slurp.path == "__file__":
         source_code = inspect.getsource(chute_module)
         return Response(
@@ -192,17 +197,38 @@ async def handle_slurp(request: Request, chute_module):
             content=base64.b64encode(source_code.encode()).decode(),
             media_type="text/plain",
         )
-    if not os.path.isfile(slurp.path):
-        if os.path.isdir(slurp.path):
+    
+    # Path validation: restrict to authorized directories
+    ALLOWED_PREFIXES = [
+        "/tmp",
+        "/workspace",
+        os.path.expanduser("~/.cache"),
+        os.getcwd(),
+    ]
+    
+    abs_path = os.path.abspath(slurp.path)
+    
+    # Check if path is within allowed directories
+    is_allowed = any(abs_path.startswith(prefix) for prefix in ALLOWED_PREFIXES)
+    if not is_allowed:
+        logger.warning(f"Blocked slurp access to unauthorized path: {abs_path}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: path not in authorized directories",
+        )
+    
+    if not os.path.isfile(abs_path):
+        if os.path.isdir(abs_path):
             if hasattr(request.state, "_encrypt"):
-                return {"json": request.state._encrypt(json.dumps({"dir": os.listdir(slurp.path)}))}
-            return {"dir": os.listdir(slurp.path)}
+                return {"json": request.state._encrypt(json.dumps({"dir": os.listdir(abs_path)}))}
+            return {"dir": os.listdir(abs_path)}
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Path not found: {slurp.path}",
+            detail=f"Path not found: {slurp.path}",
         )
+    
     response_bytes = None
-    with open(slurp.path, "rb") as f:
+    with open(abs_path, "rb") as f:
         f.seek(slurp.start_byte)
         if slurp.end_byte is None:
             response_bytes = f.read()
@@ -537,28 +563,29 @@ class GraValMiddleware(BaseHTTPMiddleware):
         # Concurrency control with timeouts in case it didn't get cleaned up properly.
         async with self.lock:
             now = time.time()
-            if len(self.requests_in_flight) >= self.concurrency:
-                purge_keys = []
-                for key, val in self.requests_in_flight.items():
-                    if now - val >= 900:
-                        logger.warning(
-                            f"Assuming this request is no longer in flight, killing: {key}"
-                        )
-                        purge_keys.append(key)
-                if purge_keys:
-                    for key in purge_keys:
-                        self.requests_in_flight.pop(key, None)
-                    self.requests_in_flight[request.request_id] = now
-                else:
-                    return ORJSONResponse(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        content={
-                            "error": "RateLimitExceeded",
-                            "detail": f"Max concurrency exceeded: {self.concurrency}, try again later.",
-                        },
+            # First, purge any stale requests
+            purge_keys = []
+            for key, val in self.requests_in_flight.items():
+                if now - val >= 900:
+                    logger.warning(
+                        f"Assuming this request is no longer in flight, killing: {key}"
                     )
-            else:
-                self.requests_in_flight[request.request_id] = now
+                    purge_keys.append(key)
+            if purge_keys:
+                for key in purge_keys:
+                    self.requests_in_flight.pop(key, None)
+            
+            # Now check if we can accept the new request
+            if len(self.requests_in_flight) >= self.concurrency:
+                return ORJSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content={
+                        "error": "RateLimitExceeded",
+                        "detail": f"Max concurrency exceeded: {self.concurrency}, try again later.",
+                    },
+                )
+            
+            self.requests_in_flight[request.request_id] = now
 
         # Perform the actual request.
         response = None
@@ -707,10 +734,14 @@ async def _gather_devices_and_initialize(
     netnanny = get_netnanny_ref()
     egress = token_data.get("egress", False)
     body["egress"] = egress
+    # WARNING: Using JWT 'sub' field as salt. Since JWT signature is not verified,
+    # this could potentially be predicted if token is compromised.
+    # TODO: Use cryptographically random challenge from validator
     body["netnanny_hash"] = netnanny.generate_challenge_response(
         token_data["sub"].encode()
     ).decode()
     body["fsv"] = await generate_filesystem_hash(token_data["sub"], chute_abspath, mode="full")
+    logger.debug(f"Generated filesystem hash with salt from JWT sub field")
 
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
@@ -730,14 +761,18 @@ async def _gather_devices_and_initialize(
         logger.error(f"Error checking disk space: {e}")
         raise Exception(f"Failed to verify disk space availability: {e}")
 
+    # Generate a temporary symmetric key for port validation sockets
+    # The real symmetric key will be obtained from GPU verification
+    temp_symmetric_key = secrets.token_bytes(32)
+    
     # Start up dummy sockets to test port mappings.
     dummy_socket_threads = []
     for port_map in port_mappings:
         if port_map.get("default"):
             continue
-        dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
+        dummy_socket_threads.append(start_dummy_socket(port_map, temp_symmetric_key))
 
-    # Verify GPUs for symmetric key
+    # Verify GPUs and get the actual symmetric key
     verifier = GpuVerifier.create(url, body)
     symmetric_key, response = await verifier.verify_devices()
 
@@ -951,9 +986,34 @@ def run_chute(
                 outfile.write(code)
 
             # Secret environment variables, e.g. HF tokens for private models.
+            # SECURITY: Whitelist allowed keys to prevent injection of dangerous vars
+            # like LD_PRELOAD, PATH, PYTHONPATH, etc.
+            ALLOWED_SECRET_KEYS = {
+                "HF_TOKEN",
+                "HUGGINGFACE_TOKEN",
+                "HF_API_TOKEN",
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "REPLICATE_API_TOKEN",
+                "COHERE_API_KEY",
+                "AI21_API_KEY",
+                "TOGETHER_API_KEY",
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                "AZURE_OPENAI_API_KEY",
+                "AZURE_OPENAI_ENDPOINT",
+            }
             if response.get("secrets"):
                 for secret_key, secret_value in response["secrets"].items():
+                    if secret_key not in ALLOWED_SECRET_KEYS:
+                        logger.warning(
+                            f"Rejected secret key '{secret_key}' - not in whitelist. "
+                            "If this is a legitimate secret, add it to ALLOWED_SECRET_KEYS."
+                        )
+                        continue
                     os.environ[secret_key] = secret_value
+                    logger.debug(f"Set environment variable: {secret_key}")
 
         elif not dev:
             logger.error("No GraVal token supplied!")

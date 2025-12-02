@@ -15,6 +15,7 @@ from functools import lru_cache
 import jwt
 from loguru import logger
 from typing import List, Dict, Any, Tuple
+from collections import defaultdict
 from chutes.config import get_config
 from chutes.util.auth import sign_request
 from fastapi import Request, status
@@ -25,6 +26,12 @@ from cryptography.hazmat.primitives import padding
 from substrateinterface import Keypair
 
 CHUTE_REF_RE = re.compile(r"^[a-z][a-z0-9_]*:[a-z][a-z0-9_]+$", re.I)
+
+# Nonce tracking to prevent replay attacks
+_nonce_cache: Dict[str, float] = {}
+_NONCE_MAX_AGE = 60  # Reduced from 540s to 60s
+_NONCE_CACHE_CLEANUP_INTERVAL = 300  # Cleanup every 5 minutes
+_last_nonce_cleanup = time.time()
 
 
 class TeeMiner:
@@ -52,10 +59,22 @@ def get_launch_token():
 
 @lru_cache(maxsize=1)
 def get_launch_token_data():
+    """
+    Decode JWT launch token.
+    
+    WARNING: Signature verification is disabled. This JWT must be obtained
+    through a secure, authenticated channel (e.g., from trusted validator).
+    If this token comes from an untrusted source, an attacker can forge
+    arbitrary token data including env_type, egress settings, disk quotas, etc.
+    
+    TODO: Enable signature verification with validator's public key.
+    """
     token_data = {}
     token = get_launch_token()
     if token:
+        # SECURITY: Signature verification is disabled - ensure token source is trusted
         token_data = jwt.decode(token, options={"verify_signature": False})
+        logger.debug("JWT token decoded without signature verification - ensure secure channel")
     return token_data
 
 
@@ -186,20 +205,40 @@ async def authenticate_request(request: Request) -> tuple[bytes, ORJSONResponse]
     """
     Request authentication via bittensor hotkey signatures.
     """
+    global _last_nonce_cleanup
+    
+    # Periodic cleanup of old nonces
+    now = time.time()
+    if now - _last_nonce_cleanup > _NONCE_CACHE_CLEANUP_INTERVAL:
+        expired_nonces = [n for n, t in _nonce_cache.items() if now - t > _NONCE_MAX_AGE * 2]
+        for nonce in expired_nonces:
+            _nonce_cache.pop(nonce, None)
+        _last_nonce_cleanup = now
+    
     miner_hotkey = request.headers.get("X-Chutes-Miner")
     validator_hotkey = request.headers.get("X-Chutes-Validator")
     nonce = request.headers.get("X-Chutes-Nonce")
     signature = request.headers.get("X-Chutes-Signature")
+    
+    # Check for missing fields, mismatched hotkeys, or expired nonce
     if (
         any(not v for v in [miner_hotkey, validator_hotkey, nonce, signature])
         or validator_hotkey != miner()._validator_ss58
         or miner_hotkey != miner()._miner_ss58
-        or int(time.time()) - int(nonce) >= 540
+        or int(now) - int(nonce) >= _NONCE_MAX_AGE
     ):
-        logger.warning(f"Missing auth data: {request.headers}")
+        logger.warning(f"Missing auth data or expired nonce: {request.headers}")
         return None, ORJSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": "go away (missing)"},
+        )
+    
+    # Check for nonce reuse (replay attack prevention)
+    if nonce in _nonce_cache:
+        logger.warning(f"Nonce reuse detected: {nonce}")
+        return None, ORJSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "go away (replay)"},
         )
     body_bytes = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
     payload_string = hashlib.sha256(body_bytes).hexdigest() if body_bytes else "chutes"
@@ -216,6 +255,10 @@ async def authenticate_request(request: Request) -> tuple[bytes, ORJSONResponse]
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": "go away (sig)"},
         )
+    
+    # Mark nonce as used after successful verification
+    _nonce_cache[nonce] = now
+    
     return body_bytes, None
 
 
