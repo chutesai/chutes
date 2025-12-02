@@ -57,6 +57,46 @@ import chutes.envdump as envdump
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv")
 
 
+class TimeoutConfig:
+    """Centralized timeout configuration for HTTP requests."""
+    # Default timeouts for most operations
+    DEFAULT_TOTAL = 30
+    DEFAULT_CONNECT = 10
+    DEFAULT_SOCK_CONNECT = 10
+    DEFAULT_SOCK_READ = 20
+    
+    # Quick check timeouts for connectivity tests
+    QUICK_CHECK_TOTAL = 8
+    QUICK_CHECK_CONNECT = 4
+    QUICK_CHECK_SOCK_CONNECT = 4
+    QUICK_CHECK_SOCK_READ = 6
+    
+    # Socket timeouts for dummy port validation
+    DUMMY_SOCKET_TIMEOUT = 30.0
+    DUMMY_SOCKET_RECV_TIMEOUT = 10.0
+    DUMMY_SOCKET_READY_TIMEOUT = 5.0
+    
+    @classmethod
+    def default(cls) -> aiohttp.ClientTimeout:
+        """Get default timeout configuration."""
+        return aiohttp.ClientTimeout(
+            total=cls.DEFAULT_TOTAL,
+            connect=cls.DEFAULT_CONNECT,
+            sock_connect=cls.DEFAULT_SOCK_CONNECT,
+            sock_read=cls.DEFAULT_SOCK_READ
+        )
+    
+    @classmethod
+    def quick(cls) -> aiohttp.ClientTimeout:
+        """Get quick check timeout configuration."""
+        return aiohttp.ClientTimeout(
+            total=cls.QUICK_CHECK_TOTAL,
+            connect=cls.QUICK_CHECK_CONNECT,
+            sock_connect=cls.QUICK_CHECK_SOCK_CONNECT,
+            sock_read=cls.QUICK_CHECK_SOCK_READ
+        )
+
+
 @lru_cache(maxsize=1)
 def get_netnanny_ref():
     netnanny = ctypes.CDLL(None, ctypes.RTLD_GLOBAL)
@@ -227,11 +267,36 @@ async def handle_slurp(request: Request, chute_module):
             detail=f"Path not found: {slurp.path}",
         )
     
+    # Validate byte range to prevent memory exhaustion
+    MAX_SLURP_SIZE = 10 * 1024 * 1024  # 10MB limit
+    file_size = os.path.getsize(abs_path)
+    
+    if slurp.start_byte < 0 or slurp.start_byte > file_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid start_byte: {slurp.start_byte} (file size: {file_size})"
+        )
+    
+    if slurp.end_byte is not None:
+        if slurp.end_byte < slurp.start_byte:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="end_byte must be >= start_byte"
+            )
+        
+        read_size = slurp.end_byte - slurp.start_byte
+        if read_size > MAX_SLURP_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Request too large: {read_size} bytes (max: {MAX_SLURP_SIZE})"
+            )
+    
     response_bytes = None
     with open(abs_path, "rb") as f:
         f.seek(slurp.start_byte)
         if slurp.end_byte is None:
-            response_bytes = f.read()
+            # Limit unbounded reads to prevent memory exhaustion
+            response_bytes = f.read(MAX_SLURP_SIZE)
         else:
             response_bytes = f.read(slurp.end_byte - slurp.start_byte)
     response_data = {"contents": base64.b64encode(response_bytes).decode()}
@@ -287,7 +352,7 @@ async def check_connectivity(request: Request) -> dict[str, Any]:
     endpoint = request.state.decrypted.get(
         "endpoint", "https://api.chutes.ai/instances/token_check"
     )
-    timeout = aiohttp.ClientTimeout(total=8, connect=4, sock_connect=4, sock_read=6)
+    timeout = TimeoutConfig.quick()
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(endpoint) as resp:
@@ -309,12 +374,13 @@ async def check_connectivity(request: Request) -> dict[str, Any]:
             "error": _conn_err_info(e),
         }
     except Exception as e:
+        logger.error(f"Unexpected error in connectivity check: {type(e).__name__}: {e}")
         return {
             "connection_established": False,
             "status_code": None,
             "body": None,
             "content_type": None,
-            "error": str(e),
+            "error": f"Unexpected error: {type(e).__name__}: {str(e)}",
         }
 
 
@@ -616,6 +682,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
 def start_dummy_socket(port_mapping, symmetric_key):
     """
     Start a dummy socket based on the port mapping configuration to validate ports.
+    Returns (thread, ready_event) tuple.
     """
     proto = port_mapping["proto"].lower()
     internal_port = port_mapping["internal_port"]
@@ -645,64 +712,83 @@ def encrypt_response(symmetric_key, plaintext):
 
 def start_tcp_dummy(port, symmetric_key, response_plaintext):
     """
-    TCP port check socket.
+    TCP port check socket with timeout and readiness signaling.
     """
+    ready_event = threading.Event()
 
     def tcp_handler():
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.settimeout(TimeoutConfig.DUMMY_SOCKET_TIMEOUT)
+        
         try:
             sock.bind(("0.0.0.0", port))
             sock.listen(1)
+            ready_event.set()  # Signal that socket is ready
             logger.info(f"TCP socket listening on port {port}")
-            conn, addr = sock.accept()
-            logger.info(f"TCP connection from {addr}")
-            data = conn.recv(1024)
-            logger.info(f"TCP received: {data.decode('utf-8', errors='ignore')}")
-            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
-            full_response = f"{iv.hex()}|{encrypted_response}".encode()
-            conn.send(full_response)
-            logger.info(f"TCP sent encrypted response on port {port}: {full_response=}")
-            conn.close()
+            
+            try:
+                conn, addr = sock.accept()
+                conn.settimeout(TimeoutConfig.DUMMY_SOCKET_RECV_TIMEOUT)
+                logger.info(f"TCP connection from {addr}")
+                data = conn.recv(1024)
+                logger.info(f"TCP received: {data.decode('utf-8', errors='ignore')}")
+                iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
+                full_response = f"{iv.hex()}|{encrypted_response}".encode()
+                conn.send(full_response)
+                logger.info(f"TCP sent encrypted response on port {port}")
+                conn.close()
+            except socket.timeout:
+                logger.warning(f"TCP socket on port {port} timed out waiting for connection")
+                
         except Exception as e:
-            logger.info(f"TCP socket error on port {port}: {e}")
-            raise
+            ready_event.set()  # Signal ready even on error to prevent deadlock
+            logger.error(f"TCP socket error on port {port}: {e}")
         finally:
             sock.close()
             logger.info(f"TCP socket on port {port} closed")
 
     thread = threading.Thread(target=tcp_handler, daemon=True)
     thread.start()
-    return thread
+    return thread, ready_event
 
 
 def start_udp_dummy(port, symmetric_key, response_plaintext):
     """
-    UDP port check socket.
+    UDP port check socket with timeout and readiness signaling.
     """
+    ready_event = threading.Event()
 
     def udp_handler():
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.settimeout(TimeoutConfig.DUMMY_SOCKET_TIMEOUT)
+        
         try:
             sock.bind(("0.0.0.0", port))
+            ready_event.set()  # Signal that socket is ready
             logger.info(f"UDP socket listening on port {port}")
-            data, addr = sock.recvfrom(1024)
-            logger.info(f"UDP received from {addr}: {data.decode('utf-8', errors='ignore')}")
-            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
-            full_response = f"{iv.hex()}|{encrypted_response}".encode()
-            sock.sendto(full_response, addr)
-            logger.info(f"UDP sent encrypted response on port {port}")
+            
+            try:
+                data, addr = sock.recvfrom(1024)
+                logger.info(f"UDP received from {addr}: {data.decode('utf-8', errors='ignore')}")
+                iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
+                full_response = f"{iv.hex()}|{encrypted_response}".encode()
+                sock.sendto(full_response, addr)
+                logger.info(f"UDP sent encrypted response on port {port}")
+            except socket.timeout:
+                logger.warning(f"UDP socket on port {port} timed out waiting for data")
+                
         except Exception as e:
-            logger.info(f"UDP socket error on port {port}: {e}")
-            raise
+            ready_event.set()  # Signal ready even on error to prevent deadlock
+            logger.error(f"UDP socket error on port {port}: {e}")
         finally:
             sock.close()
             logger.info(f"UDP socket on port {port} closed")
 
     thread = threading.Thread(target=udp_handler, daemon=True)
     thread.start()
-    return thread
+    return thread, ready_event
 
 
 async def _gather_devices_and_initialize(
@@ -766,11 +852,20 @@ async def _gather_devices_and_initialize(
     temp_symmetric_key = secrets.token_bytes(32)
     
     # Start up dummy sockets to test port mappings.
-    dummy_socket_threads = []
+    dummy_socket_data = []
     for port_map in port_mappings:
         if port_map.get("default"):
             continue
-        dummy_socket_threads.append(start_dummy_socket(port_map, temp_symmetric_key))
+        thread, ready_event = start_dummy_socket(port_map, temp_symmetric_key)
+        dummy_socket_data.append((thread, ready_event, port_map))
+    
+    # Wait for all dummy sockets to be ready before validator connects
+    logger.info("Waiting for dummy sockets to start...")
+    for thread, ready_event, port_map in dummy_socket_data:
+        if not ready_event.wait(timeout=TimeoutConfig.DUMMY_SOCKET_READY_TIMEOUT):
+            logger.error(f"Dummy socket failed to start in time for port {port_map['internal_port']}")
+            sys.exit(1)
+    logger.success(f"All {len(dummy_socket_data)} dummy sockets ready")
 
     # Verify GPUs and get the actual symmetric key
     verifier = GpuVerifier.create(url, body)
@@ -1028,8 +1123,19 @@ def run_chute(
 
         # Configure dev method job payload/method/etc.
         if dev and dev_job_data_path:
-            with open(dev_job_data_path) as infile:
-                job_data = json.loads(infile.read())
+            try:
+                with open(dev_job_data_path, 'r', encoding='utf-8') as infile:
+                    job_data = json.loads(infile.read())
+            except FileNotFoundError:
+                logger.error(f"Job data file not found: {dev_job_data_path}")
+                sys.exit(1)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in job data file: {e}")
+                sys.exit(1)
+            except Exception as e:
+                logger.error(f"Error reading job data file: {e}")
+                sys.exit(1)
+            
             job_id = str(uuid.uuid4())
             job_method = dev_job_method
             job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
