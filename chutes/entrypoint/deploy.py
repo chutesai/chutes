@@ -53,6 +53,7 @@ async def _deploy(
         "shutdown_after_seconds": chute.shutdown_after_seconds,
         "allow_external_egress": chute.allow_external_egress,
         "encrypted_fs": chute.encrypted_fs,
+        "tee": chute.tee,
         "revision": chute.revision,
         "cords": [
             {

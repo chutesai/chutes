@@ -46,6 +46,7 @@ class Chute(FastAPI):
         allow_external_egress: bool = False,
         encrypted_fs: bool = False,
         passthrough_headers: dict = {},
+        tee: bool = False,
         **kwargs,
     ):
         from chutes.chute.cord import Cord
@@ -75,6 +76,7 @@ class Chute(FastAPI):
         self.passthrough_headers = passthrough_headers
         self.docs_url = None
         self.redoc_url = None
+        self.tee = tee
 
     @property
     def name(self):
