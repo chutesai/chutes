@@ -34,7 +34,6 @@ import chutes.util.schema
 import chutes.util.auth
 import chutes.util.user
 import chutes.config
-import chutes.envcheck.core
 import chutes.envdump
 import chutes.constants
 import chutes.metrics

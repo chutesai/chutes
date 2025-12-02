@@ -47,11 +47,9 @@ from chutes.entrypoint._shared import (
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
-from chutes.inspecto import generate_hash
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
-import chutes.envdump as envdump
 
 
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv")
@@ -696,6 +694,8 @@ async def _gather_devices_and_initialize(
     key = token_data.get("env_key", "a" * 32)
 
     logger.info("Collecting full envdump...")
+    import chutes.envdump as envdump
+
     body["env"] = envdump.DUMPER.dump(key)
     body["run_code"] = envdump.DUMPER.slurp(key, os.path.abspath(__file__), 0, 0)
     body["inspecto"] = inspecto_hash
@@ -859,6 +859,9 @@ def run_chute(
         # Generate inspecto hash.
         token = get_launch_token()
         token_data = get_launch_token_data()
+
+        from chutes.inspecto import generate_hash
+
         inspecto_hash = None
         if not (dev or generate_inspecto_hash):
             inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
@@ -1055,6 +1058,8 @@ def run_chute(
         chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
 
         # New envdump endpoints.
+        import chutes.envdump as envdump
+
         chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
         chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
         chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
