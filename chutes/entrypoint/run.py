@@ -17,7 +17,6 @@ import inspect
 import typer
 import psutil
 import base64
-import socket
 import secrets
 import threading
 import traceback
@@ -30,7 +29,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
-from fastapi import Request, Response, status, HTTPException
+from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from chutes.entrypoint.verify import GpuVerifier
@@ -641,7 +640,7 @@ class DevMiddleware(BaseHTTPMiddleware):
 
 
 class GraValMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, concurrency: int = 1):
+    def __init__(self, app: FastAPI, concurrency: int = 1):
         """
         Initialize a semaphore for concurrency control/limits.
         """
@@ -822,105 +821,12 @@ class GraValMiddleware(BaseHTTPMiddleware):
             if not response or not hasattr(response, "body_iterator"):
                 _conn_stats.requests_in_flight.pop(request.request_id, None)
 
-
-def start_dummy_socket(port_mapping, symmetric_key):
-    """
-    Start a dummy socket based on the port mapping configuration to validate ports.
-    """
-    proto = port_mapping["proto"].lower()
-    internal_port = port_mapping["internal_port"]
-    response_text = f"response from {proto} {internal_port}"
-    if proto in ["tcp", "http"]:
-        return start_tcp_dummy(internal_port, symmetric_key, response_text)
-    return start_udp_dummy(internal_port, symmetric_key, response_text)
-
-
-def encrypt_response(symmetric_key, plaintext):
-    """
-    Encrypt the response using AES-CBC with PKCS7 padding.
-    """
-    padder = padding.PKCS7(128).padder()
-    new_iv = secrets.token_bytes(16)
-    cipher = Cipher(
-        algorithms.AES(symmetric_key),
-        modes.CBC(new_iv),
-        backend=default_backend(),
-    )
-    padded_data = padder.update(plaintext.encode()) + padder.finalize()
-    encryptor = cipher.encryptor()
-    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-    response_cipher = base64.b64encode(encrypted_data).decode()
-    return new_iv, response_cipher
-
-
-def start_tcp_dummy(port, symmetric_key, response_plaintext):
-    """
-    TCP port check socket.
-    """
-
-    def tcp_handler():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("0.0.0.0", port))
-            sock.listen(1)
-            logger.info(f"TCP socket listening on port {port}")
-            conn, addr = sock.accept()
-            logger.info(f"TCP connection from {addr}")
-            data = conn.recv(1024)
-            logger.info(f"TCP received: {data.decode('utf-8', errors='ignore')}")
-            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
-            full_response = f"{iv.hex()}|{encrypted_response}".encode()
-            conn.send(full_response)
-            logger.info(f"TCP sent encrypted response on port {port}: {full_response=}")
-            conn.close()
-        except Exception as e:
-            logger.info(f"TCP socket error on port {port}: {e}")
-            raise
-        finally:
-            sock.close()
-            logger.info(f"TCP socket on port {port} closed")
-
-    thread = threading.Thread(target=tcp_handler, daemon=True)
-    thread.start()
-    return thread
-
-
-def start_udp_dummy(port, symmetric_key, response_plaintext):
-    """
-    UDP port check socket.
-    """
-
-    def udp_handler():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("0.0.0.0", port))
-            logger.info(f"UDP socket listening on port {port}")
-            data, addr = sock.recvfrom(1024)
-            logger.info(f"UDP received from {addr}: {data.decode('utf-8', errors='ignore')}")
-            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
-            full_response = f"{iv.hex()}|{encrypted_response}".encode()
-            sock.sendto(full_response, addr)
-            logger.info(f"UDP sent encrypted response on port {port}")
-        except Exception as e:
-            logger.info(f"UDP socket error on port {port}: {e}")
-            raise
-        finally:
-            sock.close()
-            logger.info(f"UDP socket on port {port} closed")
-
-    thread = threading.Thread(target=udp_handler, daemon=True)
-    thread.start()
-    return thread
-
-
 async def _gather_devices_and_initialize(
     host: str,
     port_mappings: list[dict[str, Any]],
     chute_abspath: str,
     inspecto_hash: str,
-) -> tuple[bool, str, dict[str, Any]]:
+) -> tuple[bool, bytes, dict[str, Any]]:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
@@ -973,16 +879,18 @@ async def _gather_devices_and_initialize(
         logger.error(f"Error checking disk space: {e}")
         raise Exception(f"Failed to verify disk space availability: {e}")
 
-    # Start up dummy sockets to test port mappings.
-    dummy_socket_threads = []
-    for port_map in port_mappings:
-        if port_map.get("default"):
-            continue
-        dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
-
-    # Verify GPUs for symmetric key
+    # Verify GPUs, spin up dummy sockets, and finalize verification.
     verifier = GpuVerifier.create(url, body)
-    symmetric_key, response = await verifier.verify_devices()
+    symmetric_key, response = await verifier.verify()
+
+    # Derive runint session key from validator's pubkey via ECDH if provided
+    # Key derivation happens entirely in C - key never touches Python memory
+    validator_pubkey = response.get("validator_pubkey")
+    if validator_pubkey:
+        if runint_derive_session_key(validator_pubkey):
+            logger.success("Derived runint session key via ECDH (key never in Python)")
+        else:
+            logger.warning("Failed to derive runint session key - using legacy encryption")
 
     # Derive runint session key from validator's pubkey via ECDH if provided
     # Key derivation happens entirely in C - key never touches Python memory
@@ -1228,7 +1136,7 @@ def run_chute(
 
         # GPU verification plus job fetching.
         job_data: dict | None = None
-        symmetric_key: str | None = None
+        symmetric_key: bytes | None = None
         job_id: str | None = None
         job_obj: Job | None = None
         job_method: str | None = None
