@@ -24,15 +24,28 @@ from chutes._version import version as current_version
 
 def expand_context_files(paths, cwd):
     files = []
+    cwd = os.path.realpath(cwd)
+
     for path in paths:
-        abs_path = os.path.abspath(path)
+        abs_path = os.path.realpath(os.path.abspath(path))  # resolves symlinks
         if os.path.isdir(abs_path):
             for root, _, fs in os.walk(abs_path):
                 for f in fs:
-                    files.append(os.path.join(root, f))
+                    real_file = os.path.realpath(os.path.join(root, f))
+                    # only include if inside cwd
+                    if os.path.commonpath([cwd, real_file]) == cwd:
+                        files.append(real_file)
+                    else:
+                        logger.warning(f"Skipping file outside cwd: {real_file}")
         elif os.path.isfile(abs_path):
-            files.append(abs_path)
-    files = [f for f in files if os.path.commonpath([cwd, f]) == cwd]
+            real_file = os.path.realpath(abs_path)
+            if os.path.commonpath([cwd, real_file]) == cwd:
+                files.append(real_file)
+            else:
+                logger.warning(f"Skipping file outside cwd: {real_file}")
+        else:
+            logger.warning(f"Path not found or unsupported: {path}")
+
     return files
 
 
