@@ -1,4 +1,5 @@
 import os
+import asyncio
 import aiohttp
 import re
 import backoff
@@ -268,9 +269,9 @@ class Cord:
                         yield data["result"]
 
     @asynccontextmanager
-    async def _passthrough_call(self, **kwargs):
+    async def _passthrough_call(self, request: Request, _request_timeout: int = 900, **kwargs):
         """
-        Call a passthrough endpoint.
+        Call a passthrough endpoint with client disconnection monitoring.
         """
         logger.debug(
             f"Received passthrough call, passing along to {self.passthrough_path} via {self._method}"
@@ -279,15 +280,109 @@ class Cord:
         if self._app.passthrough_headers:
             headers.update(self._app.passthrough_headers)
         kwargs["headers"] = headers
+
+        # Flag to track if client disconnected
+        client_disconnected = False
+        disconnect_check_task = None
+
+        async def check_client_disconnect():
+            """Monitor for client disconnection."""
+            nonlocal client_disconnected
+            try:
+                while not client_disconnected:
+                    if await request.is_disconnected():
+                        logger.warning(
+                            f"Client disconnected during passthrough call to {self.passthrough_path}"
+                        )
+                        client_disconnected = True
+                        break
+                    await asyncio.sleep(0.1)  # Check every 100ms
+            except asyncio.CancelledError:
+                pass
+
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(connect=5.0, total=900.0),
+            timeout=aiohttp.ClientTimeout(connect=5.0, total=_request_timeout),
             read_bufsize=8 * 1024 * 1024,
             base_url=f"http://127.0.0.1:{self._passthrough_port or 8000}",
         ) as session:
-            async with getattr(session, self._method.lower())(
-                self.passthrough_path, **kwargs
-            ) as response:
-                yield response
+            try:
+                # Start monitoring for client disconnection
+                disconnect_check_task = asyncio.create_task(check_client_disconnect())
+
+                async with getattr(session, self._method.lower())(
+                    self.passthrough_path, **kwargs
+                ) as response:
+                    # Wrap the response to check for disconnection during iteration
+                    original_response = response
+
+                    class DisconnectAwareResponse:
+                        """Wrapper that raises an exception if client disconnects."""
+
+                        def __init__(self, response, disconnect_flag):
+                            self._response = response
+                            self._disconnect_flag = disconnect_flag
+
+                        def __getattr__(self, name):
+                            return getattr(self._response, name)
+
+                        async def __aenter__(self):
+                            return self
+
+                        async def __aexit__(self, *args):
+                            return await self._response.__aexit__(*args)
+
+                        @property
+                        def content(self):
+                            """Return a disconnect-aware content iterator."""
+                            parent = self
+
+                            class DisconnectAwareContent:
+                                def __aiter__(self):
+                                    return self
+
+                                async def __anext__(self):
+                                    if parent._disconnect_flag():
+                                        logger.info(
+                                            "Client disconnected, stopping backend request iteration"
+                                        )
+                                        raise StopAsyncIteration
+                                    try:
+                                        return await parent._response.content.__anext__()
+                                    except StopAsyncIteration:
+                                        raise
+
+                            return DisconnectAwareContent()
+
+                        async def read(self):
+                            """Read response with disconnection check."""
+                            if self._disconnect_flag():
+                                raise HTTPException(
+                                    status_code=499,  # Client Closed Request
+                                    detail="Client disconnected",
+                                )
+                            return await self._response.read()
+
+                        async def json(self):
+                            """Read JSON response with disconnection check."""
+                            if self._disconnect_flag():
+                                raise HTTPException(status_code=499, detail="Client disconnected")
+                            return await self._response.json()
+
+                        async def text(self):
+                            """Read text response with disconnection check."""
+                            if self._disconnect_flag():
+                                raise HTTPException(status_code=499, detail="Client disconnected")
+                            return await self._response.text()
+
+                    yield DisconnectAwareResponse(original_response, lambda: client_disconnected)
+            finally:
+                # Clean up the disconnect monitoring task
+                if disconnect_check_task:
+                    disconnect_check_task.cancel()
+                    try:
+                        await disconnect_check_task
+                    except asyncio.CancelledError:
+                        pass
 
     async def _remote_call(self, request: Request, *args, **kwargs):
         """
@@ -306,7 +401,7 @@ class Cord:
         encrypt = getattr(request.state, "_encrypt", None)
         try:
             if self._passthrough:
-                async with self._passthrough_call(**kwargs) as response:
+                async with self._passthrough_call(request, **kwargs) as response:
                     if not 200 <= response.status < 300:
                         try:
                             error_detail = await response.json()
@@ -375,7 +470,8 @@ class Cord:
         encrypt = getattr(request.state, "_encrypt", None)
         try:
             if self._passthrough:
-                async with self._passthrough_call(**kwargs) as response:
+                kwargs["_request_timeout"] = 1800
+                async with self._passthrough_call(request, **kwargs) as response:
                     if not 200 <= response.status < 300:
                         try:
                             error_detail = await response.json()
