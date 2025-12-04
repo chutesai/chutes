@@ -242,6 +242,7 @@ def build_vllm_chute(
     scaling_threshold: float = 0.75,
     shutdown_after_seconds: int = 300,
     allow_external_egress: bool = False,
+    tee: bool = False,
 ):
     if engine_args.get("revision"):
         raise ValueError("revision is now a top-level argument to build_vllm_chute!")
@@ -276,6 +277,7 @@ def build_vllm_chute(
         max_instances=max_instances,
         scaling_threshold=scaling_threshold,
         allow_external_egress=allow_external_egress,
+        tee=tee,
     )
 
     # Minimal input schema with defaults.

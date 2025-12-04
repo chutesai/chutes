@@ -210,6 +210,7 @@ def build_sglang_chute(
     scaling_threshold: float = 0.75,
     shutdown_after_seconds: int = 300,
     allow_external_egress: bool = False,
+    tee: bool = False,
 ):
     # Prevent revision in the code, must be in the top level helper args.
     m = re.search(r"--revision\s*=?\s*([^ ]+)", engine_args or "", re.I)
@@ -247,6 +248,7 @@ def build_sglang_chute(
         max_instances=max_instances,
         scaling_threshold=scaling_threshold,
         allow_external_egress=allow_external_egress,
+        tee=tee,
     )
 
     # Minimal input schema with defaults.

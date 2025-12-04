@@ -1,1 +1,1 @@
-version = "0.4.0.rc18"
+version = "0.4.0"
