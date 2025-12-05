@@ -44,7 +44,9 @@ def get_generic_config() -> GenericConfig:
 def get_config() -> Config:
     global _config
     if _config is None:
-        # def load_config(self):
+        raw_config = None
+        auth_config = None
+        
         if not os.path.exists(CONFIG_PATH):
             os.makedirs(os.path.dirname(os.path.abspath(CONFIG_PATH)), exist_ok=True)
             if not ALLOW_MISSING:
@@ -64,14 +66,30 @@ def get_config() -> Config:
                     hotkey_name=raw_config.get("auth", "hotkey_name"),
                     hotkey_ss58address=raw_config.get("auth", "hotkey_ss58address"),
                 )
-
             except NoSectionError:
                 if not ALLOW_MISSING:
                     raise AuthenticationRequired(
                         f"Please ensure you have an [auth] section defined in {CONFIG_PATH} with 'hotkey_seed', 'hotkey_name', and 'hotkey_ss58address' values"
                     )
+                auth_config = None
 
-        api_base_url = raw_config.get("api", "base_url")
+        # Initialize auth_config if missing and ALLOW_MISSING is True
+        if auth_config is None:
+            auth_config = AuthConfig(
+                user_id=None,
+                username=None,
+                hotkey_seed=None,
+                hotkey_name=None,
+                hotkey_ss58address=None,
+            )
+
+        # Get API base URL from config file or environment
+        api_base_url = None
+        if raw_config:
+            try:
+                api_base_url = raw_config.get("api", "base_url")
+            except (NoSectionError, KeyError):
+                pass
         if not api_base_url:
             api_base_url = os.getenv("CHUTES_API_URL", "https://api.chutes.ai")
         generic_config = GenericConfig(api_base_url=api_base_url)
