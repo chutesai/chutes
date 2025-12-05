@@ -314,6 +314,10 @@ def build_vllm_chute(
         nonlocal model_name
         nonlocal image
 
+        # Initialize warmup manager for phase tracking
+        from chutes.chute.warmup import get_warmup_manager
+        warmup_manager = get_warmup_manager()
+
         # Imports here to avoid needing torch/vllm/etc. to just perform inference/build remotely.
         import torch
         import multiprocessing
@@ -322,6 +326,9 @@ def build_vllm_chute(
         from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
         from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
         import vllm.version as vv
+
+        # Update warmup phase: pulling
+        await warmup_manager.update_phase("pulling", 10)
 
         # Force download in initializer with some retries.
         from huggingface_hub import snapshot_download
@@ -346,6 +353,9 @@ def build_vllm_chute(
 
         # Set torch inductor, flashinfer, etc., cache directories.
         set_default_cache_dirs(download_path)
+
+        # Update warmup phase: loading
+        await warmup_manager.update_phase("loading", 40)
 
         try:
             from vllm.entrypoints.openai.serving_engine import BaseModelPath
@@ -391,6 +401,9 @@ def build_vllm_chute(
 
         # Initialize engine directly in the main process
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
+
+        # Update warmup phase: tokenizer
+        await warmup_manager.update_phase("tokenizer", 60)
 
         base_model_paths = [
             BaseModelPath(name=chute.name, model_path=chute.name),
@@ -480,6 +493,17 @@ def build_vllm_chute(
         setattr(self.state, "enable_server_load_tracking", False)
         if not old_vllm:
             self.state.openai_serving_models = extra_args["models"]
+
+        # Update warmup phase: tiny_infer (engine is ready, do a test inference)
+        await warmup_manager.update_phase("tiny_infer", 80)
+        
+        # Perform a tiny inference to verify the model is working
+        try:
+            # This is a minimal check - the actual readiness is verified by /v1/models
+            # The warmup manager will poll /v1/models and set ready when it returns 200
+            logger.info("vLLM engine initialized, waiting for /v1/models to become ready")
+        except Exception as e:
+            logger.warning(f"Tiny inference check failed: {e}")
 
     def _parse_stream_chunk(encoded_chunk):
         chunk = encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()

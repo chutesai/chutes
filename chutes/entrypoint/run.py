@@ -986,6 +986,15 @@ def run_chute(
                 sys.exit(1)
             logger.info(f"Creating task, dev mode, for {job_method=}")
 
+        # Register warmup routes early (before model initialization)
+        # This ensures they're available during cold start
+        chute._register_warmup_routes()
+        
+        # Set port for warmup manager's internal /v1/models checks
+        from chutes.chute.warmup import get_warmup_manager
+        warmup_manager = get_warmup_manager()
+        warmup_manager.set_port(port or 8000)
+
         # Run the chute's initialization code.
         await chute.initialize()
 
