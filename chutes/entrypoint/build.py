@@ -140,7 +140,7 @@ async def _build_remote(image, wait=None, public: bool = False, logo_id: str = N
             if os.path.exists(temp_zip):
                 os.remove(temp_zip)
 
-        logger.info(f"Created the build package: {output_path}, uploading...")
+        logger.info(f"Created the build package: {final_path}, uploading...")
         form_data = aiohttp.FormData()
         form_data.add_field("username", image.username)
         form_data.add_field("name", image.name)

@@ -216,6 +216,49 @@ class Chute(FastAPI):
         for job in self._jobs:
             logger.info(f"Found job definition: {job._func.__name__}")
 
+    def _register_warmup_routes(self):
+        """
+        Register warmup cords routes.
+        These routes are available even during cold start.
+        """
+        from chutes.chute.warmup import get_warmup_manager
+        from fastapi import Request, Response, status
+        from fastapi.responses import JSONResponse
+        
+        warmup_manager = get_warmup_manager()
+        
+        async def warmup_kick(request: Request) -> Response:
+            """POST /warmup/kick - Start or restart warmup (idempotent)."""
+            try:
+                result = await warmup_manager.kick()
+                return JSONResponse(
+                    content=result,
+                    status_code=status.HTTP_202_ACCEPTED
+                )
+            except Exception as e:
+                logger.error(f"Error in warmup/kick: {e}")
+                return JSONResponse(
+                    content={"error": str(e)},
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        async def warmup_status(request: Request) -> Response:
+            """GET /warmup/status - Get current warmup status."""
+            try:
+                status_data = await warmup_manager.get_status()
+                return JSONResponse(content=status_data.model_dump())
+            except Exception as e:
+                logger.error(f"Error in warmup/status: {e}")
+                return JSONResponse(
+                    content={"error": str(e)},
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        # Register routes
+        self.add_api_route("/warmup/kick", warmup_kick, methods=["POST"])
+        self.add_api_route("/warmup/status", warmup_status, methods=["GET"])
+        logger.info("Registered warmup cords: /warmup/kick, /warmup/status")
+
     def cord(self, **kwargs):
         """
         Decorator to define a parachute cord (function).
