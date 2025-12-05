@@ -967,7 +967,11 @@ def run_chute(
         chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
         chute = chute.chute if isinstance(chute, ChutePack) else chute
         if job_method:
-            job_obj = next(j for j in chute._jobs if j.name == job_method)
+            try:
+                job_obj = next(j for j in chute._jobs if j.name == job_method)
+            except StopIteration:
+                logger.error(f"Job method '{job_method}' not found in chute jobs")
+                sys.exit(1)
 
         # Configure dev method job payload/method/etc.
         if dev and dev_job_data_path:
@@ -975,7 +979,11 @@ def run_chute(
                 job_data = json.loads(infile.read())
             job_id = str(uuid.uuid4())
             job_method = dev_job_method
-            job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
+            try:
+                job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
+            except StopIteration:
+                logger.error(f"Job method '{dev_job_method}' not found in chute jobs")
+                sys.exit(1)
             logger.info(f"Creating task, dev mode, for {job_method=}")
 
         # Run the chute's initialization code.
@@ -1014,7 +1022,7 @@ def run_chute(
                                 activated = True
                                 if not dev and not allow_external_egress:
                                     if netnanny.lock_network() != 0:
-                                        logger.error("Failed to unlock network")
+                                        logger.error("Failed to lock network")
                                         sys.exit(137)
                                     logger.success("Successfully enabled NetNanny network lock.")
                                 break

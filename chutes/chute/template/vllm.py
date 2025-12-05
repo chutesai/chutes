@@ -252,8 +252,8 @@ def build_vllm_chute(
         suggested_commit = None
         try:
             suggested_commit = get_current_hf_commit(model_name)
-        except Exception:
-            ...
+        except Exception as exc:
+            logger.debug(f"Failed to fetch current HF commit for {model_name}: {exc}")
         suggestion = (
             "Unable to fetch the current refs/heads/main commit from HF, please check the model name."
             if not suggested_commit
