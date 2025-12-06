@@ -1,13 +1,15 @@
 import os
-import aiohttp
 import re
-import backoff
+import uuid
 import gzip
 import time
-import orjson as json
-import fickling
 import pickle
 import base64
+import aiohttp
+import asyncio
+import backoff
+import fickling
+import orjson as json
 from pydantic import ValidationError
 from typing import Optional, Dict, Any
 from fastapi import Request, HTTPException, status
@@ -44,6 +46,7 @@ class Cord:
         minimal_input_schema: Optional[Any] = None,
         output_content_type: Optional[str] = None,
         output_schema: Optional[Dict] = None,
+        sglang_passthrough: bool = False,
         **session_kwargs,
     ):
         """
@@ -67,6 +70,7 @@ class Cord:
         self._session_kwargs = session_kwargs
         self._provision_timeout = provision_timeout
         self._config = None
+        self._sglang_passthrough = sglang_passthrough
         self.input_models = (
             [input_schema] if input_schema and hasattr(input_schema, "__fields__") else None
         )
@@ -155,6 +159,9 @@ class Cord:
         if "//" in path or not PATH_RE.match(path):
             raise InvalidPath(path)
         self._public_api_path = path
+
+    def _is_sglang_passthrough(self) -> bool:
+        return self._passthrough and self._sglang_passthrough
 
     @asynccontextmanager
     async def _local_call_base(self, *args, **kwargs):
@@ -268,7 +275,7 @@ class Cord:
                         yield data["result"]
 
     @asynccontextmanager
-    async def _passthrough_call(self, **kwargs):
+    async def _passthrough_call(self, request: Request, **kwargs):
         """
         Call a passthrough endpoint.
         """
@@ -279,8 +286,17 @@ class Cord:
         if self._app.passthrough_headers:
             headers.update(self._app.passthrough_headers)
         kwargs["headers"] = headers
+
+        # Set (if needed) timeout.
+        timeout = None
+        if self._is_sglang_passthrough():
+            timeout = aiohttp.ClientTimeout(connect=5.0, total=None)
+        else:
+            total_timeout = kwargs.pop("timeout", 1800)
+            timeout = aiohttp.ClientTimeout(connect=5.0, total=total_timeout)
+
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(connect=5.0, total=1800.0),
+            timeout=timeout,
             read_bufsize=8 * 1024 * 1024,
             base_url=f"http://127.0.0.1:{self._passthrough_port or 8000}",
         ) as session:
@@ -304,9 +320,88 @@ class Cord:
             function=self._func.__name__,
         ).set_to_current_time()
         encrypt = getattr(request.state, "_encrypt", None)
+
         try:
             if self._passthrough:
-                async with self._passthrough_call(**kwargs) as response:
+                rid = getattr(request.state, "sglang_rid", None)
+
+                # SGLang passthrough: run upstream call and disconnect watcher in parallel
+                if self._is_sglang_passthrough():
+
+                    async def call_upstream():
+                        async with self._passthrough_call(request, **kwargs) as response:
+                            if not 200 <= response.status < 300:
+                                try:
+                                    error_detail = await response.json()
+                                except Exception:
+                                    error_detail = await response.text()
+                                logger.error(
+                                    f"Failed to generate response from func={self._func.__name__}: {response.status=} -> {error_detail}"
+                                )
+                                raise HTTPException(
+                                    status_code=response.status,
+                                    detail=error_detail,
+                                )
+                            if encrypt:
+                                raw = await response.read()
+                                return {"json": encrypt(raw)}
+                            return await response.json()
+
+                    async def watch_disconnect():
+                        try:
+                            while True:
+                                message = await request._receive()
+                                if message.get("type") == "http.disconnect":
+                                    logger.info(
+                                        f"[{self._func.__name__}] Received http.disconnect, "
+                                        f"aborting upstream SGLang request (rid={rid})"
+                                    )
+                                    try:
+                                        await self._abort_sglang_request(rid)
+                                    except Exception as exc:
+                                        logger.warning(
+                                            f"Error while sending abort_request for rid={rid}: {exc}"
+                                        )
+                                    raise HTTPException(
+                                        status_code=499,
+                                        detail="Client disconnected during SGLang request",
+                                    )
+                        except HTTPException:
+                            raise
+                        except Exception as exc:
+                            logger.warning(f"watch_disconnect error: {exc}")
+                            raise HTTPException(
+                                status_code=499,
+                                detail="Client disconnected during SGLang request",
+                            )
+
+                    upstream_task = asyncio.create_task(call_upstream())
+                    watcher_task = asyncio.create_task(watch_disconnect())
+
+                    done, pending = await asyncio.wait(
+                        {upstream_task, watcher_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in pending:
+                        task.cancel()
+
+                    if watcher_task in done:
+                        exc = watcher_task.exception()
+
+                        if exc:
+                            raise exc
+                        raise HTTPException(
+                            status_code=499,
+                            detail="Client disconnected during SGLang request",
+                        )
+                    result = upstream_task.result()
+                    logger.success(
+                        f"Completed request [{self._func.__name__} passthrough={self._passthrough}] "
+                        f"in {time.time() - started_at} seconds"
+                    )
+                    return result
+
+                async with self._passthrough_call(request, **kwargs) as response:
                     if not 200 <= response.status < 300:
                         try:
                             error_detail = await response.json()
@@ -320,15 +415,18 @@ class Cord:
                             detail=error_detail,
                         )
                     logger.success(
-                        f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
+                        f"Completed request [{self._func.__name__} passthrough={self._passthrough}] "
+                        f"in {time.time() - started_at} seconds"
                     )
                     if encrypt:
                         return {"json": encrypt(await response.read())}
                     return await response.json()
 
-            response = await self._func(self._app, *args, **kwargs)
+            # Non-passthrough call (local Python function)
+            response = await asyncio.wait_for(self._func(self._app, *args, **kwargs), 1800)
             logger.success(
-                f"Completed request [{self._func.__name__} passthrough={self._passthrough}] in {time.time() - started_at} seconds"
+                f"Completed request [{self._func.__name__} passthrough={self._passthrough}] "
+                f"in {time.time() - started_at} seconds"
             )
             if hasattr(response, "body"):
                 if encrypt:
@@ -344,6 +442,19 @@ class Cord:
             if encrypt:
                 return {"json": encrypt(json.dumps(response))}
             return response
+        except asyncio.CancelledError:
+            rid = getattr(request.state, "sglang_rid", None)
+            if self._is_sglang_passthrough():
+                logger.info(
+                    f"Non-stream request for {self._func.__name__} cancelled "
+                    f"(likely client disconnect), aborting SGLang rid={rid}"
+                )
+                try:
+                    await self._abort_sglang_request(rid)
+                except Exception as exc:
+                    logger.warning(f"Error while sending abort_request for rid={rid}: {exc}")
+            status = 499
+            raise
         except Exception as exc:
             logger.error(f"Error performing non-streamed call: {exc}")
             status = 500
@@ -375,7 +486,9 @@ class Cord:
         encrypt = getattr(request.state, "_encrypt", None)
         try:
             if self._passthrough:
-                async with self._passthrough_call(**kwargs) as response:
+                rid = getattr(request.state, "sglang_rid", None)
+
+                async with self._passthrough_call(request, **kwargs) as response:
                     if not 200 <= response.status < 300:
                         try:
                             error_detail = await response.json()
@@ -389,6 +502,13 @@ class Cord:
                             detail=error_detail,
                         )
                     async for content in response.content:
+                        if await request.is_disconnected():
+                            logger.info(
+                                f"Client disconnected for {self._func.__name__}, aborting upstream (rid={rid})"
+                            )
+                            await self._abort_sglang_request(rid)
+                            break
+
                         if encrypt:
                             yield encrypt(content) + "\n"
                         else:
@@ -406,6 +526,20 @@ class Cord:
             logger.success(
                 f"Completed request [{self._func.__name__}] in {time.time() - started_at} seconds"
             )
+        except asyncio.CancelledError:
+            rid = getattr(request.state, "sglang_rid", None)
+            if self._is_sglang_passthrough():
+                logger.info(
+                    f"Streaming cancelled for {self._func.__name__} "
+                    f"(likely client disconnect), aborting SGLang rid={rid}"
+                )
+                try:
+                    await self._abort_sglang_request(rid)
+                except Exception as exc:
+                    logger.warning(f"Error while sending abort_request for rid={rid}: {exc}")
+            status = 499
+            raise
+
         except Exception as exc:
             logger.error(f"Error performing stream call: {exc}")
             status = 500
@@ -421,6 +555,21 @@ class Cord:
                 function=self._func.__name__,
                 status=status,
             ).observe(time.time() - started_at)
+
+    async def _abort_sglang_request(self, rid: Optional[str]):
+        if not rid or not self._is_sglang_passthrough():
+            return
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(connect=5.0, total=15.0),
+                base_url=f"http://127.0.0.1:{self._passthrough_port or 8000}",
+                headers=self._app.passthrough_headers or {},
+            ) as session:
+                logger.warning(f"Aborting SGLang request {rid=}")
+                await session.post("/abort_request", json={"rid": rid})
+                logger.success(f"Sent SGLang abort_request for rid={rid}")
+        except Exception as exc:
+            logger.warning(f"Failed to send abort_request for rid={rid}: {exc}")
 
     async def _request_handler(self, request: Request):
         """
@@ -452,6 +601,13 @@ class Cord:
             else:
                 args = []
                 kwargs = {"json": request.state.decrypted} if request.state.decrypted else {}
+
+        # Set a custom request ID for SGLang passthroughs.
+        if self._is_sglang_passthrough() and isinstance(kwargs.get("json"), dict):
+            rid = uuid.uuid4().hex
+            kwargs["json"].setdefault("rid", rid)
+            request.state.sglang_rid = rid
+
         if not self._passthrough:
             if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
                 try:

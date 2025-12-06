@@ -362,6 +362,7 @@ def build_sglang_chute(
         stream=True,
         input_schema=ChatCompletionRequest,
         minimal_input_schema=MinifiedStreamChatCompletion,
+        sglang_passthrough=True,
     )
     async def chat_stream(encoded_chunk) -> ChatCompletionStreamResponse:
         return _parse_stream_chunk(encoded_chunk)
@@ -375,6 +376,7 @@ def build_sglang_chute(
         stream=True,
         input_schema=CompletionRequest,
         minimal_input_schema=MinifiedStreamCompletion,
+        sglang_passthrough=True,
     )
     async def completion_stream(encoded_chunk) -> CompletionStreamResponse:
         return _parse_stream_chunk(encoded_chunk)
@@ -387,6 +389,7 @@ def build_sglang_chute(
         passthrough=True,
         input_schema=ChatCompletionRequest,
         minimal_input_schema=MinifiedChatCompletion,
+        sglang_passthrough=True,
     )
     async def chat(data) -> ChatCompletionResponse:
         return data
@@ -399,6 +402,7 @@ def build_sglang_chute(
         passthrough=True,
         input_schema=CompletionRequest,
         minimal_input_schema=MinifiedCompletion,
+        sglang_passthrough=True,
     )
     async def completion(data) -> CompletionResponse:
         return data
@@ -410,6 +414,7 @@ def build_sglang_chute(
         public_api_method="GET",
         method="GET",
         passthrough=True,
+        sglang_passthrough=True,
     )
     async def get_models(data):
         return data
