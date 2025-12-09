@@ -609,7 +609,7 @@ class Cord:
             request.state.sglang_rid = rid
 
         if not self._passthrough:
-            if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
+            if self.input_models and len(args) == len(self.input_models) and all([isinstance(args[idx], dict) for idx in range(len(args))]):
                 try:
                     args = [
                         self.input_models[idx](**args[idx]) for idx in range(len(self.input_models))
