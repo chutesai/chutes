@@ -274,6 +274,39 @@ class Cord:
                     else:
                         yield data["result"]
 
+    def _process_prefill_messages(self, request_data: dict) -> dict:
+        """
+        Process prefill messages (partial/prefix) for vLLM compatibility.
+        Strips unsupported fields and handles prefill content.
+        """
+        if not isinstance(request_data, dict) or "messages" not in request_data:
+            return request_data
+        
+        processed_messages = []
+        for msg in request_data["messages"]:
+            if not isinstance(msg, dict):
+                processed_messages.append(msg)
+                continue
+            
+            # Create a clean message copy
+            clean_msg = {
+                "role": msg.get("role"),
+                "content": msg.get("content", ""),
+            }
+            
+            # Handle prefill: if assistant message has partial/prefix, keep content for prefill
+            # vLLM will use assistant message content as prefill automatically
+            if msg.get("role") == "assistant" and (msg.get("partial") or msg.get("prefix")):
+                # Keep the content - vLLM uses assistant message content as prefill
+                # Remove unsupported fields
+                logger.debug(f"Processing prefill message with content: {clean_msg['content'][:50]}...")
+            
+            # Remove unsupported fields that vLLM doesn't understand
+            processed_messages.append(clean_msg)
+        
+        request_data["messages"] = processed_messages
+        return request_data
+
     @asynccontextmanager
     async def _passthrough_call(self, request: Request, **kwargs):
         """
@@ -285,6 +318,11 @@ class Cord:
         headers = kwargs.pop("headers", {}) or {}
         if self._app.passthrough_headers:
             headers.update(self._app.passthrough_headers)
+        
+        # Process prefill messages if this is a chat completion request
+        if "json" in kwargs and isinstance(kwargs["json"], dict):
+            kwargs["json"] = self._process_prefill_messages(kwargs["json"])
+        
         kwargs["headers"] = headers
 
         # Set (if needed) timeout.
@@ -609,7 +647,7 @@ class Cord:
             request.state.sglang_rid = rid
 
         if not self._passthrough:
-            if self.input_models and all([isinstance(args[idx], dict) for idx in range(len(args))]):
+            if self.input_models and len(args) == len(self.input_models) and all([isinstance(args[idx], dict) for idx in range(len(args))]):
                 try:
                     args = [
                         self.input_models[idx](**args[idx]) for idx in range(len(self.input_models))
