@@ -4,6 +4,7 @@ import typer
 from chutes.entrypoint.api_key import create_api_key
 from chutes.entrypoint.deploy import deploy_chute
 from chutes.entrypoint.register import register
+from chutes.entrypoint.login import login
 from chutes.entrypoint.build import build_image
 from chutes.entrypoint.report import report_invocation
 from chutes.entrypoint.run import run_chute
@@ -16,6 +17,9 @@ from chutes.crud import chutes_app, images_app, api_keys_app, secrets_app
 app = typer.Typer(no_args_is_help=True)
 
 app.command(name="register", help="Create an account with the chutes run platform!")(register)
+app.command(name="login", help="Login to the chutes platform via browser-based authentication.")(
+    login
+)
 app.command(help="Change your fingerprint!", no_args_is_help=True, name="refinger")(
     change_fingerprint
 )
