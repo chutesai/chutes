@@ -47,18 +47,23 @@ def login(
         nonlocal wallet, hotkey
         ss58 = None
         keypair = None
-        base_url = get_generic_config().api_base_url.rstrip("/")
+        base_url = None
 
         # Try to use existing chutes config first (unless wallet is explicitly specified)
         if wallet is None:
             try:
                 config = get_config()
+                base_url = config.generic.api_base_url.rstrip("/")
                 if config.auth.hotkey_seed and config.auth.hotkey_ss58address:
                     ss58 = config.auth.hotkey_ss58address
                     keypair = Keypair.create_from_seed(seed_hex=config.auth.hotkey_seed)
                     rprint(f"[dim]Using hotkey from chutes config: {ss58}[/dim]")
             except (NotConfigured, AuthenticationRequired):
                 pass
+
+        # Fall back to generic config if no base_url from config file
+        if base_url is None:
+            base_url = get_generic_config().api_base_url.rstrip("/")
 
         # Fall back to wallet selection if no config or wallet explicitly specified
         if keypair is None:
