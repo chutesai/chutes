@@ -79,7 +79,7 @@ async def verify_cache(
 
     # Find local cache
     repo_folder_name = f"models--{repo_id.replace('/', '--')}"
-    snapshot_dir = cache_dir / repo_folder_name / "snapshots" / revision
+    snapshot_dir = cache_dir / "hub" / repo_folder_name / "snapshots" / revision
 
     if not snapshot_dir.exists():
         raise CacheVerificationError(f"Cache directory not found: {snapshot_dir}")
@@ -153,6 +153,8 @@ async def verify_cache(
         if errors:
             msg_parts.append(f"Errors ({len(errors)}): " + "; ".join(errors))
         raise CacheVerificationError("\n".join(msg_parts))
+
+    logger.success(f"Successfully verified HF cache for {repo_id=} {revision=}")
 
     return {
         "verified": verified,
