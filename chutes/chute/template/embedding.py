@@ -1,21 +1,24 @@
 import asyncio
 import os
+import json
+import sys
+import uuid
+import shlex
+import aiohttp
+import subprocess
 from loguru import logger
 from pydantic import BaseModel
-from typing import Dict, Any, Callable, List, Optional, Literal
+from typing import Dict, Callable, List, Optional, Literal
 from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
+from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
 
 def get_optimal_pooling_type(model_name: str) -> str:
-    """
-    Determine optimal pooling type for known embedding models.
-    """
     model_lower = model_name.lower()
-
     if "e5-" in model_lower or "multilingual-e5" in model_lower:
         return "MEAN"
     elif "bge-" in model_lower:
@@ -79,7 +82,7 @@ def build_embedding_chute(
     tagline: str = "",
     readme: str = "",
     concurrency: int = 32,
-    engine_args: Dict[str, Any] = {},
+    engine_args: str = None,
     revision: str = None,
     max_instances: int = 1,
     scaling_threshold: float = 0.75,
@@ -90,28 +93,8 @@ def build_embedding_chute(
     allow_external_egress: bool = False,
     tee: bool = False,
 ):
-    """
-    Build a vLLM embedding chute with enhanced chunked processing support.
-
-    Args:
-        username: Chute username
-        model_name: HuggingFace model name
-        node_selector: Node selector for deployment
-        image: Docker image to use (default: VLLM)
-        tagline: Chute tagline
-        readme: Chute readme
-        concurrency: Max concurrent requests
-        engine_args: Additional vLLM engine arguments
-        revision: HuggingFace model revision/commit
-        max_instances: Maximum number of instances
-        scaling_threshold: Scaling threshold (0-1)
-        shutdown_after_seconds: Idle shutdown time
-        pooling_type: Pooling type (auto, MEAN, CLS, LAST)
-        max_embed_len: Maximum embedding length in tokens
-        enable_chunked_processing: Enable chunked processing for long texts
-    """
-    if engine_args.get("revision"):
-        raise ValueError("revision is now a top-level argument to build_embedding_chute!")
+    if engine_args and "--revision" in engine_args:
+        raise ValueError("Revision is now a top-level argument to build_embedding_chute!")
 
     if not revision:
         from chutes.chute.template.helpers import get_current_hf_commit
@@ -121,7 +104,6 @@ def build_embedding_chute(
             suggested_commit = get_current_hf_commit(model_name)
         except Exception:
             pass
-
         suggestion = (
             "Unable to fetch the current refs/heads/main commit from HF, please check the model name."
             if not suggested_commit
@@ -160,11 +142,8 @@ def build_embedding_chute(
         nonlocal max_embed_len
         nonlocal enable_chunked_processing
 
-        # Imports here to avoid needing torch/vllm/etc. to just perform inference/build remotely
         import torch
         import multiprocessing
-        from vllm import AsyncEngineArgs, AsyncLLMEngine
-        import vllm.entrypoints.openai.api_server as vllm_api_server
         from huggingface_hub import snapshot_download
 
         if enable_chunked_processing:
@@ -185,34 +164,24 @@ def build_embedding_chute(
             except Exception as exc:
                 logger.info(f"Failed downloading {model_name} {download_kwargs or ''}: {exc}")
             await asyncio.sleep(60)
-
         if not download_path:
             raise Exception(f"Failed to download {model_name} after 5 attempts")
 
-        try:
-            from vllm.entrypoints.openai.serving_engine import BaseModelPath
-        except Exception:
-            from vllm.entrypoints.openai.serving_models import (
-                BaseModelPath,
-                OpenAIServingModels,
-            )
-
-        from vllm.entrypoints.openai.serving_embedding import OpenAIServingEmbedding
+        set_default_cache_dirs(download_path)
 
         torch.cuda.empty_cache()
         torch.cuda.init()
         torch.cuda.set_device(0)
         multiprocessing.set_start_method("spawn", force=True)
 
-        # Configure GPU count
         gpu_count = int(os.getenv("CUDA_DEVICE_COUNT", str(torch.cuda.device_count())))
+        gpu_model = torch.cuda.get_device_name(0)
+        set_nccl_flags(gpu_count, gpu_model)
 
-        # Build pooler config
         pooler_config = {
             "pooling_type": pooling_type,
             "normalize": True,
         }
-
         if enable_chunked_processing:
             pooler_config["enable_chunked_processing"] = True
             pooler_config["max_embed_len"] = max_embed_len
@@ -224,61 +193,52 @@ def build_embedding_chute(
         logger.info(f"   - Chunked Processing: {enable_chunked_processing}")
         if enable_chunked_processing:
             logger.info(f"   - Max Embed Length: {max_embed_len} tokens")
-            logger.info("   - Cross-chunk Aggregation: MEAN (automatic)")
 
-        # Configure engine arguments
-        engine_args_config = AsyncEngineArgs(
-            model=model_name,
-            tensor_parallel_size=gpu_count,
-            override_pooler_config=pooler_config,
-            **engine_args,
-        )
+        api_key = str(uuid.uuid4())
+        port = 8000
+        engine_args = engine_args or ""
+        if "--tensor-parallel-size" not in engine_args:
+            engine_args += f" --tensor-parallel-size {gpu_count}"
 
-        # Initialize engine
-        self.engine = AsyncLLMEngine.from_engine_args(engine_args_config)
-
-        base_model_paths = [
-            BaseModelPath(name=chute.name, model_path=chute.name),
-        ]
-
-        self.include_router(vllm_api_server.router)
-
-        # Check vLLM version for compatibility
-        import vllm.version as vv
-
-        version_parts = vv.__version__.split(".")
-        old_vllm = False
-        if (
-            not vv.__version__.startswith("0.1.dev")
-            and int(version_parts[0]) == 0
-            and int(version_parts[1]) < 7
-        ):
-            old_vllm = True
-
-        # Set up serving models
-        if old_vllm:
-            models_arg = base_model_paths
-        else:
-            models_arg = OpenAIServingModels(
-                engine_client=self.engine,
-                base_model_paths=base_model_paths,
-                lora_modules=[],
+        if len(re.findall(r"(?:^|\s)--(?:tensor-parallel-size|tp)[=\s]")) > 1:
+            raise ValueError(
+                "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
             )
-            self.state.openai_serving_models = models_arg
 
-        # Initialize embedding serving
-        vllm_api_server.embedding = lambda s: OpenAIServingEmbedding(
-            self.engine,
-            models_arg,
-            request_logger=None,
-            chat_template=None,
-            chat_template_content_format="string",
-        )
+        # Using VLLM_API_KEY environment variable to hide the key from process listing.
+        env = os.environ.copy()
+        env["VLLM_API_KEY"] = api_key
+        if enable_chunked_processing:
+            env["VLLM_ENABLE_CHUNKED_PROCESSING"] = "true"
 
+        pooler_config_arg = shlex.quote(json.dumps(pooler_config))
+        startup_command = f"{sys.executable} -m vllm.entrypoints.openai.api_server --model {model_name} --port {port} --host 127.0.0.1 --pooler-config {pooler_config_arg} {engine_args}"
+        parts = shlex.split(startup_command)
+
+        logger.info(f"Launching vllm embedding server with command: {' '.join(parts)}")
+
+        subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
+        server_up = False
+        while True:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"http://127.0.0.1:{port}/v1/models",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    ) as resp:
+                        if resp.status == 200:
+                            server_up = True
+                            break
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+
+        self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
         logger.info("✅ Embedding server initialized successfully!")
 
     @chute.cord(
         passthrough_path="/v1/embeddings",
+        passthrough_port=8000,
         public_api_path="/v1/embeddings",
         method="POST",
         passthrough=True,
@@ -290,6 +250,7 @@ def build_embedding_chute(
 
     @chute.cord(
         passthrough_path="/v1/models",
+        passthrough_port=8000,
         public_api_path="/v1/models",
         public_api_method="GET",
         method="GET",

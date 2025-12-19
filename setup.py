@@ -59,6 +59,7 @@ setup(
         "aiofiles>=23",
         "semver",
         "huggingface_hub",
+        "setproctitle",
     ],
     extras_require={
         "dev": [
