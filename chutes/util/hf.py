@@ -6,7 +6,6 @@ import os
 import asyncio
 import aiohttp
 from pathlib import Path
-from huggingface_hub.constants import HF_HUB_CACHE
 from loguru import logger
 
 PROXY_URL = "https://api.chutes.ai/misc/hf_repo_info"
@@ -23,7 +22,9 @@ def _get_hf_token() -> str | None:
 
 
 def _get_symlink_hash(file_path: Path) -> str | None:
-    """Extract SHA256 from symlink target (blob filename)."""
+    """
+    Extract SHA256 from symlink target (blob filename).
+    """
     if file_path.is_symlink():
         target = os.readlink(file_path)
         blob_name = Path(target).name
@@ -35,27 +36,12 @@ def _get_symlink_hash(file_path: Path) -> str | None:
 async def verify_cache(
     repo_id: str,
     revision: str,
-    cache_dir: str | None = None,
+    cache_dir: str = "/cache",
 ) -> dict:
     """
     Verify cached HuggingFace model files match checksums on the Hub.
-
-    Uses fast mode: checks symlink targets + file sizes (no full hash computation).
-
-    Args:
-        repo_id: Repository ID (e.g. "deepseek-ai/DeepSeek-V3.2")
-        revision: Git revision (commit hash, branch, or tag)
-        cache_dir: Cache directory (default: HF_HUB_CACHE)
-
-    Returns:
-        dict with verification stats: {verified, skipped, total, skipped_api_error}
-
-    Raises:
-        CacheVerificationError: If verification fails (mismatches, missing, or extra files)
     """
-    cache_dir = Path(cache_dir or HF_HUB_CACHE)
-
-    # Fetch file metadata from proxy
+    cache_dir = Path(cache_dir)
     params = {
         "repo_id": repo_id,
         "repo_type": "model",
@@ -174,3 +160,33 @@ async def verify_cache(
         "total": len(remote_files),
         "skipped_api_error": False,
     }
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    parser = argparse.ArgumentParser(description="Verify HuggingFace cache integrity")
+    parser.add_argument(
+        "--repo-id", required=True, help="Repository ID (e.g. deepseek-ai/DeepSeek-V3.2)"
+    )
+    parser.add_argument(
+        "--revision", required=True, help="Git revision (commit hash, branch, or tag)"
+    )
+    parser.add_argument(
+        "--cache-dir", default=HF_HUB_CACHE, help="Cache directory (default: HF_HUB_CACHE)"
+    )
+    args = parser.parse_args()
+
+    try:
+        result = asyncio.run(verify_cache(args.repo_id, args.revision, args.cache_dir))
+        if result["skipped_api_error"]:
+            print("⚠️  Verification skipped (API unavailable)")
+        else:
+            print(
+                f"✅ Verified {result['verified']}/{result['total']} files (skipped {result['skipped']} non-LFS)"
+            )
+    except CacheVerificationError as e:
+        print(f"❌ {e}")
+        sys.exit(1)

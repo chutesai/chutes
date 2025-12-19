@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import json
 import sys
 import uuid
@@ -218,7 +219,6 @@ def build_embedding_chute(
         logger.info(f"Launching vllm embedding server with command: {' '.join(parts)}")
 
         subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
-        server_up = False
         while True:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -227,7 +227,7 @@ def build_embedding_chute(
                         headers={"Authorization": f"Bearer {api_key}"},
                     ) as resp:
                         if resp.status == 200:
-                            server_up = True
+                            logger.success("vllm engine /v1/models endpoint ping success!")
                             break
             except Exception:
                 pass
