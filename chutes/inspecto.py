@@ -33,6 +33,7 @@ import chutes.util.context
 import chutes.util.schema
 import chutes.util.auth
 import chutes.util.user
+import chutes.util.hf
 import chutes.config
 import chutes.envdump
 import chutes.constants

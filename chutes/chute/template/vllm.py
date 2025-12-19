@@ -2,26 +2,26 @@ import re
 import asyncio
 import json
 import os
-import semver
+import sys
+import uuid
+import shlex
+import aiohttp
+import subprocess
+from loguru import logger
 from enum import Enum
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Callable, Literal, Optional, Union, List
+from typing import Dict, Callable, Literal, Optional, Union, List
 from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
-from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags
+from chutes.chute.template.helpers import (
+    set_default_cache_dirs,
+    set_nccl_flags,
+    warmup_model,
+    validate_auth,
+)
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-
-
-def semcomp(input_version: str, target_version: str):
-    """
-    Semver comparison with cleanup.
-    """
-    if not input_version:
-        input_version = "0.0.0"
-    clean_version = re.match(r"^([0-9]+\.[0-9]+\.[0-9]+).*", input_version).group(1)
-    return semver.compare(clean_version, target_version)
 
 
 class DefaultRole(Enum):
@@ -81,13 +81,13 @@ class UsageInfo(BaseModel):
     completion_tokens: Optional[int] = 0
 
 
-class TokenizeRequest(BaseRequest):
+class TokenizeRequest(BaseModel):
     model: str
     prompt: str
     add_special_tokens: bool
 
 
-class DetokenizeRequest(BaseRequest):
+class DetokenizeRequest(BaseModel):
     model: str
     tokens: List[int]
 
@@ -132,13 +132,13 @@ class ChatCompletionResponse(BaseModel):
     prompt_logprobs: Optional[List[Optional[Dict[int, Logprob]]]] = None
 
 
-class TokenizeResponse(BaseRequest):
+class TokenizeResponse(BaseModel):
     count: int
     max_model_len: int
     tokens: List[int]
 
 
-class DetokenizeResponse(BaseRequest):
+class DetokenizeResponse(BaseModel):
     prompt: str
 
 
@@ -236,7 +236,7 @@ def build_vllm_chute(
     tagline: str = "",
     readme: str = "",
     concurrency: int = 32,
-    engine_args: Dict[str, Any] = {},
+    engine_args: str = None,
     revision: str = None,
     max_instances: int = 1,
     scaling_threshold: float = 0.75,
@@ -244,8 +244,9 @@ def build_vllm_chute(
     allow_external_egress: bool = False,
     tee: bool = False,
 ):
-    if engine_args.get("revision"):
-        raise ValueError("revision is now a top-level argument to build_vllm_chute!")
+    if engine_args and "--revision" in engine_args:
+        raise ValueError("Revision is now a top-level argument to build_vllm_chute!")
+
     if not revision:
         from chutes.chute.template.helpers import get_current_hf_commit
 
@@ -280,7 +281,6 @@ def build_vllm_chute(
         tee=tee,
     )
 
-    # Minimal input schema with defaults.
     class MinifiedMessage(BaseModel):
         role: DefaultRole = DefaultRole.user
         content: str = Field("")
@@ -296,7 +296,6 @@ def build_vllm_chute(
     class MinifiedChatCompletion(MinifiedStreamChatCompletion):
         stream: bool = Field(False)
 
-    # Minimal completion input.
     class MinifiedStreamCompletion(BaseModel):
         prompt: str
         temperature: float = Field(0.7)
@@ -314,16 +313,9 @@ def build_vllm_chute(
         nonlocal model_name
         nonlocal image
 
-        # Imports here to avoid needing torch/vllm/etc. to just perform inference/build remotely.
         import torch
         import multiprocessing
-        from vllm import AsyncEngineArgs, AsyncLLMEngine
-        import vllm.entrypoints.openai.api_server as vllm_api_server
-        from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
-        from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
-        import vllm.version as vv
-
-        # Force download in initializer with some retries.
+        from chutes.util.hf import verify_cache
         from huggingface_hub import snapshot_download
 
         download_path = None
@@ -332,153 +324,91 @@ def build_vllm_chute(
             if self.revision:
                 download_kwargs["revision"] = self.revision
             try:
-                print(f"Attempting to download {model_name} to cache...")
+                logger.info(f"Attempting to download {model_name} to cache...")
                 download_path = await asyncio.to_thread(
                     snapshot_download, repo_id=model_name, **download_kwargs
                 )
-                print(f"Successfully downloaded {model_name} to {download_path}")
+                logger.success(f"Successfully downloaded {model_name} to {download_path}")
                 break
             except Exception as exc:
-                print(f"Failed downloading {model_name} {download_kwargs or ''}: {exc}")
+                logger.error(f"Failed downloading {model_name} {download_kwargs or ''}: {exc}")
             await asyncio.sleep(60)
         if not download_path:
             raise Exception(f"Failed to download {model_name} after 5 attempts")
 
-        # Set torch inductor, flashinfer, etc., cache directories.
         set_default_cache_dirs(download_path)
 
-        try:
-            from vllm.entrypoints.openai.serving_engine import BaseModelPath
-        except Exception:
-            from vllm.entrypoints.openai.serving_models import (
-                BaseModelPath,
-                OpenAIServingModels,
-            )
-        from vllm.entrypoints.serve.tokenize.serving import OpenAIServingTokenization
+        # Verify the cache.
+        await verify_cache(repo_id=model_name, revision=revision)
 
-        # Reset torch.
         torch.cuda.empty_cache()
         torch.cuda.init()
         torch.cuda.set_device(0)
         multiprocessing.set_start_method("spawn", force=True)
 
-        # Enable NCCL for multi-GPU on some chips by default.
         gpu_count = int(os.getenv("CUDA_DEVICE_COUNT", str(torch.cuda.device_count())))
         gpu_model = torch.cuda.get_device_name(0)
         set_nccl_flags(gpu_count, gpu_model)
 
-        # Tool args.
-        if chat_template := engine_args.pop("chat_template", None):
-            if len(chat_template) <= 1024 and os.path.exists(chat_template):
-                with open(chat_template) as infile:
-                    chat_template = infile.read()
-        extra_args = dict(
-            tool_parser=engine_args.pop("tool_call_parser", None),
-            enable_auto_tools=engine_args.pop("enable_auto_tool_choice", False),
-            chat_template=chat_template,
-            chat_template_content_format=engine_args.pop("chat_template_content_format", None),
-            reasoning_parser=engine_args.pop("reasoning_parser", None),
+        api_key = str(uuid.uuid4())
+        engine_args = engine_args or ""
+        if "--tensor-parallel-size" not in engine_args:
+            engine_args += f" --tensor-parallel-size {gpu_count}"
+        if "--enable-prompt-tokens-details" not in engine_args:
+            engine_args += " --enable-prompt-tokens-details"
+        if "--served-model-name" in engine_args:
+            raise ValueError("You may not override served model name!")
+        if len(re.findall(r"(?:^|\s)--(?:tensor-parallel-size|tp)[=\s]", engine_args)) > 1:
+            raise ValueError(
+                "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
+            )
+
+        # Using VLLM_API_KEY environment variable to hide the key from process listing.
+        env = os.environ.copy()
+        env["VLLM_API_KEY"] = api_key
+        env["HF_HUB_OFFLINE"] = "1"
+        env["SGL_MODEL_NAME"] = self.name
+        env["SGL_REVISION"] = revision
+
+        startup_command = (
+            f"{sys.executable} -m vllm.entrypoints.openai.api_server "
+            f"--model {model_name} --served-model-name {self.name} "
+            f"--revision {revision} "
+            f"--port 10101 --host 127.0.0.1 {engine_args}"
         )
+        parts = shlex.split(startup_command)
 
-        # Configure engine arguments
-        engine_args.pop("tensor_parallel_size", None)
-        engine_args = AsyncEngineArgs(
-            model=model_name,
-            tensor_parallel_size=gpu_count,
-            **engine_args,
-        )
+        logger.info(f"Launching vllm with command: {' '.join(parts)}")
+        self._vllm_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
 
-        # Initialize engine directly in the main process
-        self.engine = AsyncLLMEngine.from_engine_args(engine_args)
+        async def monitor_subprocess():
+            while True:
+                await asyncio.sleep(1)
+                if self._vllm_process.poll() is not None:
+                    raise RuntimeError(
+                        f"vLLM subprocess died with exit code {self._vllm_process.returncode}"
+                    )
 
-        base_model_paths = [
-            BaseModelPath(name=chute.name, model_path=chute.name),
-        ]
+        self._monitor_task = asyncio.create_task(monitor_subprocess())
 
-        self.include_router(vllm_api_server.router)
-        extra_token_args = {}
-        version_parts = vv.__version__.split(".")
-        old_vllm = False
-        if (
-            not vv.__version__.startswith("0.1.dev")
-            and int(version_parts[0]) == 0
-            and int(version_parts[1]) < 7
-        ):
-            old_vllm = True
-        pre_0_10 = False
-        if re.search(r"^0\.9\.", vv.__version__):
-            pre_0_10 = True
-        elif not re.search(r"^0\.[1-9]+\.dev", vv.__version__, re.I):
-            ver = ".".join(vv.__version__.split(".")[:3]) if vv.__version__ else "0.0.0"
+        while True:
             try:
-                if semcomp(ver, "0.10.0") < 0:
-                    pre_0_10 = True
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        "http://127.0.0.1:10101/v1/models",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    ) as resp:
+                        if resp.status == 200:
+                            logger.success("vllm engine /v1/models endpoint ping success!")
+                            break
             except Exception:
-                ...
-        if old_vllm:
-            extra_args["lora_modules"] = []
-            extra_args["prompt_adapters"] = []
-            extra_token_args["lora_modules"] = []
-            extra_args["base_model_paths"] = base_model_paths
-        else:
-            models_kwargs = dict(
-                engine_client=self.engine,
-                base_model_paths=base_model_paths,
-                lora_modules=[],
-            )
-            if pre_0_10:
-                models_kwargs["prompt_adapters"] = []
-            extra_args["models"] = OpenAIServingModels(**models_kwargs)
-            extra_token_args.update(
-                {
-                    "chat_template": extra_args.get("chat_template"),
-                    "chat_template_content_format": extra_args.get("chat_template_content_format"),
-                }
-            )
+                pass
+            await asyncio.sleep(1)
 
-        if pre_0_10 and not re.search(r"^0\.9\.0\.1", vv.__version__):
-            extra_args["disable_log_requests"] = True
-            extra_args["disable_log_stats"] = True
-
-        vllm_api_server.chat = lambda s: OpenAIServingChat(
-            self.engine,
-            response_role="assistant",
-            request_logger=None,
-            return_tokens_as_token_ids=True,
-            **extra_args,
-        )
-        vllm_api_server.completion = lambda s: OpenAIServingCompletion(
-            self.engine,
-            request_logger=None,
-            return_tokens_as_token_ids=True,
-            **{
-                k: v
-                for k, v in extra_args.items()
-                if k
-                not in (
-                    "chat_template",
-                    "chat_template_content_format",
-                    "tool_parser",
-                    "enable_auto_tools",
-                )
-            },
-        )
-        models_arg = base_model_paths if old_vllm else extra_args["models"]
-        vllm_api_server.tokenization = lambda s: OpenAIServingTokenization(
-            self.engine,
-            models_arg,
-            request_logger=None,
-            **extra_token_args,
-        )
-        self.state.openai_serving_tokenization = OpenAIServingTokenization(
-            self.engine,
-            models_arg,
-            request_logger=None,
-            **extra_token_args,
-        )
-        setattr(self.state, "enable_server_load_tracking", False)
-        if not old_vllm:
-            self.state.openai_serving_models = extra_args["models"]
+        self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
+        await warmup_model(self, base_url="http://127.0.0.1:10101", api_key=api_key)
+        await validate_auth(self, base_url="http://127.0.0.1:10101", api_key=api_key)
+        logger.info("✅ vLLM server warmed up and ready to roll!")
 
     def _parse_stream_chunk(encoded_chunk):
         chunk = encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()
@@ -488,6 +418,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/chat/completions",
+        passthrough_port=10101,
         public_api_path="/v1/chat/completions",
         method="POST",
         passthrough=True,
@@ -500,6 +431,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/completions",
+        passthrough_port=10101,
         public_api_path="/v1/completions",
         method="POST",
         passthrough=True,
@@ -512,6 +444,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/chat/completions",
+        passthrough_port=10101,
         public_api_path="/v1/chat/completions",
         method="POST",
         passthrough=True,
@@ -524,6 +457,7 @@ def build_vllm_chute(
     @chute.cord(
         path="/do_tokenize",
         passthrough_path="/tokenize",
+        passthrough_port=10101,
         public_api_path="/tokenize",
         method="POST",
         passthrough=True,
@@ -536,6 +470,7 @@ def build_vllm_chute(
     @chute.cord(
         path="/do_detokenize",
         passthrough_path="/detokenize",
+        passthrough_port=10101,
         public_api_path="/detokenize",
         method="POST",
         passthrough=True,
@@ -547,6 +482,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/completions",
+        passthrough_port=10101,
         public_api_path="/v1/completions",
         method="POST",
         passthrough=True,
@@ -558,6 +494,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/models",
+        passthrough_port=10101,
         public_api_path="/v1/models",
         public_api_method="GET",
         method="GET",
