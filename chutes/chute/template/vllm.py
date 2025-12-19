@@ -367,7 +367,17 @@ def build_vllm_chute(
         parts = shlex.split(startup_command)
 
         logger.info(f"Launching vllm with command: {' '.join(parts)}")
-        subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
+        self._vllm_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
+
+        async def monitor_subprocess():
+            while True:
+                await asyncio.sleep(1)
+                if self._vllm_process.poll() is not None:
+                    raise RuntimeError(
+                        f"vLLM subprocess died with exit code {self._vllm_process.returncode}"
+                    )
+
+        self._monitor_task = asyncio.create_task(monitor_subprocess())
 
         while True:
             try:

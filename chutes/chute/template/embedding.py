@@ -218,7 +218,18 @@ def build_embedding_chute(
 
         logger.info(f"Launching vllm embedding server with command: {' '.join(parts)}")
 
-        subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
+        self._vllm_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
+
+        async def monitor_subprocess():
+            while True:
+                await asyncio.sleep(1)
+                if self._vllm_process.poll() is not None:
+                    raise RuntimeError(
+                        f"vLLM embedding subprocess died with exit code {self._vllm_process.returncode}"
+                    )
+
+        self._monitor_task = asyncio.create_task(monitor_subprocess())
+
         while True:
             try:
                 async with aiohttp.ClientSession() as session:

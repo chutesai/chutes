@@ -342,7 +342,20 @@ def build_sglang_chute(
         startup_command = f"{sys.executable} -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args} --api-key {api_key}"
         command = startup_command.replace("\\\n", " ").replace("\\", " ")
         parts = command.split()
-        subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=os.environ.copy())
+        self._sglang_process = subprocess.Popen(
+            parts, text=True, stderr=subprocess.STDOUT, env=os.environ.copy()
+        )
+
+        async def monitor_subprocess():
+            while True:
+                await asyncio.sleep(1)
+                if self._sglang_process.poll() is not None:
+                    raise RuntimeError(
+                        f"SGLang subprocess died with exit code {self._sglang_process.returncode}"
+                    )
+
+        self._monitor_task = asyncio.create_task(monitor_subprocess())
+
         wait_for_server("http://127.0.0.1:10101", api_key=api_key)
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
         await warmup_model(self, api_key=api_key)
