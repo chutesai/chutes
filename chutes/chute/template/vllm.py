@@ -315,6 +315,7 @@ def build_vllm_chute(
 
         import torch
         import multiprocessing
+        from chutes.util.hf import verify_cache
         from huggingface_hub import snapshot_download
 
         download_path = None
@@ -337,6 +338,9 @@ def build_vllm_chute(
 
         set_default_cache_dirs(download_path)
 
+        # Verify the cache.
+        await verify_cache(repo_id=model_name, revision=revision)
+
         torch.cuda.empty_cache()
         torch.cuda.init()
         torch.cuda.set_device(0)
@@ -347,13 +351,13 @@ def build_vllm_chute(
         set_nccl_flags(gpu_count, gpu_model)
 
         api_key = str(uuid.uuid4())
-        port = 8000
         engine_args = engine_args or ""
         if "--tensor-parallel-size" not in engine_args:
             engine_args += f" --tensor-parallel-size {gpu_count}"
         if "--enable-prompt-tokens-details" not in engine_args:
             engine_args += " --enable-prompt-tokens-details"
-
+        if "--served-model-name" in engine_args:
+            raise ValueError("You may not override served model name!")
         if len(re.findall(r"(?:^|\s)--(?:tensor-parallel-size|tp)[=\s]", engine_args)) > 1:
             raise ValueError(
                 "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
@@ -362,8 +366,16 @@ def build_vllm_chute(
         # Using VLLM_API_KEY environment variable to hide the key from process listing.
         env = os.environ.copy()
         env["VLLM_API_KEY"] = api_key
+        env["HF_HUB_OFFLINE"] = "1"
+        env["SGL_MODEL_NAME"] = self.name
+        env["SGL_REVISION"] = revision
 
-        startup_command = f"{sys.executable} -m vllm.entrypoints.openai.api_server --model {model_name} --port {port} --host 127.0.0.1 {engine_args}"
+        startup_command = (
+            f"{sys.executable} -m vllm.entrypoints.openai.api_server "
+            f"--model {model_name} --served-model-name {self.name} "
+            f"--revision {revision} "
+            f"--port 10101 --host 127.0.0.1 {engine_args}"
+        )
         parts = shlex.split(startup_command)
 
         logger.info(f"Launching vllm with command: {' '.join(parts)}")
@@ -383,7 +395,7 @@ def build_vllm_chute(
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
-                        f"http://127.0.0.1:{port}/v1/models",
+                        "http://127.0.0.1:10101/v1/models",
                         headers={"Authorization": f"Bearer {api_key}"},
                     ) as resp:
                         if resp.status == 200:
@@ -394,8 +406,8 @@ def build_vllm_chute(
             await asyncio.sleep(1)
 
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
-        await warmup_model(self, base_url=f"http://127.0.0.1:{port}", api_key=api_key)
-        await validate_auth(self, base_url=f"http://127.0.0.1:{port}", api_key=api_key)
+        await warmup_model(self, base_url="http://127.0.0.1:10101", api_key=api_key)
+        await validate_auth(self, base_url="http://127.0.0.1:10101", api_key=api_key)
         logger.info("✅ vLLM server warmed up and ready to roll!")
 
     def _parse_stream_chunk(encoded_chunk):

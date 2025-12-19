@@ -291,6 +291,7 @@ def build_sglang_chute(
         from sglang.utils import (
             wait_for_server,
         )
+        from chutes.util.hf import verify_cache
         from huggingface_hub import snapshot_download
         from chutes.chute.template.helpers import warmup_model, validate_auth
 
@@ -317,6 +318,9 @@ def build_sglang_chute(
             await asyncio.sleep(60)
         if not download_path:
             raise Exception(f"Failed to download {model_name} after 5 attempts.")
+
+        # Verify the cache.
+        await verify_cache(repo_id=model_name, revision=revision)
 
         # Set torch inductor, flashinfer, etc., cache directories.
         set_default_cache_dirs(download_path)

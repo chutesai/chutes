@@ -145,6 +145,7 @@ def build_embedding_chute(
 
         import torch
         import multiprocessing
+        from chutes.util.hf import verify_cache
         from huggingface_hub import snapshot_download
 
         if enable_chunked_processing:
@@ -167,6 +168,9 @@ def build_embedding_chute(
             await asyncio.sleep(60)
         if not download_path:
             raise Exception(f"Failed to download {model_name} after 5 attempts")
+
+        # Verify the cache contents.
+        await verify_cache(repo_id=model_name, revision=revision)
 
         set_default_cache_dirs(download_path)
 
@@ -196,7 +200,6 @@ def build_embedding_chute(
             logger.info(f"   - Max Embed Length: {max_embed_len} tokens")
 
         api_key = str(uuid.uuid4())
-        port = 8000
         engine_args = engine_args or ""
         if "--tensor-parallel-size" not in engine_args:
             engine_args += f" --tensor-parallel-size {gpu_count}"
@@ -205,6 +208,8 @@ def build_embedding_chute(
             raise ValueError(
                 "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
             )
+        if "--served-model-name" in engine_args:
+            raise ValueError("You may not override served model name!")
 
         # Using VLLM_API_KEY environment variable to hide the key from process listing.
         env = os.environ.copy()
@@ -212,8 +217,17 @@ def build_embedding_chute(
         if enable_chunked_processing:
             env["VLLM_ENABLE_CHUNKED_PROCESSING"] = "true"
 
+        env["HF_HUB_OFFLINE"] = "1"
+        env["SGL_MODEL_NAME"] = self.name
+        env["SGL_REVISION"] = revision
+
         pooler_config_arg = shlex.quote(json.dumps(pooler_config))
-        startup_command = f"{sys.executable} -m vllm.entrypoints.openai.api_server --model {model_name} --port {port} --host 127.0.0.1 --pooler-config {pooler_config_arg} {engine_args}"
+        startup_command = (
+            f"{sys.executable} -m vllm.entrypoints.openai.api_server "
+            f"--model {model_name} --served-model-name {self.name} "
+            f"--revision {revision} --pooler-config {pooler_config_arg} "
+            f"--port 10101 --host 127.0.0.1 {engine_args}"
+        )
         parts = shlex.split(startup_command)
 
         logger.info(f"Launching vllm embedding server with command: {' '.join(parts)}")
@@ -234,7 +248,7 @@ def build_embedding_chute(
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
-                        f"http://127.0.0.1:{port}/v1/models",
+                        "http://127.0.0.1:10101/v1/models",
                         headers={"Authorization": f"Bearer {api_key}"},
                     ) as resp:
                         if resp.status == 200:
