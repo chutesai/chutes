@@ -263,7 +263,7 @@ def build_embedding_chute(
 
     @chute.cord(
         passthrough_path="/v1/embeddings",
-        passthrough_port=8000,
+        passthrough_port=10101,
         public_api_path="/v1/embeddings",
         method="POST",
         passthrough=True,
@@ -275,7 +275,7 @@ def build_embedding_chute(
 
     @chute.cord(
         passthrough_path="/v1/models",
-        passthrough_port=8000,
+        passthrough_port=10101,
         public_api_path="/v1/models",
         public_api_method="GET",
         method="GET",

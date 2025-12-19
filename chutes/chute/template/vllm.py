@@ -418,7 +418,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/chat/completions",
-        passthrough_port=8000,
+        passthrough_port=10101,
         public_api_path="/v1/chat/completions",
         method="POST",
         passthrough=True,
@@ -431,7 +431,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/completions",
-        passthrough_port=8000,
+        passthrough_port=10101,
         public_api_path="/v1/completions",
         method="POST",
         passthrough=True,
@@ -444,7 +444,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/chat/completions",
-        passthrough_port=8000,
+        passthrough_port=10101,
         public_api_path="/v1/chat/completions",
         method="POST",
         passthrough=True,
@@ -457,7 +457,7 @@ def build_vllm_chute(
     @chute.cord(
         path="/do_tokenize",
         passthrough_path="/tokenize",
-        passthrough_port=8000,
+        passthrough_port=10101,
         public_api_path="/tokenize",
         method="POST",
         passthrough=True,
@@ -470,7 +470,7 @@ def build_vllm_chute(
     @chute.cord(
         path="/do_detokenize",
         passthrough_path="/detokenize",
-        passthrough_port=8000,
+        passthrough_port=10101,
         public_api_path="/detokenize",
         method="POST",
         passthrough=True,
@@ -482,7 +482,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/completions",
-        passthrough_port=8000,
+        passthrough_port=10101,
         public_api_path="/v1/completions",
         method="POST",
         passthrough=True,
@@ -494,7 +494,7 @@ def build_vllm_chute(
 
     @chute.cord(
         passthrough_path="/v1/models",
-        passthrough_port=8000,
+        passthrough_port=10101,
         public_api_path="/v1/models",
         public_api_method="GET",
         method="GET",
