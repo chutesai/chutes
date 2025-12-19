@@ -135,10 +135,10 @@ def set_default_cache_dirs(download_path):
         "DG_JIT_CACHE_DIR",
         "SGL_DG_CACHE_DIR",
         "SGLANG_DG_CACHE_DIR",
+        "VLLM_CACHE_ROOT",
     ]:
         if not os.getenv(key):
             os.environ[key] = os.path.join(download_path, f"_{key.lower()}")
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 
 def set_nccl_flags(gpu_count, model_name):

@@ -354,9 +354,7 @@ def build_vllm_chute(
                 BaseModelPath,
                 OpenAIServingModels,
             )
-        from vllm.entrypoints.openai.serving_tokenization import (
-            OpenAIServingTokenization,
-        )
+        from vllm.entrypoints.serve.tokenize.serving import OpenAIServingTokenization
 
         # Reset torch.
         torch.cuda.empty_cache()
@@ -379,6 +377,7 @@ def build_vllm_chute(
             enable_auto_tools=engine_args.pop("enable_auto_tool_choice", False),
             chat_template=chat_template,
             chat_template_content_format=engine_args.pop("chat_template_content_format", None),
+            reasoning_parser=engine_args.pop("reasoning_parser", None),
         )
 
         # Configure engine arguments
