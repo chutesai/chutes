@@ -354,7 +354,7 @@ def build_vllm_chute(
         if "--enable-prompt-tokens-details" not in engine_args:
             engine_args += " --enable-prompt-tokens-details"
 
-        if len(re.findall(r"(?:^|\s)--(?:tensor-parallel-size|tp)[=\s]")) > 1:
+        if len(re.findall(r"(?:^|\s)--(?:tensor-parallel-size|tp)[=\s]", engine_args)) > 1:
             raise ValueError(
                 "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
             )

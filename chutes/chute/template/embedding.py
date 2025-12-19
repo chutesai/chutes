@@ -201,7 +201,7 @@ def build_embedding_chute(
         if "--tensor-parallel-size" not in engine_args:
             engine_args += f" --tensor-parallel-size {gpu_count}"
 
-        if len(re.findall(r"(?:^|\s)--(?:tensor-parallel-size|tp)[=\s]")) > 1:
+        if len(re.findall(r"(?:^|\s)--(?:tensor-parallel-size|tp)[=\s]", engine_args)) > 1:
             raise ValueError(
                 "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
             )
