@@ -32,13 +32,18 @@ from uvicorn import Config, Server
 from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from chutes.entrypoint.verify import GpuVerifier
+from chutes.entrypoint.verify import (
+    GpuVerifier,
+    TEE_EVIDENCE_ENDPOINT,
+    tee_evidence_endpoint,
+)
 from chutes.util.hf import verify_cache, CacheVerificationError
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import (
     get_launch_token,
     get_launch_token_data,
+    is_tee_env,
     load_chute,
     miner,
     authenticate_request,
@@ -835,7 +840,6 @@ async def _gather_devices_and_initialize(
     logger.info("Collecting GPUs and port mappings...")
     body = {"gpus": [], "port_mappings": port_mappings, "host": host}
     token_data = get_launch_token_data()
-    url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
 
     logger.info("Collecting full envdump...")
@@ -880,7 +884,7 @@ async def _gather_devices_and_initialize(
         raise Exception(f"Failed to verify disk space availability: {e}")
 
     # Verify GPUs, spin up dummy sockets, and finalize verification.
-    verifier = GpuVerifier.create(url, body)
+    verifier = GpuVerifier.create(body)
     symmetric_key, response = await verifier.verify()
 
     # Derive runint session key from validator's pubkey via ECDH if provided
@@ -1367,6 +1371,41 @@ def run_chute(
                 return e.to_dict()
 
         chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
+
+        async def _handle_hf_check(request: Request):
+            """
+            Verify HuggingFace cache integrity.
+            """
+            data = request.state.decrypted
+            repo_id = data.get("repo_id")
+            revision = data.get("revision")
+            full_hash_check = data.get("full_hash_check", False)
+
+            if not repo_id or not revision:
+                return {
+                    "error": True,
+                    "reason": "bad_request",
+                    "message": "repo_id and revision are required",
+                    "repo_id": repo_id,
+                    "revision": revision,
+                }
+
+            try:
+                result = await verify_cache(
+                    repo_id=repo_id,
+                    revision=revision,
+                    full_hash_check=full_hash_check,
+                )
+                result["error"] = False
+                return result
+            except CacheVerificationError as e:
+                return e.to_dict()
+
+        chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
+
+        if is_tee_env():
+            chute.add_api_route(TEE_EVIDENCE_ENDPOINT, tee_evidence_endpoint, methods=["GET"])
+        
 
         logger.success("Added all chutes internal endpoints.")
 
