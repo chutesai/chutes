@@ -33,12 +33,17 @@ from uvicorn import Config, Server
 from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from chutes.entrypoint.verify import GpuVerifier
+from chutes.entrypoint.verify import (
+    GpuVerifier,
+    TEE_EVIDENCE_ENDPOINT,
+    tee_evidence_endpoint,
+)
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import (
     get_launch_token,
     get_launch_token_data,
+    is_tee_env,
     load_chute,
     miner,
     authenticate_request,
@@ -857,7 +862,6 @@ async def _gather_devices_and_initialize(
     logger.info("Collecting GPUs and port mappings...")
     body = {"gpus": [], "port_mappings": port_mappings, "host": host}
     token_data = get_launch_token_data()
-    url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
 
     logger.info("Collecting full envdump...")
@@ -907,7 +911,7 @@ async def _gather_devices_and_initialize(
         raise Exception(f"Failed to verify disk space availability: {e}")
 
     # Verify GPUs, spin up dummy sockets, and finalize verification.
-    verifier = GpuVerifier.create(url, body)
+    verifier = GpuVerifier.create(body)
     symmetric_key, response = await verifier.verify()
 
     # Derive runint session key from validator's pubkey via ECDH if provided
@@ -1346,6 +1350,9 @@ def run_chute(
         chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
         chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
         chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
+
+        if is_tee_env():
+            chute.add_api_route(TEE_EVIDENCE_ENDPOINT, tee_evidence_endpoint, methods=["GET"])
 
         logger.success("Added all chutes internal endpoints.")
 
