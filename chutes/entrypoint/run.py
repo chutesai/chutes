@@ -562,6 +562,15 @@ class GraValMiddleware(BaseHTTPMiddleware):
         response = None
         try:
             response = await self._dispatch(request, call_next)
+
+            # Add concurrency headers to the response.
+            in_flight = len(self.requests_in_flight)
+            available = max(0, self.concurrency - in_flight)
+            utilization = in_flight / self.concurrency if self.concurrency > 0 else 0.0
+            response.headers["X-Chutes-Conn-Used"] = str(in_flight)
+            response.headers["X-Chutes-Conn-Available"] = str(available)
+            response.headers["X-Chutes-Conn-Utilization"] = f"{utilization:.4f}"
+
             if hasattr(response, "body_iterator"):
                 original_iterator = response.body_iterator
 
