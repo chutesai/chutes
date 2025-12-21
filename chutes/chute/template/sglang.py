@@ -335,13 +335,16 @@ def build_sglang_chute(
         # Configure engine arguments
         if not engine_args:
             engine_args = ""
-        engine_args += f" --tp {gpu_count}"
+        if "--tp=" not in engine_args and "--tp " not in engine_args:
+            engine_args += f" --tp {gpu_count}"
         if "--enable-cache-report" not in engine_args:
             engine_args += " --enable-cache-report"
         if "--enable-return-hidden-states" not in engine_args:
             engine_args += " --enable-return-hidden-states"
         if self.revision:
             engine_args += f" --revision {self.revision}"
+        if "--api-key" in engine_args:
+            raise ValueError("You may not override api key!")
         api_key = str(uuid.uuid4())
         startup_command = f"{sys.executable} -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args} --api-key {api_key}"
         command = startup_command.replace("\\\n", " ").replace("\\", " ")

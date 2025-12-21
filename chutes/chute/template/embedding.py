@@ -210,10 +210,10 @@ def build_embedding_chute(
             )
         if "--served-model-name" in engine_args:
             raise ValueError("You may not override served model name!")
+        if "--api-key" in engine_args:
+            raise ValueError("You may not override api key!")
 
-        # Using VLLM_API_KEY environment variable to hide the key from process listing.
         env = os.environ.copy()
-        env["VLLM_API_KEY"] = api_key
         if enable_chunked_processing:
             env["VLLM_ENABLE_CHUNKED_PROCESSING"] = "true"
 
@@ -226,7 +226,7 @@ def build_embedding_chute(
             f"{sys.executable} -m vllm.entrypoints.openai.api_server "
             f"--model {model_name} --served-model-name {self.name} "
             f"--revision {revision} --pooler-config {pooler_config_arg} "
-            f"--port 10101 --host 127.0.0.1 {engine_args}"
+            f"--port 10101 --host 127.0.0.1 --api-key {api_key} {engine_args}"
         )
         parts = shlex.split(startup_command)
 

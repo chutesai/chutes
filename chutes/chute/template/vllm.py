@@ -364,10 +364,10 @@ def build_vllm_chute(
             raise ValueError(
                 "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
             )
+        if "--api-key" in engine_args:
+            raise ValueError("You may not override api key!")
 
-        # Using VLLM_API_KEY environment variable to hide the key from process listing.
         env = os.environ.copy()
-        env["VLLM_API_KEY"] = api_key
         env["HF_HUB_OFFLINE"] = "1"
         env["SGL_MODEL_NAME"] = self.name
         env["SGL_REVISION"] = revision
@@ -375,7 +375,7 @@ def build_vllm_chute(
         startup_command = (
             f"{sys.executable} -m vllm.entrypoints.openai.api_server "
             f"--model {model_name} --served-model-name {self.name} "
-            f"--revision {revision} "
+            f"--revision {revision} --api-key {api_key} "
             f"--port 10101 --host 127.0.0.1 {engine_args}"
         )
         parts = shlex.split(startup_command)
