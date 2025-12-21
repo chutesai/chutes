@@ -4,7 +4,6 @@ import json
 import os
 import sys
 import uuid
-import shlex
 import aiohttp
 import subprocess
 from loguru import logger
@@ -378,9 +377,11 @@ def build_vllm_chute(
             f"--revision {revision} --api-key {api_key} "
             f"--port 10101 --host 127.0.0.1 {engine_args}"
         )
-        parts = shlex.split(startup_command)
 
-        logger.info(f"Launching vllm with command: {' '.join(parts)}")
+        display_cmd = startup_command.replace(api_key, "*" * len(api_key))
+        logger.info(f"Launching vllm with command: {display_cmd}")
+        command = startup_command.replace("\\\n", " ").replace("\\", " ")
+        parts = command.split()
         self._vllm_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
 
         async def monitor_subprocess():

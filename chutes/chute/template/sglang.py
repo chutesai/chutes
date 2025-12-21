@@ -5,6 +5,7 @@ import re
 import sys
 import uuid
 from enum import Enum
+from loguru import logger
 from pydantic import BaseModel, Field
 from typing import Dict, Callable, Literal, Optional, Union, List
 from chutes.image import Image
@@ -307,14 +308,14 @@ def build_sglang_chute(
             if self.revision:
                 download_kwargs["revision"] = self.revision
             try:
-                print(f"Attempting to download {model_name} to cache...")
+                logger.info(f"Attempting to download {model_name} to cache...")
                 download_path = await asyncio.to_thread(
                     snapshot_download, repo_id=model_name, **download_kwargs
                 )
-                print(f"Successfully downloaded {model_name} to {download_path}")
+                logger.success(f"Successfully downloaded {model_name} to {download_path}")
                 break
             except Exception as exc:
-                print(f"Failed downloading {model_name} {download_kwargs or ''}: {exc}")
+                logger.warning(f"Failed downloading {model_name} {download_kwargs or ''}: {exc}")
             await asyncio.sleep(60)
         if not download_path:
             raise Exception(f"Failed to download {model_name} after 5 attempts.")
@@ -349,6 +350,8 @@ def build_sglang_chute(
         startup_command = f"{sys.executable} -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args} --api-key {api_key}"
         command = startup_command.replace("\\\n", " ").replace("\\", " ")
         parts = command.split()
+        display_cmd = startup_command.replace(api_key, "*" * len(api_key))
+        logger.info(f"Launching SGLang with command: {display_cmd}")
         self._sglang_process = subprocess.Popen(
             parts, text=True, stderr=subprocess.STDOUT, env=os.environ.copy()
         )

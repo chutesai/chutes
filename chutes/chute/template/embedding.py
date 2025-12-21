@@ -228,9 +228,10 @@ def build_embedding_chute(
             f"--revision {revision} --pooler-config {pooler_config_arg} "
             f"--port 10101 --host 127.0.0.1 --api-key {api_key} {engine_args}"
         )
+        display_cmd = startup_command.replace(api_key, "*" * len(api_key))
         parts = shlex.split(startup_command)
 
-        logger.info(f"Launching vllm embedding server with command: {' '.join(parts)}")
+        logger.info(f"Launching vllm embedding server with command: {display_cmd}")
 
         self._vllm_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
 
