@@ -1,6 +1,6 @@
 from abc import abstractmethod
 import base64
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from functools import lru_cache
 import json
 import os
@@ -26,10 +26,18 @@ _evidence_nonce: str | None = None
 _evidence_nonce_locked: bool = False
 
 
-def _set_evidence_nonce(nonce: str) -> None:
+@asynccontextmanager
+async def _use_evidence_nonce(validator_url: str):
     """
-    Set the TEE nonce. Can only be called once per verification process.
+    Context manager for TEE evidence nonce lifecycle. Fetches nonce from validator,
+    makes it available for the duration, and automatically clears it when done.
     
+    Args:
+        validator_url: The base URL of the validator
+    
+    Yields:
+        The nonce value
+        
     Raises:
         RuntimeError: If nonce is already locked (multiple verification processes detected)
     """
@@ -37,35 +45,49 @@ def _set_evidence_nonce(nonce: str) -> None:
     
     if _evidence_nonce_locked:
         raise RuntimeError(
-            "TEE nonce already set. Only one verification process should be running."
+            "TEE nonce already locked. Only one verification process should be running."
         )
     
+    # Fetch nonce from validator
+    url = urljoin(validator_url, "/instances/nonce")
+    async with aiohttp.ClientSession(raise_for_status=True) as http_session:
+        async with http_session.get(url) as resp:
+            logger.success(f"Successfully initiated attestation with validator {validator_url}.")
+            nonce = await resp.json()
+    
+    # Set the nonce and lock
     _evidence_nonce = nonce
     _evidence_nonce_locked = True
-
-
-@contextmanager
-def _use_evidence_nonce():
-    """
-    Context manager for using the TEE nonce. Ensures nonce is available for the duration
-    and automatically clears it when done.
-    
-    Yields:
-        The current nonce value
-        
-    Raises:
-        RuntimeError: If no nonce has been set
-    """
-    global _evidence_nonce, _evidence_nonce_locked
-    
-    if _evidence_nonce is None:
-        raise RuntimeError("No nonce has been set")
     
     try:
-        yield _evidence_nonce
+        yield nonce
     finally:
+        # Clean up nonce state
         _evidence_nonce = None
         _evidence_nonce_locked = False
+
+
+def _get_evidence_nonce() -> str | None:
+    """Get the current evidence nonce (used by evidence endpoint)."""
+    return _evidence_nonce
+
+
+@asynccontextmanager
+async def _attestation_session():
+    """
+    Creates an aiohttp session configured for the attestation service.
+
+    SSL verification is disabled because certificate authenticity is verified
+    through TDX quotes, which include a hash of the service's public key.
+    """
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+
+    connector = aiohttp.TCPConnector(ssl=ssl_context)
+
+    async with aiohttp.ClientSession(connector=connector, raise_for_status=True) as session:
+        yield session
 
 
 class GpuVerifier:
@@ -205,23 +227,6 @@ class GravalGpuVerifier(GpuVerifier):
 
 class TeeGpuVerifier(GpuVerifier):
 
-    @asynccontextmanager
-    async def _attestation_session(self):
-        """
-        Creates an aiohttp session configured for the attestation service.
-
-        SSL verification is disabled because certificate authenticity is verified
-        through TDX quotes, which include a hash of the service's public key.
-        """
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-
-        async with aiohttp.ClientSession(connector=connector, raise_for_status=True) as session:
-            yield session
-
     @property
     @lru_cache(maxsize=1)
     def validator_url(self) -> str:
@@ -235,26 +240,6 @@ class TeeGpuVerifier(GpuVerifier):
         _deployment_id = hostname.lstrip("chute-")
         return _deployment_id
 
-    async def _get_nonce(self):
-        url = urljoin(self.validator_url, "/servers/nonce")
-        async with aiohttp.ClientSession(raise_for_status=True) as http_session:
-            async with http_session.get(url) as resp:
-                logger.success("Successfully retrieved nonce for attestation evidence.")
-                data = await resp.json()
-                return data["nonce"]
-
-    async def _fetch_evidence_nonce(self):
-        """
-        Initiate the attestation process with the validator.
-        """
-        url = urljoin(self.validator_url, "/instances/attest")
-
-        async with aiohttp.ClientSession(raise_for_status=True) as http_session:
-            async with http_session.get(url) as resp:
-                logger.success(f"Successfully initiated attestation with validator {self.validator_url}.")
-                _nonce = await resp.json()
-                _set_evidence_nonce(_nonce)
-
     async def fetch_symmetric_key(self):
         """
         New TEE verification flow (3 phases):
@@ -263,24 +248,19 @@ class TeeGpuVerifier(GpuVerifier):
                  validator verifies and returns symmetric key
         Phase 3: Start dummy sockets and finalize verification (handled by base class)
         """
-        # First get a nonce from the validator to use with attestation evidence
-        await self._fetch_evidence_nonce()
-        
-        # Claim the launch config - validator will call our /_tee_evidence endpoint
-        # and return symmetric key after successful attestation
         token = self._token
         
-        # Use context manager to ensure nonce is available for evidence endpoint and cleaned up after
-        with _use_evidence_nonce() as nonce:
+        # Context manager fetches nonce, makes it available for evidence endpoint, and cleans up
+        async with _use_evidence_nonce(self.validator_url) as _nonce:
             async with aiohttp.ClientSession(raise_for_status=True) as session:
                 headers = {
                     "Authorization": token,
-                    "X-Chutes-Nonce": nonce,
+                    "X-Chutes-Nonce": _nonce
                 }
                 _body = self._body.copy()
                 _body["deployment_id"] = self.deployment_id
                 logger.info(f"Requesting verification from validator: {self._url}")
-                async with session.post(self._url, headers=headers, json=self._body) as resp:
+                async with session.post(self._url, headers=headers, json=_body) as resp:
                     data = await resp.json()
                     self._symmetric_key = bytes.fromhex(data["symmetric_key"])
                     logger.success("Successfully received symmetric key from validator")
@@ -315,7 +295,7 @@ class TeeGpuVerifier(GpuVerifier):
 
     async def gather_gpus(self):
         devices = []
-        async with self._attestation_session() as http_session:
+        async with _attestation_session() as http_session:
             url = "https://attestation-service-internal.attestation-system.svc.cluster.local.:8443/server/devices"
             params = {"gpu_ids": os.environ.get("CHUTES_NVIDIA_DEVICES")}
             async with http_session.get(url=url, params=params) as resp:
@@ -405,27 +385,22 @@ async def tee_evidence_endpoint(request: Request):
     This endpoint is called by the validator during Phase 2 to fetch TDX quote and GPU evidence.
     """
     try:
-        # Get the nonce from module-level storage
-        nonce = _get_tee_nonce()
+        # Get the nonce from module-level storage (already set by fetch_symmetric_key)
+        nonce = _get_evidence_nonce()
         if nonce is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No nonce found."
+                detail="No nonce found. Attestation not initiated."
             )
         
         # Request evidence from attestation service
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-        
         url = "https://attestation-service-internal.attestation-system.svc.cluster.local.:8443/server/attest"
         params = {
             "nonce": nonce,
             "gpu_ids": os.environ.get("CHUTES_NVIDIA_DEVICES"),
         }
         
-        async with aiohttp.ClientSession(connector=connector, raise_for_status=True) as http_session:
+        async with _attestation_session() as http_session:
             async with http_session.get(url, params=params) as resp:
                 logger.success("Successfully retrieved attestation evidence for validator request.")
                 evidence = await resp.json()
