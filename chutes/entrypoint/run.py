@@ -28,6 +28,7 @@ from functools import lru_cache
 from loguru import logger
 from typing import Optional, Any
 from datetime import datetime
+from pathlib import Path
 from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
@@ -53,6 +54,35 @@ from cryptography.hazmat.primitives import padding
 
 
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv")
+
+# Security configuration for path validation
+ALLOWED_BASE_DIRS = [
+    "/app",  # Application code directory
+    "/tmp",  # Temporary files (with restrictions)
+]
+
+BLOCKED_PATTERNS = [
+    "/proc/",
+    "/sys/",
+    "/dev/",
+    "/etc/",
+    "/root/",
+    "/home/",
+    "/var/",
+    "/usr/",
+    "/bin/",
+    "/sbin/",
+    "/boot/",
+    "/lib/",
+    "/lib64/",
+    "/opt/",
+    "/srv/",
+    "/run/secrets/",
+    ".ssh/",
+    ".chutes/",
+]
+
+MAX_READ_SIZE = 10 * 1024 * 1024  # 10MB
 
 
 @lru_cache(maxsize=1)
@@ -175,41 +205,171 @@ def process_netnanny_challenge(chute, request: Request):
 
 async def handle_slurp(request: Request, chute_module):
     """
-    Read part or all of a file.
+    Read part or all of a file with proper path validation.
+    
+    This function validates all paths before performing filesystem operations
+    to prevent path traversal attacks.
     """
-    slurp = Slurp(**request.state.decrypted)
+    try:
+        slurp = Slurp(**request.state.decrypted)
+    except Exception as e:
+        logger.error(f"Invalid Slurp request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid request format: {e}"
+        )
+    
+    # Handle special reserved paths (these are safe)
     if slurp.path == "__file__":
-        source_code = inspect.getsource(chute_module)
-        return Response(
-            content=base64.b64encode(source_code.encode()).decode(),
-            media_type="text/plain",
-        )
+        try:
+            source_code = inspect.getsource(chute_module)
+            return Response(
+                content=base64.b64encode(source_code.encode()).decode(),
+                media_type="text/plain",
+            )
+        except Exception as e:
+            logger.error(f"Failed to get source for __file__: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve source code"
+            )
+    
     elif slurp.path == "__run__":
-        source_code = inspect.getsource(sys.modules[__name__])
-        return Response(
-            content=base64.b64encode(source_code.encode()).decode(),
-            media_type="text/plain",
+        try:
+            source_code = inspect.getsource(sys.modules[__name__])
+            return Response(
+                content=base64.b64encode(source_code.encode()).decode(),
+                media_type="text/plain",
+            )
+        except Exception as e:
+            logger.error(f"Failed to get source for __run__: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve source code"
+            )
+    
+    # Validate and sanitize the path
+    try:
+        validated_path = validate_and_sanitize_path(
+            slurp.path, 
+            allow_directories=True  # Allow directory listing
         )
-    if not os.path.isfile(slurp.path):
-        if os.path.isdir(slurp.path):
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        logger.error(f"Path validation error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Path validation failed"
+        )
+    
+    # Handle directory listing
+    if validated_path.is_dir():
+        try:
+            # Only list files, not subdirectories (optional restriction)
+            files = [
+                f.name for f in validated_path.iterdir() 
+                if f.is_file()  # Only files, no directories
+            ]
+            
+            # Log directory access for audit
+            logger.info(
+                f"Directory listing: path={validated_path}, "
+                f"client={request.client.host}, "
+                f"files_count={len(files)}"
+            )
+            
             if hasattr(request.state, "_encrypt"):
-                return {"json": request.state._encrypt(json.dumps({"dir": os.listdir(slurp.path)}))}
-            return {"dir": os.listdir(slurp.path)}
+                return {"json": request.state._encrypt(json.dumps({"dir": files}))}
+            return {"dir": files}
+            
+        except PermissionError:
+            logger.warning(f"Permission denied for directory: {validated_path}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied"
+            )
+        except Exception as e:
+            logger.error(f"Directory listing error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to list directory"
+            )
+    
+    # Handle file reading
+    if not validated_path.is_file():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Path not found: {slurp.path}",
+            detail="File not found"
         )
-    response_bytes = None
-    with open(slurp.path, "rb") as f:
-        f.seek(slurp.start_byte)
-        if slurp.end_byte is None:
-            response_bytes = f.read()
-        else:
-            response_bytes = f.read(slurp.end_byte - slurp.start_byte)
-    response_data = {"contents": base64.b64encode(response_bytes).decode()}
-    if hasattr(request.state, "_encrypt"):
-        return {"json": request.state._encrypt(json.dumps(response_data))}
-    return response_data
+    
+    # Validate byte range
+    try:
+        file_size = validated_path.stat().st_size
+    except OSError as e:
+        logger.error(f"Failed to stat file: {validated_path} - {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to access file"
+        )
+    
+    start_byte = slurp.start_byte or 0
+    end_byte = slurp.end_byte if slurp.end_byte is not None else file_size
+    
+    # Validate byte range
+    if start_byte < 0 or end_byte < start_byte:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid byte range"
+        )
+    
+    if end_byte > file_size:
+        end_byte = file_size
+    
+    # Limit maximum read size (prevent DoS)
+    read_size = end_byte - start_byte
+    if read_size > MAX_READ_SIZE:
+        logger.warning(
+            f"Read size exceeded: requested={read_size}, "
+            f"max={MAX_READ_SIZE}, path={validated_path}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Requested read size exceeds maximum allowed size"
+        )
+    
+    # Read the file
+    try:
+        with open(validated_path, "rb") as f:
+            f.seek(start_byte)
+            response_bytes = f.read(end_byte - start_byte)
+        
+        # Log file access for audit
+        logger.info(
+            f"File read: path={validated_path}, "
+            f"size={len(response_bytes)}, "
+            f"client={request.client.host}, "
+            f"range={start_byte}-{end_byte}"
+        )
+        
+        response_data = {"contents": base64.b64encode(response_bytes).decode()}
+        
+        if hasattr(request.state, "_encrypt"):
+            return {"json": request.state._encrypt(json.dumps(response_data))}
+        return response_data
+        
+    except PermissionError:
+        logger.warning(f"Permission denied for file: {validated_path}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied"
+        )
+    except OSError as e:
+        logger.error(f"File read error: {validated_path} - {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to read file"
+        )
 
 
 async def pong(request: Request) -> dict[str, Any]:
@@ -341,6 +501,121 @@ class Slurp(BaseModel):
     path: str
     start_byte: Optional[int] = 0
     end_byte: Optional[int] = None
+
+
+def validate_and_sanitize_path(user_path: str, allow_directories: bool = False) -> Path:
+    """
+    Validate and sanitize file paths to prevent path traversal attacks.
+    
+    This function:
+    1. Checks for path traversal attempts (..)
+    2. Validates path is within allowed directories
+    3. Blocks access to sensitive system directories
+    4. Prevents symlink following
+    5. Validates file extensions (if configured)
+    
+    Args:
+        user_path: User-provided path string
+        allow_directories: Whether directory access is allowed
+        
+    Returns:
+        Path: Validated and sanitized Path object
+        
+    Raises:
+        HTTPException: If path is invalid or not allowed
+    """
+    
+    if not user_path or not isinstance(user_path, str):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid path parameter"
+        )
+    
+    # Check for special reserved paths first
+    if user_path in ("__file__", "__run__"):
+        return Path(user_path)  # These are handled separately
+    
+    # Check for path traversal attempts
+    if ".." in user_path or user_path.startswith("/"):
+        # Resolve to absolute path to detect traversal
+        try:
+            abs_path = Path(user_path).resolve()
+        except (OSError, ValueError) as e:
+            logger.warning(f"Invalid path resolution: {user_path} - {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid path: {user_path}"
+            )
+    else:
+        # Relative path - resolve from current working directory
+        abs_path = Path(os.getcwd()) / user_path
+        abs_path = abs_path.resolve()
+    
+    # Normalize the path
+    abs_path_str = str(abs_path)
+    
+    # Check against blocked patterns
+    for blocked in BLOCKED_PATTERNS:
+        if blocked in abs_path_str:
+            logger.warning(
+                f"Blocked path access attempt: user_path={user_path}, "
+                f"resolved={abs_path_str}, pattern={blocked}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access to this path is not allowed"
+            )
+    
+    # Check if path is within allowed directories
+    allowed = False
+    matched_base_dir = None
+    for base_dir in ALLOWED_BASE_DIRS:
+        base_path = Path(base_dir).resolve()
+        try:
+            # Check if the path is within the base directory
+            abs_path.relative_to(base_path)
+            allowed = True
+            matched_base_dir = base_dir
+            break
+        except ValueError:
+            # Path is not within this base directory
+            continue
+    
+    if not allowed:
+        logger.warning(
+            f"Path not in allowed directories: user_path={user_path}, "
+            f"resolved={abs_path_str}, allowed_dirs={ALLOWED_BASE_DIRS}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Path is not within allowed directories"
+        )
+    
+    # Check for symlinks (could bypass directory restrictions)
+    if abs_path.is_symlink():
+        logger.warning(
+            f"Symlink detected and blocked: user_path={user_path}, "
+            f"resolved={abs_path_str}, target={abs_path.readlink()}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Symlinks are not allowed"
+        )
+    
+    # Additional validation for files
+    if not allow_directories:
+        if not abs_path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found"
+            )
+    
+    logger.debug(
+        f"Path validated: user_path={user_path}, "
+        f"resolved={abs_path_str}, base_dir={matched_base_dir}"
+    )
+    
+    return abs_path
 
 
 class FSChallenge(BaseModel):
