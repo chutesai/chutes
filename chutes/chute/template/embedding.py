@@ -254,6 +254,43 @@ def build_embedding_chute(
                 pass
             await asyncio.sleep(1)
 
+    @chute.on_event("shutdown")
+    async def cleanup_vllm(self):
+        """
+        Cleanup vLLM embedding subprocess and monitor task on shutdown.
+        """
+        logger.info("Cleaning up vLLM embedding subprocess...")
+        try:
+            # Cancel the monitor task
+            if hasattr(self, "_monitor_task") and self._monitor_task:
+                self._monitor_task.cancel()
+                try:
+                    await self._monitor_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Terminate the subprocess gracefully
+            if hasattr(self, "_vllm_process") and self._vllm_process:
+                try:
+                    self._vllm_process.terminate()
+                    # Wait up to 5 seconds for graceful shutdown
+                    try:
+                        self._vllm_process.wait(timeout=5)
+                        logger.info("vLLM embedding subprocess terminated gracefully")
+                    except subprocess.TimeoutExpired:
+                        # Force kill if it doesn't terminate
+                        logger.warning("vLLM embedding subprocess did not terminate, forcing kill")
+                        self._vllm_process.kill()
+                        self._vllm_process.wait()
+                        logger.info("vLLM embedding subprocess force killed")
+                except ProcessLookupError:
+                    # Process already terminated
+                    logger.debug("vLLM embedding subprocess already terminated")
+                except Exception as e:
+                    logger.error(f"Error cleaning up vLLM embedding subprocess: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during vLLM embedding cleanup: {e}")
+
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
         server_ready.set()
         logger.info("✅ Embedding server initialized successfully!")
