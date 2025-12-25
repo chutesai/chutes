@@ -18,6 +18,7 @@ from chutes.chute.template.helpers import (
     set_nccl_flags,
     warmup_model,
     validate_auth,
+    monitor_engine,
 )
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
@@ -384,15 +385,10 @@ def build_vllm_chute(
         parts = command.split()
         self._vllm_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
 
-        async def monitor_subprocess():
-            while True:
-                await asyncio.sleep(1)
-                if self._vllm_process.poll() is not None:
-                    raise RuntimeError(
-                        f"vLLM subprocess died with exit code {self._vllm_process.returncode}"
-                    )
-
-        self._monitor_task = asyncio.create_task(monitor_subprocess())
+        server_ready = asyncio.Event()
+        self._monitor_task = asyncio.create_task(
+            monitor_engine(self._vllm_process, api_key, server_ready, model_name=self.name)
+        )
 
         while True:
             try:
@@ -411,6 +407,7 @@ def build_vllm_chute(
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
         await warmup_model(self, base_url="http://127.0.0.1:10101", api_key=api_key)
         await validate_auth(self, base_url="http://127.0.0.1:10101", api_key=api_key)
+        server_ready.set()
         logger.info("✅ vLLM server warmed up and ready to roll!")
 
     def _parse_stream_chunk(encoded_chunk):

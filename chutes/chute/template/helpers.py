@@ -57,9 +57,9 @@ async def prompt_one(
             headers=headers,
         ) as resp:
             if require_status:
-                assert (
-                    resp.status == require_status
-                ), f"Expected to receive status code {require_status}, received {resp.status}"
+                assert resp.status == require_status, (
+                    f"Expected to receive status code {require_status}, received {resp.status}"
+                )
                 return await resp.json()
             if resp.status == 200:
                 result = await resp.json()
@@ -148,3 +148,41 @@ def set_nccl_flags(gpu_count, model_name):
         for key in ["NCCL_P2P_DISABLE", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL"]:
             if key in os.environ:
                 del os.environ[key]
+
+
+async def monitor_engine(
+    process,
+    api_key: str,
+    ready_event: asyncio.Event,
+    port: int = 10101,
+    check_interval: int = 5,
+    timeout: float = 3.0,
+    failure_threshold: int = 3,
+    model_name: str = "Engine",
+):
+    """
+    Monitor the engine process and HTTP endpoint.
+    """
+    consecutive_failures = 0
+    async with aiohttp.ClientSession() as session:
+        while True:
+            if process.poll() is not None:
+                raise RuntimeError(
+                    f"{model_name} subprocess died with exit code {process.returncode}"
+                )
+            if ready_event.is_set():
+                try:
+                    async with session.get(
+                        f"http://127.0.0.1:{port}/v1/models",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=aiohttp.ClientTimeout(total=timeout),
+                    ) as resp:
+                        if resp.status != 200:
+                            consecutive_failures += 1
+                        else:
+                            consecutive_failures = 0
+                except Exception:
+                    consecutive_failures += 1
+                if consecutive_failures >= failure_threshold:
+                    raise RuntimeError(f"{model_name} server is unresponsive.")
+            await asyncio.sleep(check_interval)

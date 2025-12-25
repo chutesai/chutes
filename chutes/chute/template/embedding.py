@@ -13,7 +13,7 @@ from typing import Dict, Callable, List, Optional, Literal
 from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
-from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags
+from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags, monitor_engine
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
@@ -235,15 +235,10 @@ def build_embedding_chute(
 
         self._vllm_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
 
-        async def monitor_subprocess():
-            while True:
-                await asyncio.sleep(1)
-                if self._vllm_process.poll() is not None:
-                    raise RuntimeError(
-                        f"vLLM embedding subprocess died with exit code {self._vllm_process.returncode}"
-                    )
-
-        self._monitor_task = asyncio.create_task(monitor_subprocess())
+        server_ready = asyncio.Event()
+        self._monitor_task = asyncio.create_task(
+            monitor_engine(self._vllm_process, api_key, server_ready, model_name=self.name)
+        )
 
         while True:
             try:
@@ -260,6 +255,7 @@ def build_embedding_chute(
             await asyncio.sleep(1)
 
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
+        server_ready.set()
         logger.info("✅ Embedding server initialized successfully!")
 
     @chute.cord(

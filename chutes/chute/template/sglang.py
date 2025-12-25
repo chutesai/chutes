@@ -11,7 +11,7 @@ from typing import Dict, Callable, Literal, Optional, Union, List
 from chutes.image import Image
 from chutes.image.standard.sglang import SGLANG
 from chutes.chute import Chute, ChutePack, NodeSelector
-from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags
+from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags, monitor_engine
 
 
 class DefaultRole(Enum):
@@ -356,20 +356,16 @@ def build_sglang_chute(
             parts, text=True, stderr=subprocess.STDOUT, env=os.environ.copy()
         )
 
-        async def monitor_subprocess():
-            while True:
-                await asyncio.sleep(1)
-                if self._sglang_process.poll() is not None:
-                    raise RuntimeError(
-                        f"SGLang subprocess died with exit code {self._sglang_process.returncode}"
-                    )
-
-        self._monitor_task = asyncio.create_task(monitor_subprocess())
+        server_ready = asyncio.Event()
+        self._monitor_task = asyncio.create_task(
+            monitor_engine(self._sglang_process, api_key, server_ready, model_name=self.name)
+        )
 
         wait_for_server("http://127.0.0.1:10101", api_key=api_key)
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
         await warmup_model(self, api_key=api_key)
         await validate_auth(self, api_key=api_key)
+        server_ready.set()
 
     def _parse_stream_chunk(encoded_chunk):
         chunk = encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()
