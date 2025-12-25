@@ -1,7 +1,6 @@
 import asyncio
 import aiohttp
 import os
-import sys
 import shutil
 import importlib
 import tempfile
@@ -19,6 +18,8 @@ from chutes.image.directive.add import ADD
 from chutes.image.directive.generic_run import RUN
 from chutes.entrypoint._shared import load_chute, FakeStreamWriter, upload_logo
 from chutes.util.auth import sign_request
+from chutes.util.ui import UIHelper
+from chutes.exception import UserAbortedError, DeploymentError
 from chutes._version import version as current_version
 
 
@@ -40,7 +41,17 @@ def expand_context_files(paths, cwd):
 def temporary_build_directory(image):
     """
     Helper to copy the build context files to a build directory.
+    
+    Args:
+        image: Image object containing directives with build context.
+        
+    Yields:
+        Path to temporary directory containing build context.
+        
+    Raises:
+        UserAbortedError: If user cancels the operation.
     """
+    ui = UIHelper()
     all_input_files = []
     for directive in image._directives:
         all_input_files += directive._build_context
@@ -51,25 +62,21 @@ def temporary_build_directory(image):
         for path in expand_context_files(all_input_files, cwd)
         if os.path.basename(path) != "Dockerfile"
     ]
-    samples = all_real_files[:10]
-    logger.info(
-        f"Found {len(all_real_files)} files to include in build context -- \033[1m\033[4mthese will be uploaded for remote builds!\033[0m"
+    
+    # Show file list with smart truncation
+    ui.show_info(
+        f"Found {len(all_real_files)} files to include in build context - these will be uploaded for remote builds!"
     )
-    for path in samples:
-        rel_path = os.path.relpath(path, start=cwd)
-        logger.info(f" {rel_path}")
-    if len(samples) != len(all_real_files):
-        show_all = input(
-            f"\033[93mShowing {len(samples)} of {len(all_real_files)}, would you like to see the rest? (y/n) \033[0m"
-        )
-        if show_all.lower() == "y":
-            for path in all_real_files[10:]:
-                rel_path = os.path.relpath(path, start=cwd)
-                logger.info(f" {rel_path}")
-    confirm = input("\033[1m\033[4mConfirm submitting build context? (y/n) \033[0m")
-    if confirm.lower().strip() != "y":
-        logger.error("Aborting!")
-        sys.exit(1)
+    
+    ui.show_file_list(
+        all_real_files,
+        title="Build context files",
+        max_display=10,
+        show_all_prompt=True
+    )
+    
+    if not ui.confirm("Confirm submitting build context?"):
+        raise UserAbortedError("Build cancelled by user")
 
     with tempfile.TemporaryDirectory() as tempdir:
         for path in all_input_files:

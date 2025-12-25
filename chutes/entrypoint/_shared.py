@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 from substrateinterface import Keypair
+from chutes.exception import ValidationError, DeploymentError, AuthenticationError
 
 CHUTE_REF_RE = re.compile(r"^[a-z][a-z0-9_]*:[a-z][a-z0-9_]+$", re.I)
 
@@ -131,14 +132,25 @@ def load_chute(
     debug: bool,
 ) -> Tuple[Any, Any]:
     """
-    Load a chute from the chute ref string via dynamic imports and such.
+    Load a chute from the chute ref string via dynamic imports.
+    
+    Args:
+        chute_ref_str: String in format 'module_name:chute_name'.
+        config_path: Optional path to config file.
+        debug: Whether to enable debug logging.
+        
+    Returns:
+        Tuple of (module, chute) objects.
+        
+    Raises:
+        ValidationError: If chute reference format is invalid.
+        DeploymentError: If module import or chute loading fails.
     """
 
     if not CHUTE_REF_RE.match(chute_ref_str):
-        logger.error(
+        raise ValidationError(
             f"Invalid module name '{chute_ref_str}', usage: [module_name:chute_name] [args]"
         )
-        sys.exit(1)
 
     # Config path updates.
     if config_path:
@@ -164,20 +176,17 @@ def load_chute(
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
     except ImportError as exc:
-        logger.error(f"Unable to import module '{module_name}': {exc}")
-        sys.exit(1)
+        raise DeploymentError(f"Unable to import module '{module_name}': {exc}")
 
     # Get the Chute reference (FastAPI server).
     try:
         chute = getattr(module, chute_name)
         if not isinstance(chute, (Chute, ChutePack)):
-            logger.error(
+            raise DeploymentError(
                 f"'{chute_name}' in module '{module_name}' is not of type Chute or ChutePack"
             )
-            sys.exit(1)
     except AttributeError:
-        logger.error(f"Unable to find chute '{chute_name}' in module '{module_name}'")
-        sys.exit(1)
+        raise DeploymentError(f"Unable to find chute '{chute_name}' in module '{module_name}'")
 
     return module, chute
 
