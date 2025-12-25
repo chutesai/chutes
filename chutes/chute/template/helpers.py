@@ -57,9 +57,9 @@ async def prompt_one(
             headers=headers,
         ) as resp:
             if require_status:
-                assert resp.status == require_status, (
-                    f"Expected to receive status code {require_status}, received {resp.status}"
-                )
+                assert (
+                    resp.status == require_status
+                ), f"Expected to receive status code {require_status}, received {resp.status}"
                 return await resp.json()
             if resp.status == 200:
                 result = await resp.json()

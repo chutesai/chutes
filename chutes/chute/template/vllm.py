@@ -357,7 +357,7 @@ def build_vllm_chute(
             engine_args += " --enable-prompt-tokens-details"
         if "--served-model-name" in engine_args:
             raise ValueError("You may not override served model name!")
-        if "--enable-return-hidden-states" not in engine_args:
+        if "--enable-return-hidden-states" not in engine_args and "affine" in self.name.lower():
             engine_args += " --enable-return-hidden-states"
         if len(re.findall(r"(?:^|\s)--(?:tensor-parallel-size|tp)[=\s]", engine_args)) > 1:
             raise ValueError(
