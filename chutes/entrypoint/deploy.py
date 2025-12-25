@@ -1,7 +1,6 @@
 import os
 import asyncio
 import aiohttp
-import sys
 from loguru import logger
 import typer
 from typing import Any
@@ -10,6 +9,9 @@ from chutes.config import get_config
 from chutes.entrypoint._shared import load_chute, upload_logo
 from chutes.image import Image
 from chutes.util.auth import sign_request
+from chutes.util.ui import UIHelper
+from chutes.util.http_client import ChuteHTTPClient
+from chutes.exception import UserAbortedError, DeploymentError
 from chutes.chute import ChutePack
 from chutes._version import version as current_version
 
@@ -24,13 +26,25 @@ async def _deploy(
 ):
     """
     Perform the actual chute deployment.
+    
+    Args:
+        ref_str: Reference string for the chute.
+        module: Python module containing the chute definition.
+        chute: Chute instance to deploy.
+        public: Whether to make the chute publicly accessible.
+        logo_id: Optional logo identifier.
+        accept_fee: Whether to accept deployment fees.
+        
+    Raises:
+        UserAbortedError: If user cancels the deployment.
+        DeploymentError: If deployment fails.
     """
-    confirm = input(
-        f"\033[1m\033[4mYou are about to upload {module.__file__} and deploy {chute.name}, confirm? (y/n) \033[0m"
-    )
-    if confirm.lower().strip() != "y":
-        logger.error("Aborting!")
-        sys.exit(1)
+    ui = UIHelper()
+    
+    if not ui.confirm(
+        f"You are about to upload {module.__file__} and deploy {chute.name}, confirm?"
+    ):
+        raise UserAbortedError("Deployment cancelled by user")
 
     with open(module.__file__, "r") as infile:
         code = infile.read()
