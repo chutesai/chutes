@@ -319,7 +319,7 @@ def build_image(
         # For remote builds, we omit installing chutes since the validator/build process injects
         # specific, locked chutes versions to allow for tracking version IDs.
         if local:
-            image._directives.append(RUN("pip install chutes --upgrade"))
+            image._directives.append(RUN(f"pip install chutes=={current_version}"))
         current_directory = os.getcwd()
         if include_cwd:
             image._directives.append(ADD(source=".", dest="/app"))
