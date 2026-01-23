@@ -55,6 +55,7 @@ from cryptography.hazmat.primitives import padding
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv_v2")
 RUNINT_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-runint.so")
 
+
 @lru_cache(maxsize=1)
 def get_netnanny_ref():
     netnanny = ctypes.CDLL(None, ctypes.RTLD_GLOBAL)
@@ -1062,6 +1063,7 @@ def run_chute(
             # Generate inspecto hash with seed = nonce + sub
             # This prevents replay attacks because the nonce is fresh per init
             from chutes.inspecto import generate_hash
+
             inspecto_seed = runint_nonce + token_data["sub"]
             inspecto_hash = await generate_hash(hash_type="base", challenge=inspecto_seed)
             if not inspecto_hash:
@@ -1077,6 +1079,7 @@ def run_chute(
 
         elif generate_inspecto_hash:
             from chutes.inspecto import generate_hash
+
             inspecto_hash = await generate_hash(hash_type="base")
             print(inspecto_hash)
             return
@@ -1208,13 +1211,37 @@ def run_chute(
 
             return await handle_slurp(request, chute_module)
 
-        @chute.on_event("startup")
-        async def activate_on_startup():
+        async def _wait_for_server_ready(timeout: float = 30.0):
+            """Wait until the server is accepting connections."""
+            import socket
+
+            start = asyncio.get_event_loop().time()
+            while (asyncio.get_event_loop().time() - start) < timeout:
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(1)
+                    result = sock.connect_ex(("127.0.0.1", port))
+                    sock.close()
+                    if result == 0:
+                        return True
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
+            return False
+
+        async def _do_activation():
+            """Activate after server is listening."""
             if not activation_url:
                 return
+
+            if not await _wait_for_server_ready():
+                logger.error("Server failed to start listening")
+                raise Exception("Server not ready for activation")
+
             activated = False
             for attempt in range(10):
-                await asyncio.sleep(attempt)
+                if attempt > 0:
+                    await asyncio.sleep(attempt)
                 try:
                     async with aiohttp.ClientSession(raise_for_status=False) as session:
                         async with session.get(
@@ -1240,6 +1267,10 @@ def run_chute(
                     logger.error(f"Unexpected error attempting to activate instance: {str(e)}")
             if not activated:
                 raise Exception("Failed to activate instance, aborting...")
+
+        @chute.on_event("startup")
+        async def activate_on_startup():
+            asyncio.create_task(_do_activation())
 
         async def _handle_fs_hash_challenge(request: Request):
             nonlocal chute_abspath
