@@ -95,7 +95,12 @@ class _RunintHandle:
         if not os.path.exists(lib_path):
             return None
         self._lib = ctypes.CDLL(lib_path)
-        self._lib._io_pool_init.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
+        self._lib._io_pool_init.argtypes = [
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
         self._lib._io_pool_init.restype = ctypes.c_void_p
         self._lib._io_pool_sync.argtypes = [
             ctypes.c_void_p,
@@ -108,16 +113,6 @@ class _RunintHandle:
         self._lib._io_pool_pos.restype = ctypes.c_int64
         self._lib._io_pool_release.argtypes = [ctypes.c_void_p]
         self._lib._io_pool_release.restype = None
-        self._lib._io_pool_bind.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-        self._lib._io_pool_bind.restype = ctypes.c_int
-        self._lib._io_pool_is_bound.argtypes = [ctypes.c_void_p]
-        self._lib._io_pool_is_bound.restype = ctypes.c_int
-        self._lib._io_pool_get_inspecto.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_char_p,
-            ctypes.c_size_t,
-        ]
-        self._lib._io_pool_get_inspecto.restype = ctypes.c_int
         self._lib._io_pool_get_nonce.argtypes = [
             ctypes.c_void_p,
             ctypes.c_char_p,
@@ -126,7 +121,19 @@ class _RunintHandle:
         self._lib._io_pool_get_nonce.restype = ctypes.c_int
         return self._lib
 
-    def init(self):
+    def init(self, validator_nonce: str = None):
+        """
+        Initialize runtime integrity with validator-provided nonce.
+
+        The commitment format is a mini-cert:
+        04 || pubkey (64 bytes) || nonce (16 bytes) || sig(pubkey || nonce) (64 bytes)
+        = 145 bytes = 290 hex chars
+
+        The validator can verify:
+        1. Extract pubkey, nonce, and signature from commitment
+        2. Verify signature is valid for hash(pubkey || nonce) using pubkey
+        3. This proves the keypair holder committed to this specific nonce
+        """
         if self._initialized:
             return self._commitment
         with self._lock:
@@ -137,11 +144,13 @@ class _RunintHandle:
                 if lib is None:
                     logger.warning("runint library not found")
                     return None
-                commitment_buf = ctypes.create_string_buffer(131)
-                self._handle = lib._io_pool_init(commitment_buf, 131)
+                # Commitment: 04 + pubkey(128) + nonce(32) + sig(128) = 290 chars + null
+                commitment_buf = ctypes.create_string_buffer(291)
+                nonce_bytes = validator_nonce.encode() if validator_nonce else b""
+                self._handle = lib._io_pool_init(commitment_buf, 291, nonce_bytes, len(nonce_bytes))
                 if self._handle:
                     self._commitment = commitment_buf.value.decode()
-                    # Also get the nonce
+                    # Also get the nonce (stored from validator input)
                     nonce_buf = ctypes.create_string_buffer(33)
                     if lib._io_pool_get_nonce(self._handle, nonce_buf, 33) == 0:
                         self._nonce = nonce_buf.value.decode()
@@ -157,53 +166,9 @@ class _RunintHandle:
         """Get the random nonce generated at init time."""
         return getattr(self, "_nonce", None)
 
-    def bind(self, inspecto_hash: str) -> str | None:
-        """
-        Bind the runtime integrity handle with the provided inspecto hash.
-        The hash is combined with the internal nonce.
-        Returns the final bound hash on success.
-        """
-        if not self._initialized or not self._handle:
-            return None
-        if not inspecto_hash:
-            logger.warning("No inspecto hash provided to bind")
-            return None
-        try:
-            # Store the raw inspecto hash for validator verification
-            self._raw_inspecto = inspecto_hash
-            result = self._lib._io_pool_bind(self._handle, inspecto_hash.encode())
-            if result != 0:
-                logger.warning("Failed to bind runtime integrity")
-                return None
-            inspecto_buf = ctypes.create_string_buffer(65)
-            if self._lib._io_pool_get_inspecto(self._handle, inspecto_buf, 65) == 0:
-                self._bound_hash = inspecto_buf.value.decode()
-                return self._bound_hash
-        except Exception as e:
-            logger.warning(f"Failed to bind runtime integrity: {e}")
-        return None
-
-    def is_bound(self) -> bool:
-        if not self._initialized or not self._handle:
-            return False
-        try:
-            return self._lib._io_pool_is_bound(self._handle) == 1
-        except Exception:
-            return False
-
-    def get_bound_hash(self) -> str | None:
-        """Get the final bound hash (SHA256(inspecto + nonce))."""
-        return getattr(self, "_bound_hash", None)
-
-    def get_raw_inspecto(self) -> str | None:
-        """Get the raw inspecto hash (before binding with nonce)."""
-        return getattr(self, "_raw_inspecto", None)
-
     def prove(self, challenge: str) -> tuple[str, int] | None:
+        """Sign a challenge and return (signature, epoch)."""
         if not self._initialized or not self._handle:
-            return None
-        if not self.is_bound():
-            logger.warning("Runtime integrity not bound, cannot prove")
             return None
         try:
             sig_buf = ctypes.create_string_buffer(129)
@@ -220,24 +185,12 @@ def get_runint_handle():
     return _RunintHandle()
 
 
-def init_runint():
-    return get_runint_handle().init()
+def init_runint(validator_nonce: str = None):
+    return get_runint_handle().init(validator_nonce)
 
 
 def runint_get_nonce() -> str | None:
     return get_runint_handle().get_nonce()
-
-
-def runint_bind(inspecto_hash: str) -> str | None:
-    return get_runint_handle().bind(inspecto_hash)
-
-
-def runint_get_bound_hash() -> str | None:
-    return get_runint_handle().get_bound_hash()
-
-
-def runint_get_raw_inspecto() -> str | None:
-    return get_runint_handle().get_raw_inspecto()
 
 
 def runint_prove(challenge: str) -> tuple[str, int] | None:
@@ -892,11 +845,9 @@ async def _gather_devices_and_initialize(
     ).decode()
     body["fsv"] = await generate_filesystem_hash(token_data["sub"], chute_abspath, mode="full")
 
-    # Runtime integrity (already initialized and bound at this point).
+    # Runtime integrity (already initialized at this point).
     handle = get_runint_handle()
-    body["rint"] = handle._commitment
-    body["rint_nonce"] = handle.get_nonce()
-    body["rint_inspecto"] = handle.get_raw_inspecto()
+    body["rint_commitment"] = handle._commitment
 
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
@@ -1050,7 +1001,30 @@ def run_chute(
         inspecto_hash = None
         runint_nonce = None
         if not (dev or generate_inspecto_hash):
-            runint_commitment = init_runint()
+            # Fetch validator-provided nonce before initializing runint.
+            # This nonce is embedded in the commitment (signed by the keypair),
+            # proving the keypair was created for this specific session.
+            # Attacker cannot pre-compute keypairs because they don't know the nonce.
+            validator_nonce = None
+            base_url = token_data.get("url", "")
+            if base_url:
+                nonce_url = base_url.rstrip("/") + "/nonce"
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(nonce_url, headers={"Authorization": token}) as resp:
+                            if not resp.ok:
+                                logger.error(f"Failed to fetch validator nonce: {resp.status}")
+                                sys.exit(137)
+                            validator_nonce = await resp.text()
+                            logger.info("Fetched validator nonce for key binding")
+                except Exception as e:
+                    logger.error(f"Failed to fetch validator nonce: {e}")
+                    sys.exit(137)
+            else:
+                logger.error("No URL in token for validator nonce")
+                sys.exit(137)
+
+            runint_commitment = init_runint(validator_nonce)
             if not runint_commitment:
                 logger.error("Runtime integrity initialization failed")
                 sys.exit(137)
@@ -1069,13 +1043,7 @@ def run_chute(
             if not inspecto_hash:
                 logger.error("Inspecto hash generation failed")
                 sys.exit(137)
-
-            # Bind the inspecto hash to runint (combines with nonce + fingerprint internally)
-            bound_hash = runint_bind(inspecto_hash)
-            if not bound_hash:
-                logger.error("Runtime integrity binding failed")
-                sys.exit(137)
-            logger.info(f"Runtime integrity bound with hash: {bound_hash[:16]}...")
+            logger.info(f"Runtime integrity initialized: commitment={runint_commitment[:16]}...")
 
         elif generate_inspecto_hash:
             from chutes.inspecto import generate_hash
