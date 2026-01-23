@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def main():
-    binary_path = Path(__file__).parent / "cfsv"
+    binary_path = Path(__file__).parent / "cfsv_v2"
     os.chmod(binary_path, os.stat(binary_path).st_mode | stat.S_IEXEC)
     result = subprocess.run([str(binary_path)] + sys.argv[1:])
     sys.exit(result.returncode)

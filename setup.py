@@ -32,6 +32,7 @@ setup(
             "chutes/envcheck/*.py",
             "*.so",
             "cfsv",
+            "cfsv_v2",
         ],
         "chutes.envdump": ["*.so"],
     },

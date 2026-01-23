@@ -52,7 +52,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 
 
-CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv")
+CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv_v2")
 
 
 @lru_cache(maxsize=1)
@@ -1014,7 +1014,7 @@ def run_chute(
             for attempt in range(10):
                 await asyncio.sleep(attempt)
                 try:
-                    async with aiohttp.ClientSession(raise_for_status=True) as session:
+                    async with aiohttp.ClientSession(raise_for_status=False) as session:
                         async with session.get(
                             activation_url, headers={"Authorization": token}
                         ) as resp:
@@ -1027,6 +1027,7 @@ def run_chute(
                                         sys.exit(137)
                                     logger.success("Successfully enabled NetNanny network lock.")
                                 break
+
                             logger.error(
                                 f"Instance activation failed: {resp.status=}: {await resp.text()}"
                             )
