@@ -53,7 +53,7 @@ from cryptography.hazmat.primitives import padding
 
 
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv_v2")
-
+RUNINT_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-runint.so")
 
 @lru_cache(maxsize=1)
 def get_netnanny_ref():
@@ -73,6 +73,174 @@ def get_netnanny_ref():
     netnanny.set_secure_env.argtypes = []
     netnanny.set_secure_env.restype = ctypes.c_int
     return netnanny
+
+
+class _RunintHandle:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def _load_lib(self):
+        if hasattr(self, "_lib") and self._lib is not None:
+            return self._lib
+        lib_path = RUNINT_PATH
+        if not os.path.exists(lib_path):
+            return None
+        self._lib = ctypes.CDLL(lib_path)
+        self._lib._io_pool_init.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
+        self._lib._io_pool_init.restype = ctypes.c_void_p
+        self._lib._io_pool_sync.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_sync.restype = ctypes.c_int64
+        self._lib._io_pool_pos.argtypes = [ctypes.c_void_p]
+        self._lib._io_pool_pos.restype = ctypes.c_int64
+        self._lib._io_pool_release.argtypes = [ctypes.c_void_p]
+        self._lib._io_pool_release.restype = None
+        self._lib._io_pool_bind.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        self._lib._io_pool_bind.restype = ctypes.c_int
+        self._lib._io_pool_is_bound.argtypes = [ctypes.c_void_p]
+        self._lib._io_pool_is_bound.restype = ctypes.c_int
+        self._lib._io_pool_get_inspecto.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_get_inspecto.restype = ctypes.c_int
+        self._lib._io_pool_get_nonce.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_get_nonce.restype = ctypes.c_int
+        return self._lib
+
+    def init(self):
+        if self._initialized:
+            return self._commitment
+        with self._lock:
+            if self._initialized:
+                return self._commitment
+            try:
+                lib = self._load_lib()
+                if lib is None:
+                    logger.warning("runint library not found")
+                    return None
+                commitment_buf = ctypes.create_string_buffer(131)
+                self._handle = lib._io_pool_init(commitment_buf, 131)
+                if self._handle:
+                    self._commitment = commitment_buf.value.decode()
+                    # Also get the nonce
+                    nonce_buf = ctypes.create_string_buffer(33)
+                    if lib._io_pool_get_nonce(self._handle, nonce_buf, 33) == 0:
+                        self._nonce = nonce_buf.value.decode()
+                    else:
+                        self._nonce = None
+                    self._initialized = True
+                    return self._commitment
+            except Exception as e:
+                logger.warning(f"Failed to initialize runtime integrity: {e}")
+            return None
+
+    def get_nonce(self) -> str | None:
+        """Get the random nonce generated at init time."""
+        return getattr(self, "_nonce", None)
+
+    def bind(self, inspecto_hash: str) -> str | None:
+        """
+        Bind the runtime integrity handle with the provided inspecto hash.
+        The hash is combined with the internal nonce.
+        Returns the final bound hash on success.
+        """
+        if not self._initialized or not self._handle:
+            return None
+        if not inspecto_hash:
+            logger.warning("No inspecto hash provided to bind")
+            return None
+        try:
+            # Store the raw inspecto hash for validator verification
+            self._raw_inspecto = inspecto_hash
+            result = self._lib._io_pool_bind(self._handle, inspecto_hash.encode())
+            if result != 0:
+                logger.warning("Failed to bind runtime integrity")
+                return None
+            inspecto_buf = ctypes.create_string_buffer(65)
+            if self._lib._io_pool_get_inspecto(self._handle, inspecto_buf, 65) == 0:
+                self._bound_hash = inspecto_buf.value.decode()
+                return self._bound_hash
+        except Exception as e:
+            logger.warning(f"Failed to bind runtime integrity: {e}")
+        return None
+
+    def is_bound(self) -> bool:
+        if not self._initialized or not self._handle:
+            return False
+        try:
+            return self._lib._io_pool_is_bound(self._handle) == 1
+        except Exception:
+            return False
+
+    def get_bound_hash(self) -> str | None:
+        """Get the final bound hash (SHA256(inspecto + nonce))."""
+        return getattr(self, "_bound_hash", None)
+
+    def get_raw_inspecto(self) -> str | None:
+        """Get the raw inspecto hash (before binding with nonce)."""
+        return getattr(self, "_raw_inspecto", None)
+
+    def prove(self, challenge: str) -> tuple[str, int] | None:
+        if not self._initialized or not self._handle:
+            return None
+        if not self.is_bound():
+            logger.warning("Runtime integrity not bound, cannot prove")
+            return None
+        try:
+            sig_buf = ctypes.create_string_buffer(129)
+            epoch = self._lib._io_pool_sync(self._handle, challenge.encode(), sig_buf, 129)
+            if epoch >= 0:
+                return sig_buf.value.decode(), epoch
+        except Exception as e:
+            logger.warning(f"Failed to generate runtime integrity proof: {e}")
+        return None
+
+
+@lru_cache(maxsize=1)
+def get_runint_handle():
+    return _RunintHandle()
+
+
+def init_runint():
+    return get_runint_handle().init()
+
+
+def runint_get_nonce() -> str | None:
+    return get_runint_handle().get_nonce()
+
+
+def runint_bind(inspecto_hash: str) -> str | None:
+    return get_runint_handle().bind(inspecto_hash)
+
+
+def runint_get_bound_hash() -> str | None:
+    return get_runint_handle().get_bound_hash()
+
+
+def runint_get_raw_inspecto() -> str | None:
+    return get_runint_handle().get_raw_inspecto()
+
+
+def runint_prove(challenge: str) -> tuple[str, int] | None:
+    return get_runint_handle().prove(challenge)
 
 
 def get_all_process_info():
@@ -478,6 +646,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_netnanny_challenge",
                     "/_fs_hash",
                     "/_fs_challenge",
+                    "/_rint",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -528,6 +697,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_netnanny_challenge",
                 "/_fs_hash",
                 "/_fs_challenge",
+                "/_rint",
             )
         ):
             return await self._dispatch(request, call_next)
@@ -721,6 +891,12 @@ async def _gather_devices_and_initialize(
     ).decode()
     body["fsv"] = await generate_filesystem_hash(token_data["sub"], chute_abspath, mode="full")
 
+    # Runtime integrity (already initialized and bound at this point).
+    handle = get_runint_handle()
+    body["rint"] = handle._commitment
+    body["rint_nonce"] = handle.get_nonce()
+    body["rint_inspecto"] = handle.get_raw_inspecto()
+
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
     logger.info(f"Checking disk space availability: {disk_gb}GB required")
@@ -869,12 +1045,38 @@ def run_chute(
         token = get_launch_token()
         token_data = get_launch_token_data()
 
-        from chutes.inspecto import generate_hash
-
+        # Runtime integrity must be initialized first to get the nonce.
         inspecto_hash = None
+        runint_nonce = None
         if not (dev or generate_inspecto_hash):
-            inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
+            runint_commitment = init_runint()
+            if not runint_commitment:
+                logger.error("Runtime integrity initialization failed")
+                sys.exit(137)
+
+            runint_nonce = runint_get_nonce()
+            if not runint_nonce:
+                logger.error("Runtime integrity nonce retrieval failed")
+                sys.exit(137)
+
+            # Generate inspecto hash with seed = nonce + sub
+            # This prevents replay attacks because the nonce is fresh per init
+            from chutes.inspecto import generate_hash
+            inspecto_seed = runint_nonce + token_data["sub"]
+            inspecto_hash = await generate_hash(hash_type="base", challenge=inspecto_seed)
+            if not inspecto_hash:
+                logger.error("Inspecto hash generation failed")
+                sys.exit(137)
+
+            # Bind the inspecto hash to runint (combines with nonce + fingerprint internally)
+            bound_hash = runint_bind(inspecto_hash)
+            if not bound_hash:
+                logger.error("Runtime integrity binding failed")
+                sys.exit(137)
+            logger.info(f"Runtime integrity bound with hash: {bound_hash[:16]}...")
+
         elif generate_inspecto_hash:
+            from chutes.inspecto import generate_hash
             inspecto_hash = await generate_hash(hash_type="base")
             print(inspecto_hash)
             return
@@ -1066,6 +1268,23 @@ def run_chute(
             return process_netnanny_challenge(chute, request)
 
         chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
+
+        # Runtime integrity challenge endpoint.
+        def _handle_rint(request: Request):
+            """Handle runtime integrity challenge."""
+            challenge = request.state.decrypted.get("challenge")
+            if not challenge:
+                return {"error": "missing challenge"}
+            result = runint_prove(challenge)
+            if result is None:
+                return {"error": "runtime integrity not initialized or not bound"}
+            signature, epoch = result
+            return {
+                "signature": signature,
+                "epoch": epoch,
+            }
+
+        chute.add_api_route("/_rint", _handle_rint, methods=["POST"])
 
         # New envdump endpoints.
         import chutes.envdump as envdump
