@@ -848,6 +848,7 @@ async def _gather_devices_and_initialize(
     # Runtime integrity (already initialized at this point).
     handle = get_runint_handle()
     body["rint_commitment"] = handle._commitment
+    body["rint_nonce"] = handle.get_nonce()
 
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
