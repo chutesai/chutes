@@ -493,6 +493,23 @@ class GraValMiddleware(BaseHTTPMiddleware):
         self.requests_in_flight = {}
         self.symmetric_key = symmetric_key
         self.app = app
+        self.app.state.graval_middleware = self
+
+    async def get_conn_stats(self) -> dict:
+        now = time.time()
+        in_flight = len(self.requests_in_flight)
+        available = max(0, self.concurrency - in_flight)
+        utilization = in_flight / self.concurrency if self.concurrency > 0 else 0.0
+        oldest_age = None
+        if self.requests_in_flight:
+            oldest_age = max(0.0, now - min(self.requests_in_flight.values()))
+        return {
+            "concurrency": self.concurrency,
+            "in_flight": in_flight,
+            "available": available,
+            "utilization": round(utilization, 4),
+            "oldest_in_flight_age_secs": oldest_age,
+        }
 
     async def _dispatch(self, request: Request, call_next):
         """
@@ -503,7 +520,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
 
         # Internal endpoints.
         path = request.scope.get("path", "")
-        if path.endswith("/_metrics"):
+        if path.endswith(("/_metrics", "/_conn_stats")):
             ip = ip_address(request.client.host)
             is_private = (
                 ip.is_private
@@ -584,6 +601,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_fs_challenge",
                     "/_fs_hash",
                     "/_metrics",
+                    "/_conn_stats",
                     "/_ping",
                     "/_procs",
                     "/_slurp",
@@ -601,6 +619,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_fs_hash",
                     "/_fs_challenge",
                     "/_rint",
+                    "/_conn_stats",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -635,6 +654,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_fs_challenge",
                 "/_fs_hash",
                 "/_metrics",
+                "/_conn_stats",
                 "/_ping",
                 "/_procs",
                 "/_slurp",
@@ -652,6 +672,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_fs_hash",
                 "/_fs_challenge",
                 "/_rint",
+                "/_conn_stats",
             )
         ):
             return await self._dispatch(request, call_next)
@@ -1250,10 +1271,23 @@ def run_chute(
                 )
             }
 
+        async def _handle_conn_stats(request: Request):
+            middleware = getattr(chute.state, "graval_middleware", None)
+            if not middleware:
+                return {
+                    "concurrency": chute.concurrency,
+                    "in_flight": 0,
+                    "available": chute.concurrency,
+                    "utilization": 0.0,
+                    "oldest_in_flight_age_secs": None,
+                }
+            return await middleware.get_conn_stats()
+
         # Validation endpoints.
         chute.add_api_route("/_ping", pong, methods=["POST"])
         chute.add_api_route("/_token", get_token, methods=["POST"])
         chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
+        chute.add_api_route("/_conn_stats", _handle_conn_stats, methods=["GET"])
         chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
