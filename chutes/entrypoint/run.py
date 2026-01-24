@@ -31,7 +31,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
-from fastapi import FastAPI, Request, Response, status, HTTPException
+from fastapi import Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from chutes.entrypoint.verify import GpuVerifier
@@ -54,6 +54,40 @@ from cryptography.hazmat.primitives import padding
 
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv_v2")
 RUNINT_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-runint.so")
+
+
+class _ConnStats:
+    """Module-level connection stats tracker."""
+
+    def __init__(self):
+        self.concurrency = 1
+        self.requests_in_flight = {}
+        self._lock = None
+
+    @property
+    def lock(self):
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    def get_stats(self) -> dict:
+        now = time.time()
+        in_flight = len(self.requests_in_flight)
+        available = max(0, self.concurrency - in_flight)
+        utilization = in_flight / self.concurrency if self.concurrency > 0 else 0.0
+        oldest_age = None
+        if self.requests_in_flight:
+            oldest_age = max(0.0, now - min(self.requests_in_flight.values()))
+        return {
+            "concurrency": self.concurrency,
+            "in_flight": in_flight,
+            "available": available,
+            "utilization": round(utilization, 4),
+            "oldest_in_flight_age_secs": oldest_age,
+        }
+
+
+_conn_stats = _ConnStats()
 
 
 @lru_cache(maxsize=1)
@@ -483,34 +517,13 @@ class DevMiddleware(BaseHTTPMiddleware):
 
 
 class GraValMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: FastAPI, concurrency: int = 1, symmetric_key: str = None):
+    def __init__(self, app, concurrency: int = 1, symmetric_key: str = None):
         """
         Initialize a semaphore for concurrency control/limits.
         """
-        # Store reference to FastAPI app before super().__init__ wraps it
-        self._fastapi_app = app
         super().__init__(app)
-        self.concurrency = concurrency
-        self.lock = asyncio.Lock()
-        self.requests_in_flight = {}
         self.symmetric_key = symmetric_key
-        self._fastapi_app.state.graval_middleware = self
-
-    async def get_conn_stats(self) -> dict:
-        now = time.time()
-        in_flight = len(self.requests_in_flight)
-        available = max(0, self.concurrency - in_flight)
-        utilization = in_flight / self.concurrency if self.concurrency > 0 else 0.0
-        oldest_age = None
-        if self.requests_in_flight:
-            oldest_age = max(0.0, now - min(self.requests_in_flight.values()))
-        return {
-            "concurrency": self.concurrency,
-            "in_flight": in_flight,
-            "available": available,
-            "utilization": round(utilization, 4),
-            "oldest_in_flight_age_secs": oldest_age,
-        }
+        _conn_stats.concurrency = concurrency
 
     async def _dispatch(self, request: Request, call_next):
         """
@@ -679,11 +692,11 @@ class GraValMiddleware(BaseHTTPMiddleware):
             return await self._dispatch(request, call_next)
 
         # Concurrency control with timeouts in case it didn't get cleaned up properly.
-        async with self.lock:
+        async with _conn_stats.lock:
             now = time.time()
-            if len(self.requests_in_flight) >= self.concurrency:
+            if len(_conn_stats.requests_in_flight) >= _conn_stats.concurrency:
                 purge_keys = []
-                for key, val in self.requests_in_flight.items():
+                for key, val in _conn_stats.requests_in_flight.items():
                     if now - val >= 1800:
                         logger.warning(
                             f"Assuming this request is no longer in flight, killing: {key}"
@@ -691,18 +704,18 @@ class GraValMiddleware(BaseHTTPMiddleware):
                         purge_keys.append(key)
                 if purge_keys:
                     for key in purge_keys:
-                        self.requests_in_flight.pop(key, None)
-                    self.requests_in_flight[request.request_id] = now
+                        _conn_stats.requests_in_flight.pop(key, None)
+                    _conn_stats.requests_in_flight[request.request_id] = now
                 else:
                     return ORJSONResponse(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                         content={
                             "error": "RateLimitExceeded",
-                            "detail": f"Max concurrency exceeded: {self.concurrency}, try again later.",
+                            "detail": f"Max concurrency exceeded: {_conn_stats.concurrency}, try again later.",
                         },
                     )
             else:
-                self.requests_in_flight[request.request_id] = now
+                _conn_stats.requests_in_flight[request.request_id] = now
 
         # Perform the actual request.
         response = None
@@ -710,9 +723,11 @@ class GraValMiddleware(BaseHTTPMiddleware):
             response = await self._dispatch(request, call_next)
 
             # Add concurrency headers to the response.
-            in_flight = len(self.requests_in_flight)
-            available = max(0, self.concurrency - in_flight)
-            utilization = in_flight / self.concurrency if self.concurrency > 0 else 0.0
+            in_flight = len(_conn_stats.requests_in_flight)
+            available = max(0, _conn_stats.concurrency - in_flight)
+            utilization = (
+                in_flight / _conn_stats.concurrency if _conn_stats.concurrency > 0 else 0.0
+            )
             response.headers["X-Chutes-Conn-Used"] = str(in_flight)
             response.headers["X-Chutes-Conn-Available"] = str(available)
             response.headers["X-Chutes-Conn-Utilization"] = f"{utilization:.4f}"
@@ -726,17 +741,17 @@ class GraValMiddleware(BaseHTTPMiddleware):
                             yield chunk
                     except Exception as exc:
                         logger.warning(f"Unhandled exception in body iterator: {exc}")
-                        self.requests_in_flight.pop(request.request_id, None)
+                        _conn_stats.requests_in_flight.pop(request.request_id, None)
                         raise
                     finally:
-                        self.requests_in_flight.pop(request.request_id, None)
+                        _conn_stats.requests_in_flight.pop(request.request_id, None)
 
                 response.body_iterator = wrapped_iterator()
                 return response
             return response
         finally:
             if not response or not hasattr(response, "body_iterator"):
-                self.requests_in_flight.pop(request.request_id, None)
+                _conn_stats.requests_in_flight.pop(request.request_id, None)
 
 
 def start_dummy_socket(port_mapping, symmetric_key):
@@ -1273,16 +1288,7 @@ def run_chute(
             }
 
         async def _handle_conn_stats(request: Request):
-            middleware = getattr(chute.state, "graval_middleware", None)
-            if not middleware:
-                return {
-                    "concurrency": chute.concurrency,
-                    "in_flight": 0,
-                    "available": chute.concurrency,
-                    "utilization": 0.0,
-                    "oldest_in_flight_age_secs": None,
-                }
-            return await middleware.get_conn_stats()
+            return _conn_stats.get_stats()
 
         # Validation endpoints.
         chute.add_api_route("/_ping", pong, methods=["POST"])
