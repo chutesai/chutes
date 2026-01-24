@@ -125,14 +125,14 @@ class _RunintHandle:
         """
         Initialize runtime integrity with validator-provided nonce.
 
-        The commitment format is a mini-cert:
-        04 || pubkey (64 bytes) || nonce (16 bytes) || sig(pubkey || nonce) (64 bytes)
-        = 145 bytes = 290 hex chars
+        The commitment format v3 is:
+        03 || version (1) || pubkey (64 bytes) || nonce (16 bytes) || lib_fp (16 bytes) || sig (64 bytes)
+        = 162 bytes = 324 hex chars
 
         The validator can verify:
-        1. Extract pubkey, nonce, and signature from commitment
-        2. Verify signature is valid for hash(pubkey || nonce) using pubkey
-        3. This proves the keypair holder committed to this specific nonce
+        1. Extract pubkey, nonce, lib_fp, and signature from commitment
+        2. Verify signature is valid for hash(version || pubkey || nonce || lib_fp) using pubkey
+        3. This proves the keypair holder committed to this specific nonce and library version
         """
         if self._initialized:
             return self._commitment
@@ -144,10 +144,10 @@ class _RunintHandle:
                 if lib is None:
                     logger.warning("runint library not found")
                     return None
-                # Commitment: 04 + pubkey(128) + nonce(32) + sig(128) = 290 chars + null
-                commitment_buf = ctypes.create_string_buffer(291)
+                # Commitment v3: 03 + ver(2) + pubkey(128) + nonce(32) + lib_fp(32) + sig(128) = 324 chars + null
+                commitment_buf = ctypes.create_string_buffer(325)
                 nonce_bytes = validator_nonce.encode() if validator_nonce else b""
-                self._handle = lib._io_pool_init(commitment_buf, 291, nonce_bytes, len(nonce_bytes))
+                self._handle = lib._io_pool_init(commitment_buf, 325, nonce_bytes, len(nonce_bytes))
                 if self._handle:
                     self._commitment = commitment_buf.value.decode()
                     # Also get the nonce (stored from validator input)
