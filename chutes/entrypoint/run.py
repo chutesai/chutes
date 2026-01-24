@@ -487,13 +487,14 @@ class GraValMiddleware(BaseHTTPMiddleware):
         """
         Initialize a semaphore for concurrency control/limits.
         """
+        # Store reference to FastAPI app before super().__init__ wraps it
+        self._fastapi_app = app
         super().__init__(app)
         self.concurrency = concurrency
         self.lock = asyncio.Lock()
         self.requests_in_flight = {}
         self.symmetric_key = symmetric_key
-        self.app = app
-        self.app.state.graval_middleware = self
+        self._fastapi_app.state.graval_middleware = self
 
     async def get_conn_stats(self) -> dict:
         now = time.time()
