@@ -31,7 +31,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
-from fastapi import FastAPI, Request, Response, status, HTTPException
+from fastapi import Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from chutes.entrypoint.verify import GpuVerifier
@@ -53,6 +53,41 @@ from cryptography.hazmat.primitives import padding
 
 
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv_v2")
+RUNINT_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-runint.so")
+
+
+class _ConnStats:
+    """Module-level connection stats tracker."""
+
+    def __init__(self):
+        self.concurrency = 1
+        self.requests_in_flight = {}
+        self._lock = None
+
+    @property
+    def lock(self):
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    def get_stats(self) -> dict:
+        now = time.time()
+        in_flight = len(self.requests_in_flight)
+        available = max(0, self.concurrency - in_flight)
+        utilization = in_flight / self.concurrency if self.concurrency > 0 else 0.0
+        oldest_age = None
+        if self.requests_in_flight:
+            oldest_age = max(0.0, now - min(self.requests_in_flight.values()))
+        return {
+            "concurrency": self.concurrency,
+            "in_flight": in_flight,
+            "available": available,
+            "utilization": round(utilization, 4),
+            "oldest_in_flight_age_secs": oldest_age,
+        }
+
+
+_conn_stats = _ConnStats()
 
 
 @lru_cache(maxsize=1)
@@ -73,6 +108,127 @@ def get_netnanny_ref():
     netnanny.set_secure_env.argtypes = []
     netnanny.set_secure_env.restype = ctypes.c_int
     return netnanny
+
+
+class _RunintHandle:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def _load_lib(self):
+        if hasattr(self, "_lib") and self._lib is not None:
+            return self._lib
+        lib_path = RUNINT_PATH
+        if not os.path.exists(lib_path):
+            return None
+        self._lib = ctypes.CDLL(lib_path)
+        self._lib._io_pool_init.argtypes = [
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_init.restype = ctypes.c_void_p
+        self._lib._io_pool_sync.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_sync.restype = ctypes.c_int64
+        self._lib._io_pool_pos.argtypes = [ctypes.c_void_p]
+        self._lib._io_pool_pos.restype = ctypes.c_int64
+        self._lib._io_pool_release.argtypes = [ctypes.c_void_p]
+        self._lib._io_pool_release.restype = None
+        self._lib._io_pool_get_nonce.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_get_nonce.restype = ctypes.c_int
+        return self._lib
+
+    def init(self, validator_nonce: str = None):
+        """
+        Initialize runtime integrity with validator-provided nonce.
+
+        The commitment format v3 is:
+        03 || version (1) || pubkey (64 bytes) || nonce (16 bytes) || lib_fp (16 bytes) || sig (64 bytes)
+        = 162 bytes = 324 hex chars
+
+        The validator can verify:
+        1. Extract pubkey, nonce, lib_fp, and signature from commitment
+        2. Verify signature is valid for hash(version || pubkey || nonce || lib_fp) using pubkey
+        3. This proves the keypair holder committed to this specific nonce and library version
+        """
+        if self._initialized:
+            return self._commitment
+        with self._lock:
+            if self._initialized:
+                return self._commitment
+            try:
+                lib = self._load_lib()
+                if lib is None:
+                    logger.warning("runint library not found")
+                    return None
+                # Commitment v3: 03 + ver(2) + pubkey(128) + nonce(32) + lib_fp(32) + sig(128) = 324 chars + null
+                commitment_buf = ctypes.create_string_buffer(325)
+                nonce_bytes = validator_nonce.encode() if validator_nonce else b""
+                self._handle = lib._io_pool_init(commitment_buf, 325, nonce_bytes, len(nonce_bytes))
+                if self._handle:
+                    self._commitment = commitment_buf.value.decode()
+                    # Also get the nonce (stored from validator input)
+                    nonce_buf = ctypes.create_string_buffer(33)
+                    if lib._io_pool_get_nonce(self._handle, nonce_buf, 33) == 0:
+                        self._nonce = nonce_buf.value.decode()
+                    else:
+                        self._nonce = None
+                    self._initialized = True
+                    return self._commitment
+            except Exception as e:
+                logger.warning(f"Failed to initialize runtime integrity: {e}")
+            return None
+
+    def get_nonce(self) -> str | None:
+        """Get the random nonce generated at init time."""
+        return getattr(self, "_nonce", None)
+
+    def prove(self, challenge: str) -> tuple[str, int] | None:
+        """Sign a challenge and return (signature, epoch)."""
+        if not self._initialized or not self._handle:
+            return None
+        try:
+            sig_buf = ctypes.create_string_buffer(129)
+            epoch = self._lib._io_pool_sync(self._handle, challenge.encode(), sig_buf, 129)
+            if epoch >= 0:
+                return sig_buf.value.decode(), epoch
+        except Exception as e:
+            logger.warning(f"Failed to generate runtime integrity proof: {e}")
+        return None
+
+
+@lru_cache(maxsize=1)
+def get_runint_handle():
+    return _RunintHandle()
+
+
+def init_runint(validator_nonce: str = None):
+    return get_runint_handle().init(validator_nonce)
+
+
+def runint_get_nonce() -> str | None:
+    return get_runint_handle().get_nonce()
+
+
+def runint_prove(challenge: str) -> tuple[str, int] | None:
+    return get_runint_handle().prove(challenge)
 
 
 def get_all_process_info():
@@ -361,16 +517,13 @@ class DevMiddleware(BaseHTTPMiddleware):
 
 
 class GraValMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: FastAPI, concurrency: int = 1, symmetric_key: str = None):
+    def __init__(self, app, concurrency: int = 1, symmetric_key: str = None):
         """
         Initialize a semaphore for concurrency control/limits.
         """
         super().__init__(app)
-        self.concurrency = concurrency
-        self.lock = asyncio.Lock()
-        self.requests_in_flight = {}
         self.symmetric_key = symmetric_key
-        self.app = app
+        _conn_stats.concurrency = concurrency
 
     async def _dispatch(self, request: Request, call_next):
         """
@@ -381,7 +534,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
 
         # Internal endpoints.
         path = request.scope.get("path", "")
-        if path.endswith("/_metrics"):
+        if path.endswith(("/_metrics", "/_conn_stats")):
             ip = ip_address(request.client.host)
             is_private = (
                 ip.is_private
@@ -462,6 +615,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_fs_challenge",
                     "/_fs_hash",
                     "/_metrics",
+                    "/_conn_stats",
                     "/_ping",
                     "/_procs",
                     "/_slurp",
@@ -478,6 +632,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     "/_netnanny_challenge",
                     "/_fs_hash",
                     "/_fs_challenge",
+                    "/_rint",
+                    "/_conn_stats",
                 )
             )
             or request.client.host == "127.0.0.1"
@@ -512,6 +668,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_fs_challenge",
                 "/_fs_hash",
                 "/_metrics",
+                "/_conn_stats",
                 "/_ping",
                 "/_procs",
                 "/_slurp",
@@ -528,16 +685,18 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 "/_netnanny_challenge",
                 "/_fs_hash",
                 "/_fs_challenge",
+                "/_rint",
+                "/_conn_stats",
             )
         ):
             return await self._dispatch(request, call_next)
 
         # Concurrency control with timeouts in case it didn't get cleaned up properly.
-        async with self.lock:
+        async with _conn_stats.lock:
             now = time.time()
-            if len(self.requests_in_flight) >= self.concurrency:
+            if len(_conn_stats.requests_in_flight) >= _conn_stats.concurrency:
                 purge_keys = []
-                for key, val in self.requests_in_flight.items():
+                for key, val in _conn_stats.requests_in_flight.items():
                     if now - val >= 1800:
                         logger.warning(
                             f"Assuming this request is no longer in flight, killing: {key}"
@@ -545,18 +704,18 @@ class GraValMiddleware(BaseHTTPMiddleware):
                         purge_keys.append(key)
                 if purge_keys:
                     for key in purge_keys:
-                        self.requests_in_flight.pop(key, None)
-                    self.requests_in_flight[request.request_id] = now
+                        _conn_stats.requests_in_flight.pop(key, None)
+                    _conn_stats.requests_in_flight[request.request_id] = now
                 else:
                     return ORJSONResponse(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                         content={
                             "error": "RateLimitExceeded",
-                            "detail": f"Max concurrency exceeded: {self.concurrency}, try again later.",
+                            "detail": f"Max concurrency exceeded: {_conn_stats.concurrency}, try again later.",
                         },
                     )
             else:
-                self.requests_in_flight[request.request_id] = now
+                _conn_stats.requests_in_flight[request.request_id] = now
 
         # Perform the actual request.
         response = None
@@ -564,9 +723,11 @@ class GraValMiddleware(BaseHTTPMiddleware):
             response = await self._dispatch(request, call_next)
 
             # Add concurrency headers to the response.
-            in_flight = len(self.requests_in_flight)
-            available = max(0, self.concurrency - in_flight)
-            utilization = in_flight / self.concurrency if self.concurrency > 0 else 0.0
+            in_flight = len(_conn_stats.requests_in_flight)
+            available = max(0, _conn_stats.concurrency - in_flight)
+            utilization = (
+                in_flight / _conn_stats.concurrency if _conn_stats.concurrency > 0 else 0.0
+            )
             response.headers["X-Chutes-Conn-Used"] = str(in_flight)
             response.headers["X-Chutes-Conn-Available"] = str(available)
             response.headers["X-Chutes-Conn-Utilization"] = f"{utilization:.4f}"
@@ -580,17 +741,17 @@ class GraValMiddleware(BaseHTTPMiddleware):
                             yield chunk
                     except Exception as exc:
                         logger.warning(f"Unhandled exception in body iterator: {exc}")
-                        self.requests_in_flight.pop(request.request_id, None)
+                        _conn_stats.requests_in_flight.pop(request.request_id, None)
                         raise
                     finally:
-                        self.requests_in_flight.pop(request.request_id, None)
+                        _conn_stats.requests_in_flight.pop(request.request_id, None)
 
                 response.body_iterator = wrapped_iterator()
                 return response
             return response
         finally:
             if not response or not hasattr(response, "body_iterator"):
-                self.requests_in_flight.pop(request.request_id, None)
+                _conn_stats.requests_in_flight.pop(request.request_id, None)
 
 
 def start_dummy_socket(port_mapping, symmetric_key):
@@ -720,6 +881,11 @@ async def _gather_devices_and_initialize(
         token_data["sub"].encode()
     ).decode()
     body["fsv"] = await generate_filesystem_hash(token_data["sub"], chute_abspath, mode="full")
+
+    # Runtime integrity (already initialized at this point).
+    handle = get_runint_handle()
+    body["rint_commitment"] = handle._commitment
+    body["rint_nonce"] = handle.get_nonce()
 
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
@@ -869,12 +1035,57 @@ def run_chute(
         token = get_launch_token()
         token_data = get_launch_token_data()
 
-        from chutes.inspecto import generate_hash
-
+        # Runtime integrity must be initialized first to get the nonce.
         inspecto_hash = None
+        runint_nonce = None
         if not (dev or generate_inspecto_hash):
-            inspecto_hash = await generate_hash(hash_type="base", challenge=token_data["sub"])
+            # Fetch validator-provided nonce before initializing runint.
+            # This nonce is embedded in the commitment (signed by the keypair),
+            # proving the keypair was created for this specific session.
+            # Attacker cannot pre-compute keypairs because they don't know the nonce.
+            validator_nonce = None
+            base_url = token_data.get("url", "")
+            if base_url:
+                nonce_url = base_url.rstrip("/") + "/nonce"
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(nonce_url, headers={"Authorization": token}) as resp:
+                            if not resp.ok:
+                                logger.error(f"Failed to fetch validator nonce: {resp.status}")
+                                sys.exit(137)
+                            validator_nonce = await resp.text()
+                            logger.info("Fetched validator nonce for key binding")
+                except Exception as e:
+                    logger.error(f"Failed to fetch validator nonce: {e}")
+                    sys.exit(137)
+            else:
+                logger.error("No URL in token for validator nonce")
+                sys.exit(137)
+
+            runint_commitment = init_runint(validator_nonce)
+            if not runint_commitment:
+                logger.error("Runtime integrity initialization failed")
+                sys.exit(137)
+
+            runint_nonce = runint_get_nonce()
+            if not runint_nonce:
+                logger.error("Runtime integrity nonce retrieval failed")
+                sys.exit(137)
+
+            # Generate inspecto hash with seed = nonce + sub
+            # This prevents replay attacks because the nonce is fresh per init
+            from chutes.inspecto import generate_hash
+
+            inspecto_seed = runint_nonce + token_data["sub"]
+            inspecto_hash = await generate_hash(hash_type="base", challenge=inspecto_seed)
+            if not inspecto_hash:
+                logger.error("Inspecto hash generation failed")
+                sys.exit(137)
+            logger.info(f"Runtime integrity initialized: commitment={runint_commitment[:16]}...")
+
         elif generate_inspecto_hash:
+            from chutes.inspecto import generate_hash
+
             inspecto_hash = await generate_hash(hash_type="base")
             print(inspecto_hash)
             return
@@ -1006,13 +1217,37 @@ def run_chute(
 
             return await handle_slurp(request, chute_module)
 
-        @chute.on_event("startup")
-        async def activate_on_startup():
+        async def _wait_for_server_ready(timeout: float = 30.0):
+            """Wait until the server is accepting connections."""
+            import socket
+
+            start = asyncio.get_event_loop().time()
+            while (asyncio.get_event_loop().time() - start) < timeout:
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(1)
+                    result = sock.connect_ex(("127.0.0.1", port))
+                    sock.close()
+                    if result == 0:
+                        return True
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
+            return False
+
+        async def _do_activation():
+            """Activate after server is listening."""
             if not activation_url:
                 return
+
+            if not await _wait_for_server_ready():
+                logger.error("Server failed to start listening")
+                raise Exception("Server not ready for activation")
+
             activated = False
             for attempt in range(10):
-                await asyncio.sleep(attempt)
+                if attempt > 0:
+                    await asyncio.sleep(attempt)
                 try:
                     async with aiohttp.ClientSession(raise_for_status=False) as session:
                         async with session.get(
@@ -1039,6 +1274,10 @@ def run_chute(
             if not activated:
                 raise Exception("Failed to activate instance, aborting...")
 
+        @chute.on_event("startup")
+        async def activate_on_startup():
+            asyncio.create_task(_do_activation())
+
         async def _handle_fs_hash_challenge(request: Request):
             nonlocal chute_abspath
             data = request.state.decrypted
@@ -1048,10 +1287,14 @@ def run_chute(
                 )
             }
 
+        async def _handle_conn_stats(request: Request):
+            return _conn_stats.get_stats()
+
         # Validation endpoints.
         chute.add_api_route("/_ping", pong, methods=["POST"])
         chute.add_api_route("/_token", get_token, methods=["POST"])
         chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
+        chute.add_api_route("/_conn_stats", _handle_conn_stats, methods=["GET"])
         chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
@@ -1066,6 +1309,23 @@ def run_chute(
             return process_netnanny_challenge(chute, request)
 
         chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
+
+        # Runtime integrity challenge endpoint.
+        def _handle_rint(request: Request):
+            """Handle runtime integrity challenge."""
+            challenge = request.state.decrypted.get("challenge")
+            if not challenge:
+                return {"error": "missing challenge"}
+            result = runint_prove(challenge)
+            if result is None:
+                return {"error": "runtime integrity not initialized or not bound"}
+            signature, epoch = result
+            return {
+                "signature": signature,
+                "epoch": epoch,
+            }
+
+        chute.add_api_route("/_rint", _handle_rint, methods=["POST"])
 
         # New envdump endpoints.
         import chutes.envdump as envdump
