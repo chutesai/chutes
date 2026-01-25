@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import time
 import uuid
 import random
@@ -167,9 +168,10 @@ async def monitor_engine(
     async with aiohttp.ClientSession() as session:
         while True:
             if process.poll() is not None:
-                raise RuntimeError(
+                logger.error(
                     f"{model_name} subprocess died with exit code {process.returncode}"
                 )
+                sys.exit(137)
             if ready_event.is_set():
                 try:
                     async with session.get(
@@ -184,5 +186,6 @@ async def monitor_engine(
                 except Exception:
                     consecutive_failures += 1
                 if consecutive_failures >= failure_threshold:
-                    raise RuntimeError(f"{model_name} server is unresponsive.")
+                    logger.error(f"{model_name} server is unresponsive.")
+                    sys.exit(137)
             await asyncio.sleep(check_interval)

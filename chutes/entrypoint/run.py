@@ -1375,7 +1375,8 @@ def run_chute(
                 except Exception as e:
                     logger.error(f"Unexpected error attempting to activate instance: {str(e)}")
             if not activated:
-                raise Exception("Failed to activate instance, aborting...")
+                logger.error("Failed to activate instance, aborting...")
+                sys.exit(137)
 
         @chute.on_event("startup")
         async def activate_on_startup():
