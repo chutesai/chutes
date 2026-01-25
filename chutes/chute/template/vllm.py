@@ -315,7 +315,7 @@ def build_vllm_chute(
 
         import torch
         import multiprocessing
-        from chutes.util.hf import verify_cache
+        from chutes.util.hf import verify_cache, purge_model_cache, CacheVerificationError
         from huggingface_hub import snapshot_download
 
         download_path = None
@@ -339,7 +339,11 @@ def build_vllm_chute(
         set_default_cache_dirs(download_path)
 
         # Verify the cache.
-        await verify_cache(repo_id=model_name, revision=revision)
+        try:
+            await verify_cache(repo_id=model_name, revision=revision)
+        except CacheVerificationError:
+            purge_model_cache(repo_id=model_name)
+            raise
 
         torch.cuda.empty_cache()
         torch.cuda.init()
