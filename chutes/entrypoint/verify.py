@@ -250,6 +250,9 @@ class TeeGpuVerifier(GpuVerifier):
         """
         token = self._token
         
+        # Gather GPUs before sending request
+        gpus = await self.gather_gpus()
+        
         # Context manager fetches nonce, makes it available for evidence endpoint, and cleans up
         async with _use_evidence_nonce(self.validator_url) as _nonce:
             async with aiohttp.ClientSession(raise_for_status=True) as session:
@@ -259,6 +262,7 @@ class TeeGpuVerifier(GpuVerifier):
                 }
                 _body = self._body.copy()
                 _body["deployment_id"] = self.deployment_id
+                _body["gpus"] = gpus
                 logger.info(f"Requesting verification from validator: {self._url}")
                 async with session.post(self._url, headers=headers, json=_body) as resp:
                     data = await resp.json()
