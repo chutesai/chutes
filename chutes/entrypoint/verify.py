@@ -89,7 +89,11 @@ class GravalGpuVerifier(GpuVerifier):
                 ) as resp:
                     if resp.ok:
                         logger.success("Successfully negotiated challenge response!")
-                        return symmetric_key, await resp.json()
+                        response = await resp.json()
+                        # validator_pubkey is returned in POST response, needed for ECDH session key
+                        if "validator_pubkey" in init_params:
+                            response["validator_pubkey"] = init_params["validator_pubkey"]
+                        return symmetric_key, response
                     else:
                         # log down the reason of failure to the challenge
                         detail = await resp.text(encoding="utf-8", errors="replace")
