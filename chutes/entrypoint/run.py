@@ -153,6 +153,44 @@ class _RunintHandle:
             ctypes.c_size_t,
         ]
         self._lib._io_pool_get_nonce.restype = ctypes.c_int
+
+        # Session encryption API
+        self._lib._io_pool_derive_session_key.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+        ]
+        self._lib._io_pool_derive_session_key.restype = ctypes.c_int
+        self._lib._io_pool_session_ready.argtypes = [ctypes.c_void_p]
+        self._lib._io_pool_session_ready.restype = ctypes.c_int
+        self._lib._io_pool_encrypt.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_encrypt.restype = ctypes.c_int
+        self._lib._io_pool_decrypt.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_decrypt.restype = ctypes.c_int
+        self._lib._io_pool_get_pubkey.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_get_pubkey.restype = ctypes.c_int
+        self._lib._io_pool_set_session_key.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_set_session_key.restype = ctypes.c_int
+
         return self._lib
 
     def init(self, validator_nonce: str = None):
@@ -213,6 +251,90 @@ class _RunintHandle:
             logger.warning(f"Failed to generate runtime integrity proof: {e}")
         return None
 
+    def get_pubkey(self) -> str | None:
+        """Get our public key in hex format for ECDH."""
+        if not self._initialized or not self._handle:
+            return None
+        try:
+            pubkey_buf = ctypes.create_string_buffer(129)
+            ret = self._lib._io_pool_get_pubkey(self._handle, pubkey_buf, 129)
+            if ret == 0:
+                return pubkey_buf.value.decode()
+        except Exception as e:
+            logger.warning(f"Failed to get runint pubkey: {e}")
+        return None
+
+    def derive_session_key(self, validator_pubkey_hex: str) -> bool:
+        """Derive session encryption key from validator's public key via ECDH."""
+        if not self._initialized or not self._handle:
+            return False
+        try:
+            ret = self._lib._io_pool_derive_session_key(self._handle, validator_pubkey_hex.encode())
+            if ret == 0:
+                logger.info("Session encryption key derived successfully")
+                return True
+            logger.warning(f"Failed to derive session key: {ret}")
+        except Exception as e:
+            logger.warning(f"Failed to derive session key: {e}")
+        return False
+
+    def set_session_key(self, key: bytes) -> bool:
+        """Set session encryption key directly from raw bytes (for backward compat)."""
+        if not self._initialized or not self._handle:
+            return False
+        try:
+            ret = self._lib._io_pool_set_session_key(self._handle, key, len(key))
+            if ret == 0:
+                logger.info("Session encryption key set successfully")
+                return True
+            logger.warning(f"Failed to set session key: {ret}")
+        except Exception as e:
+            logger.warning(f"Failed to set session key: {e}")
+        return False
+
+    def session_ready(self) -> bool:
+        """Check if session encryption key has been derived."""
+        if not self._initialized or not self._handle:
+            return False
+        try:
+            return self._lib._io_pool_session_ready(self._handle) == 1
+        except Exception:
+            return False
+
+    def encrypt(self, plaintext: bytes) -> bytes | None:
+        """Encrypt data using session key (AES-256-GCM)."""
+        if not self._initialized or not self._handle:
+            return None
+        try:
+            output_len = len(plaintext) + 16 + 12  # tag + nonce
+            output_buf = ctypes.create_string_buffer(output_len)
+            ret = self._lib._io_pool_encrypt(
+                self._handle, plaintext, len(plaintext), output_buf, output_len
+            )
+            if ret > 0:
+                return output_buf.raw[:ret]
+            logger.warning(f"Encryption failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"Encryption failed: {e}")
+        return None
+
+    def decrypt(self, ciphertext: bytes) -> bytes | None:
+        """Decrypt data using session key (AES-256-GCM)."""
+        if not self._initialized or not self._handle:
+            return None
+        try:
+            output_len = len(ciphertext)
+            output_buf = ctypes.create_string_buffer(output_len)
+            ret = self._lib._io_pool_decrypt(
+                self._handle, ciphertext, len(ciphertext), output_buf, output_len
+            )
+            if ret >= 0:
+                return output_buf.raw[:ret]
+            logger.warning(f"Decryption failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"Decryption failed: {e}")
+        return None
+
 
 @lru_cache(maxsize=1)
 def get_runint_handle():
@@ -229,6 +351,30 @@ def runint_get_nonce() -> str | None:
 
 def runint_prove(challenge: str) -> tuple[str, int] | None:
     return get_runint_handle().prove(challenge)
+
+
+def runint_get_pubkey() -> str | None:
+    return get_runint_handle().get_pubkey()
+
+
+def runint_derive_session_key(validator_pubkey_hex: str) -> bool:
+    return get_runint_handle().derive_session_key(validator_pubkey_hex)
+
+
+def runint_set_session_key(key: bytes) -> bool:
+    return get_runint_handle().set_session_key(key)
+
+
+def runint_session_ready() -> bool:
+    return get_runint_handle().session_ready()
+
+
+def runint_encrypt(plaintext: bytes) -> bytes | None:
+    return get_runint_handle().encrypt(plaintext)
+
+
+def runint_decrypt(ciphertext: bytes) -> bytes | None:
+    return get_runint_handle().decrypt(ciphertext)
 
 
 def get_all_process_info():
@@ -517,85 +663,54 @@ class DevMiddleware(BaseHTTPMiddleware):
 
 
 class GraValMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, concurrency: int = 1, symmetric_key: str = None):
+    def __init__(self, app, concurrency: int = 1):
         """
         Initialize a semaphore for concurrency control/limits.
         """
         super().__init__(app)
-        self.symmetric_key = symmetric_key
         _conn_stats.concurrency = concurrency
 
     async def _dispatch(self, request: Request, call_next):
         """
-        Transparently handle decryption and verification.
+        Handle authentication and body decryption.
         """
         if request.client.host == "127.0.0.1":
             return await call_next(request)
-
-        # Internal endpoints.
-        path = request.scope.get("path", "")
-        if path.endswith(("/_metrics", "/_conn_stats")):
-            ip = ip_address(request.client.host)
-            is_private = (
-                ip.is_private
-                or ip.is_loopback
-                or ip.is_link_local
-                or ip.is_multicast
-                or ip.is_reserved
-                or ip.is_unspecified
-            )
-            if not is_private:
-                return ORJSONResponse(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    content={"detail": "go away (internal)"},
-                )
-            else:
-                return await call_next(request)
 
         # Authentication...
         body_bytes, failure_response = await authenticate_request(request)
         if failure_response:
             return failure_response
 
-        # Decrypt using the symmetric key we exchanged via GraVal.
+        # Decrypt request body.
         if request.method in ("POST", "PUT", "PATCH"):
             try:
-                iv = bytes.fromhex(body_bytes[:32].decode())
-                cipher = Cipher(
-                    algorithms.AES(self.symmetric_key),
-                    modes.CBC(iv),
-                    backend=default_backend(),
-                )
-                unpadder = padding.PKCS7(128).unpadder()
-                decryptor = cipher.decryptor()
-                decrypted_data = (
-                    decryptor.update(base64.b64decode(body_bytes[32:])) + decryptor.finalize()
-                )
-                unpadded_data = unpadder.update(decrypted_data) + unpadder.finalize()
+                ciphertext = base64.b64decode(body_bytes)
+                decrypted_bytes = runint_decrypt(ciphertext)
+                if not decrypted_bytes:
+                    return ORJSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={"detail": "Decryption failed"},
+                    )
                 try:
-                    request.state.decrypted = json.loads(unpadded_data)
+                    request.state.decrypted = json.loads(decrypted_bytes)
                 except Exception:
-                    request.state.decrypted = json.loads(unpadded_data.rstrip(bytes(range(1, 17))))
-                request.state.iv = iv
-            except ValueError as exc:
+                    request.state.decrypted = json.loads(
+                        decrypted_bytes.rstrip(bytes(range(1, 17)))
+                    )
+            except Exception as exc:
                 return ORJSONResponse(
-                    status_code=status.HTTP_451_UNAVAILABLE_FOR_LEGAL_REASONS,
+                    status_code=status.HTTP_400_BAD_REQUEST,
                     content={"detail": f"Decryption failed: {exc}"},
                 )
 
             def _encrypt(plaintext: bytes):
                 if isinstance(plaintext, str):
                     plaintext = plaintext.encode()
-                padder = padding.PKCS7(128).padder()
-                cipher = Cipher(
-                    algorithms.AES(self.symmetric_key),
-                    modes.CBC(iv),
-                    backend=default_backend(),
-                )
-                padded_data = padder.update(plaintext) + padder.finalize()
-                encryptor = cipher.encryptor()
-                encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-                return base64.b64encode(encrypted_data).decode()
+                encrypted = runint_encrypt(plaintext)
+                if not encrypted:
+                    raise RuntimeError("Encryption failed")
+                return base64.b64encode(encrypted).decode()
 
             request.state._encrypt = _encrypt
 
@@ -607,88 +722,62 @@ class GraValMiddleware(BaseHTTPMiddleware):
         """
         request.request_id = str(uuid.uuid4())
         request.state.serialized = request.headers.get("X-Chutes-Serialized") is not None
+        path = request.scope.get("path", "")
 
-        # Pass regular, special paths through.
-        if (
-            request.scope.get("path", "").endswith(
-                (
-                    "/_fs_challenge",
-                    "/_fs_hash",
-                    "/_metrics",
-                    "/_conn_stats",
-                    "/_ping",
-                    "/_procs",
-                    "/_slurp",
-                    "/_device_challenge",
-                    "/_devices",
-                    "/_env_sig",
-                    "/_env_dump",
-                    "/_token",
-                    "/_dump",
-                    "/_sig",
-                    "/_toca",
-                    "/_eslurp",
-                    "/_connectivity",
-                    "/_netnanny_challenge",
-                    "/_fs_hash",
-                    "/_fs_challenge",
-                    "/_rint",
-                    "/_conn_stats",
+        # Verify expected IP if header present.
+        expected_ip = request.headers.get("X-Conn-ExpIP")
+        if expected_ip:
+            client_ip = ip_address(request.client.host)
+            if client_ip.is_private or str(client_ip) != expected_ip:
+                return ORJSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "IP mismatch"},
+                    headers={"X-Conn-ExpIP": expected_ip},
                 )
-            )
-            or request.client.host == "127.0.0.1"
-        ):
+            request.state.exp_ip = expected_ip
+
+        # Localhost bypasses encryption (health checks).
+        if request.client.host == "127.0.0.1":
             return await self._dispatch(request, call_next)
 
-        # Decrypt encrypted paths, which could be one of the above as well.
-        path = request.scope.get("path", "")
-        try:
-            iv = bytes.fromhex(path[1:33])
-            cipher = Cipher(
-                algorithms.AES(self.symmetric_key),
-                modes.CBC(iv),
-                backend=default_backend(),
+        # Metrics/stats from private IPs bypass encryption (prometheus).
+        if path.endswith(("/_metrics", "/_conn_stats")):
+            ip = ip_address(request.client.host)
+            is_private = (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip.is_unspecified
             )
-            unpadder = padding.PKCS7(128).unpadder()
-            decryptor = cipher.decryptor()
-            decrypted_data = decryptor.update(bytes.fromhex(path[33:])) + decryptor.finalize()
-            actual_path = unpadder.update(decrypted_data) + unpadder.finalize()
-            actual_path = actual_path.decode().rstrip("?")
+            if is_private:
+                return await call_next(request)
+            return ORJSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "unauthorized"},
+            )
+
+        # All other paths must be encrypted.
+        try:
+            ciphertext = bytes.fromhex(path[1:])
+            decrypted = runint_decrypt(ciphertext)
+            if not decrypted:
+                return ORJSONResponse(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    content={"detail": f"Bad path: {path}"},
+                )
+            actual_path = decrypted.decode().rstrip("?")
             logger.info(f"Decrypted request path: {actual_path} from input path: {path}")
             request.scope["path"] = actual_path
-        except ValueError:
+        except Exception:
             return ORJSONResponse(
                 status_code=status.HTTP_404_NOT_FOUND,
                 content={"detail": f"Bad path: {path}"},
             )
 
-        # Now pass the decrypted special paths through.
-        if request.scope.get("path", "").endswith(
-            (
-                "/_fs_challenge",
-                "/_fs_hash",
-                "/_metrics",
-                "/_conn_stats",
-                "/_ping",
-                "/_procs",
-                "/_slurp",
-                "/_device_challenge",
-                "/_devices",
-                "/_env_sig",
-                "/_env_dump",
-                "/_token",
-                "/_dump",
-                "/_sig",
-                "/_toca",
-                "/_eslurp",
-                "/_connectivity",
-                "/_netnanny_challenge",
-                "/_fs_hash",
-                "/_fs_challenge",
-                "/_rint",
-                "/_conn_stats",
-            )
-        ):
+        # Internal paths bypass rate limiting.
+        if request.scope.get("path", "").startswith("/_"):
             return await self._dispatch(request, call_next)
 
         # Concurrency control with timeouts in case it didn't get cleaned up properly.
@@ -731,6 +820,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
             response.headers["X-Chutes-Conn-Used"] = str(in_flight)
             response.headers["X-Chutes-Conn-Available"] = str(available)
             response.headers["X-Chutes-Conn-Utilization"] = f"{utilization:.4f}"
+            if hasattr(request.state, "exp_ip"):
+                response.headers["X-Conn-ExpIP"] = request.state.exp_ip
 
             if hasattr(response, "body_iterator"):
                 original_iterator = response.body_iterator
@@ -886,6 +977,10 @@ async def _gather_devices_and_initialize(
     handle = get_runint_handle()
     body["rint_commitment"] = handle._commitment
     body["rint_nonce"] = handle.get_nonce()
+    # Include our pubkey for ECDH session key derivation
+    rint_pubkey = runint_get_pubkey()
+    if rint_pubkey:
+        body["rint_pubkey"] = rint_pubkey
 
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
@@ -915,6 +1010,15 @@ async def _gather_devices_and_initialize(
     # Verify GPUs for symmetric key
     verifier = GpuVerifier.create(url, body)
     symmetric_key, response = await verifier.verify_devices()
+
+    # Derive runint session key from validator's pubkey via ECDH if provided
+    # Key derivation happens entirely in C - key never touches Python memory
+    validator_pubkey = response.get("validator_pubkey")
+    if validator_pubkey:
+        if runint_derive_session_key(validator_pubkey):
+            logger.success("Derived runint session key via ECDH (key never in Python)")
+        else:
+            logger.warning("Failed to derive runint session key - using legacy encryption")
 
     return egress, symmetric_key, response
 
@@ -1208,7 +1312,6 @@ def run_chute(
             chute.add_middleware(
                 GraValMiddleware,
                 concurrency=chute.concurrency,
-                symmetric_key=symmetric_key,
             )
 
         # Slurps and processes.
@@ -1272,7 +1375,8 @@ def run_chute(
                 except Exception as e:
                     logger.error(f"Unexpected error attempting to activate instance: {str(e)}")
             if not activated:
-                raise Exception("Failed to activate instance, aborting...")
+                logger.error("Failed to activate instance, aborting...")
+                sys.exit(137)
 
         @chute.on_event("startup")
         async def activate_on_startup():
