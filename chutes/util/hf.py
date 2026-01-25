@@ -3,12 +3,29 @@ HuggingFace cache verification utility.
 """
 
 import os
+import shutil
 import asyncio
 import aiohttp
 from pathlib import Path
 from loguru import logger
 
 PROXY_URL = "https://api.chutes.ai/misc/hf_repo_info"
+
+
+def purge_model_cache(repo_id: str, cache_dir: str = "/cache") -> bool:
+    """
+    Recursively delete the cache directory for a specific model.
+    Returns True if anything was deleted, False otherwise.
+    """
+    cache_dir = Path(cache_dir)
+    repo_folder_name = f"models--{repo_id.replace('/', '--')}"
+    model_cache_path = cache_dir / "hub" / repo_folder_name
+
+    if model_cache_path.exists():
+        logger.warning(f"Purging corrupted cache at {model_cache_path}")
+        shutil.rmtree(model_cache_path, ignore_errors=True)
+        return True
+    return False
 
 
 class CacheVerificationError(Exception):
