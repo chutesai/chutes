@@ -237,7 +237,15 @@ class TeeGpuVerifier(GpuVerifier):
     @lru_cache(maxsize=1)
     def deployment_id(self) -> str:
         hostname = os.environ.get("HOSTNAME")
-        _deployment_id = hostname.lstrip("chute-")
+        # Pod name format: chute-{deployment_id}-{k8s-suffix}
+        # Service name format: chute-service-{deployment_id}
+        # We need to extract just the deployment_id by removing the prefix and k8s suffix
+        if not hostname.startswith("chute-"):
+            raise ValueError(f"Unexpected hostname format: {hostname}")
+        # Remove 'chute-' prefix
+        _deployment_id = hostname[6:]  # len("chute-") = 6
+        # Remove k8s-generated pod suffix (everything after the last hyphen)
+        _deployment_id = _deployment_id.rsplit("-", 1)[0]
         return _deployment_id
 
     async def fetch_symmetric_key(self):
