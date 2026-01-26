@@ -35,15 +35,12 @@ from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from chutes.entrypoint.verify import (
     GpuVerifier,
-    TEE_EVIDENCE_ENDPOINT,
-    tee_evidence_endpoint,
 )
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import (
     get_launch_token,
     get_launch_token_data,
-    is_tee_env,
     load_chute,
     miner,
     authenticate_request,
@@ -51,9 +48,6 @@ from chutes.entrypoint._shared import (
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import padding
 
 
 CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv_v2")
@@ -912,7 +906,7 @@ async def _gather_devices_and_initialize(
 
     # Verify GPUs, spin up dummy sockets, and finalize verification.
     verifier = GpuVerifier.create(body)
-    symmetric_key, response = await verifier.verify()
+    response = await verifier.verify()
 
     # Derive runint session key from validator's pubkey via ECDH if provided
     # Key derivation happens entirely in C - key never touches Python memory
@@ -932,7 +926,7 @@ async def _gather_devices_and_initialize(
         else:
             logger.warning("Failed to derive runint session key - using legacy encryption")
 
-    return egress, symmetric_key, response
+    return egress, response
 
 
 # Run a chute (which can be an async job or otherwise long-running process).
@@ -1150,7 +1144,6 @@ def run_chute(
 
         # GPU verification plus job fetching.
         job_data: dict | None = None
-        symmetric_key: bytes | None = None
         job_id: str | None = None
         job_obj: Job | None = None
         job_method: str | None = None
@@ -1163,7 +1156,6 @@ def run_chute(
         if token:
             (
                 allow_external_egress,
-                symmetric_key,
                 response,
             ) = await _gather_devices_and_initialize(
                 external_host,

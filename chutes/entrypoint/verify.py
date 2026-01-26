@@ -120,10 +120,10 @@ class GpuVerifier:
         """
         Execute full verification flow and spin up dummy sockets for port validation.
         """
-        symmetric_key = await self.fetch_symmetric_key()
+        await self.fetch_symmetric_key()
         self._start_dummy_sockets()
         response = await self.finalize_verification()
-        return symmetric_key, response
+        return response
 
     @abstractmethod
     async def fetch_symmetric_key(self) -> bytes: ...
@@ -180,7 +180,6 @@ class GravalGpuVerifier(GpuVerifier):
 
         # Now, we can respond to the URL by encrypting a payload with the symmetric key and sending it back.
         self._response_plaintext = sym_key["response_plaintext"]
-        return self._symmetric_key
 
     async def finalize_verification(self):
 
@@ -344,7 +343,6 @@ class TeeGpuVerifier(GpuVerifier):
                         data = await resp.json()
                         self._symmetric_key = bytes.fromhex(data["symmetric_key"])
                         logger.success("Successfully received symmetric key from validator")
-                        return self._symmetric_key
 
     async def finalize_verification(self):
         """
