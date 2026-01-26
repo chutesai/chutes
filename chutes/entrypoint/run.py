@@ -34,8 +34,6 @@ from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from chutes.entrypoint.verify import (
     GpuVerifier,
-    TEE_EVIDENCE_ENDPOINT,
-    tee_evidence_endpoint,
 )
 from chutes.util.hf import verify_cache, CacheVerificationError
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -43,7 +41,6 @@ from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import (
     get_launch_token,
     get_launch_token_data,
-    is_tee_env,
     load_chute,
     miner,
     authenticate_request,
@@ -885,7 +882,7 @@ async def _gather_devices_and_initialize(
 
     # Verify GPUs, spin up dummy sockets, and finalize verification.
     verifier = GpuVerifier.create(body)
-    symmetric_key, response = await verifier.verify()
+    response = await verifier.verify()
 
     # Derive runint session key from validator's pubkey via ECDH if provided
     # Key derivation happens entirely in C - key never touches Python memory
@@ -905,7 +902,7 @@ async def _gather_devices_and_initialize(
         else:
             logger.warning("Failed to derive runint session key - using legacy encryption")
 
-    return egress, symmetric_key, response
+    return egress, response
 
 
 # Run a chute (which can be an async job or otherwise long-running process).
@@ -1140,7 +1137,6 @@ def run_chute(
 
         # GPU verification plus job fetching.
         job_data: dict | None = None
-        symmetric_key: bytes | None = None
         job_id: str | None = None
         job_obj: Job | None = None
         job_method: str | None = None
@@ -1153,7 +1149,6 @@ def run_chute(
         if token:
             (
                 allow_external_egress,
-                symmetric_key,
                 response,
             ) = await _gather_devices_and_initialize(
                 external_host,
