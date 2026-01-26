@@ -1403,9 +1403,7 @@ def run_chute(
 
         chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
 
-        if is_tee_env():
-            chute.add_api_route(TEE_EVIDENCE_ENDPOINT, tee_evidence_endpoint, methods=["GET"])
-        
+
 
         logger.success("Added all chutes internal endpoints.")
 
