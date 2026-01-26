@@ -893,15 +893,6 @@ async def _gather_devices_and_initialize(
         else:
             logger.warning("Failed to derive runint session key - using legacy encryption")
 
-    # Derive runint session key from validator's pubkey via ECDH if provided
-    # Key derivation happens entirely in C - key never touches Python memory
-    validator_pubkey = response.get("validator_pubkey")
-    if validator_pubkey:
-        if runint_derive_session_key(validator_pubkey):
-            logger.success("Derived runint session key via ECDH (key never in Python)")
-        else:
-            logger.warning("Failed to derive runint session key - using legacy encryption")
-
     return egress, response
 
 
