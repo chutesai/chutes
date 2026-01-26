@@ -1,4 +1,5 @@
 from abc import abstractmethod
+import asyncio
 import base64
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -12,7 +13,8 @@ from urllib.parse import urljoin, urlparse
 
 import aiohttp
 from loguru import logger
-from fastapi import Request, HTTPException, status
+from fastapi import FastAPI, Request, HTTPException, status
+from uvicorn import Config, Server
 
 from chutes.entrypoint._shared import encrypt_response, get_launch_token, get_launch_token_data, is_tee_env, miner
 
@@ -225,8 +227,72 @@ class GravalGpuVerifier(GpuVerifier):
         return gpus
 
 
-class TeeGpuVerifier(GpuVerifier):
+class TeeAttestationService:
+    """
+    Context manager for TEE attestation evidence server.
+    
+    Starts a minimal FastAPI server to serve the /_tee_evidence endpoint during verification.
+    This is similar to how dummy sockets are started for port validation in Graval flow.
+    
+    The server runs on a dedicated port (8002 by default, configurable via CHUTES_TEE_EVIDENCE_PORT)
+    to isolate it from the main application port. This allows network policies to restrict access
+    to only the proxy service in the attestation-system namespace.
+    """
+    
+    def __init__(self):
+        self._server: Server | None = None
+        self._server_task: asyncio.Task | None = None
+    
+    async def __aenter__(self):
+        """Start the evidence server."""
+        # Use dedicated evidence port (default 8002) for security isolation
+        # This port should be restricted via network policy to only allow ingress from
+        # the proxy service in the attestation-system namespace
+        evidence_port = os.getenv("CHUTES_TEE_EVIDENCE_PORT", "8002")
+        if not evidence_port.isdigit():
+            raise ValueError(f"CHUTES_TEE_EVIDENCE_PORT must be a valid port number, got: {evidence_port}")
+        evidence_port = int(evidence_port)
+        
+        # Create minimal FastAPI app with only the evidence endpoint
+        evidence_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+        evidence_app.add_api_route(TEE_EVIDENCE_ENDPOINT, tee_evidence_endpoint, methods=["GET"])
+        
+        # Start server in background
+        config = Config(
+            app=evidence_app,
+            host="0.0.0.0",
+            port=evidence_port,
+            limit_concurrency=1000,
+            log_level="warning",  # Reduce logging noise during verification
+        )
+        self._server = Server(config)
+        
+        async def run_evidence_server():
+            await self._server.serve()
+        
+        self._server_task = asyncio.create_task(run_evidence_server())
+        # Give the server a moment to start listening
+        await asyncio.sleep(0.5)
+        logger.info(f"Started evidence server on port {evidence_port} for TEE verification")
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Stop the evidence server."""
+        if self._server is not None and self._server_task is not None:
+            logger.info("Stopping evidence server...")
+            self._server.should_exit = True
+            try:
+                await asyncio.wait_for(self._server_task, timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning("Evidence server did not stop within timeout")
+            except Exception as e:
+                logger.warning(f"Error stopping evidence server: {e}")
+            finally:
+                self._server = None
+                self._server_task = None
 
+
+class TeeGpuVerifier(GpuVerifier):
     @property
     @lru_cache(maxsize=1)
     def validator_url(self) -> str:
@@ -251,7 +317,7 @@ class TeeGpuVerifier(GpuVerifier):
     async def fetch_symmetric_key(self):
         """
         New TEE verification flow (3 phases):
-        Phase 1: Get nonce from validator
+        Phase 1: Start evidence server and get nonce from validator
         Phase 2: Validator calls our /_tee_evidence endpoint, we fetch evidence from attestation service,
                  validator verifies and returns symmetric key
         Phase 3: Start dummy sockets and finalize verification (handled by base class)
@@ -261,22 +327,24 @@ class TeeGpuVerifier(GpuVerifier):
         # Gather GPUs before sending request
         gpus = await self.gather_gpus()
         
-        # Context manager fetches nonce, makes it available for evidence endpoint, and cleans up
-        async with _use_evidence_nonce(self.validator_url) as _nonce:
-            async with aiohttp.ClientSession(raise_for_status=True) as session:
-                headers = {
-                    "Authorization": token,
-                    "X-Chutes-Nonce": _nonce
-                }
-                _body = self._body.copy()
-                _body["deployment_id"] = self.deployment_id
-                _body["gpus"] = gpus
-                logger.info(f"Requesting verification from validator: {self._url}")
-                async with session.post(self._url, headers=headers, json=_body) as resp:
-                    data = await resp.json()
-                    self._symmetric_key = bytes.fromhex(data["symmetric_key"])
-                    logger.success("Successfully received symmetric key from validator")
-                    return self._symmetric_key
+        # Start evidence server as context manager - it will automatically stop when done
+        async with TeeAttestationService():
+            # Context manager fetches nonce, makes it available for evidence endpoint, and cleans up
+            async with _use_evidence_nonce(self.validator_url) as _nonce:
+                async with aiohttp.ClientSession(raise_for_status=True) as session:
+                    headers = {
+                        "Authorization": token,
+                        "X-Chutes-Nonce": _nonce
+                    }
+                    _body = self._body.copy()
+                    _body["deployment_id"] = self.deployment_id
+                    _body["gpus"] = gpus
+                    logger.info(f"Requesting verification from validator: {self._url}")
+                    async with session.post(self._url, headers=headers, json=_body) as resp:
+                        data = await resp.json()
+                        self._symmetric_key = bytes.fromhex(data["symmetric_key"])
+                        logger.success("Successfully received symmetric key from validator")
+                        return self._symmetric_key
 
     async def finalize_verification(self):
         """
