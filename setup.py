@@ -81,7 +81,6 @@ setup(
     entry_points={
         "console_scripts": [
             "chutes=chutes.cli:app",
-            "cfsv=chutes.cfsv_wrapper:main",
         ],
     },
 )

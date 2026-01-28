@@ -46,7 +46,7 @@ from chutes.entrypoint._shared import (
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
-from miner_cfsv import MinerCFSV
+from chutes.cfsv_wrapper import CFSVWrapper
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -594,7 +594,7 @@ async def check_connectivity(request: Request) -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def get_cfsv_ref():
-    return MinerCFSV(lib_path=CFSV_PATH)
+    return CFSVWrapper(lib_path=CFSV_PATH)
 
 
 async def generate_filesystem_hash(salt: str, exclude_file: str, mode: str = "full"):
