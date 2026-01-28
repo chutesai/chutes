@@ -971,7 +971,7 @@ async def _gather_devices_and_initialize(
     try:
         cfsv = get_cfsv_ref()
         if not cfsv.sizetest("/tmp", disk_gb):
-            logger.error(f"Disk space check failed")
+            logger.error("Disk space check failed")
             raise Exception(f"Insufficient disk space: {disk_gb}GB required in /tmp")
         logger.success(f"Disk space check passed: {disk_gb}GB available in /tmp")
     except Exception as e:
