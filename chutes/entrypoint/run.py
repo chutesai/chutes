@@ -19,7 +19,6 @@ import psutil
 import base64
 import socket
 import secrets
-import subprocess
 import threading
 import traceback
 import orjson as json
@@ -47,13 +46,14 @@ from chutes.entrypoint._shared import (
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
+from chutes.cfsv_wrapper import CFSVWrapper
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 
 
-CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "cfsv_v2")
 RUNINT_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-runint.so")
+CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-cfsv.so")
 
 
 class _ConnStats:
@@ -592,50 +592,33 @@ async def check_connectivity(request: Request) -> dict[str, Any]:
         }
 
 
+@lru_cache(maxsize=1)
+def get_cfsv_ref():
+    return CFSVWrapper(lib_path=CFSV_PATH)
+
+
 async def generate_filesystem_hash(salt: str, exclude_file: str, mode: str = "full"):
     """
     Generate a hash of the filesystem, in either sparse or full mode.
     """
-    fsv_hash = None
     logger.info(
         f"Running filesystem verification challenge in {mode=} using {salt=} excluding {exclude_file}"
     )
-    process = await asyncio.create_subprocess_exec(
-        CFSV_PATH,
-        "challenge",
-        "/",
+    loop = asyncio.get_event_loop()
+    cfsv = get_cfsv_ref()
+    fsv_hash = await loop.run_in_executor(
+        None,
+        cfsv.challenge,
         salt,
         mode,
+        "/",
         "/etc/chutesfs.index",
         exclude_file,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        raise subprocess.CalledProcessError(
-            process.returncode,
-            [
-                CFSV_PATH,
-                "challenge",
-                "/",
-                salt,
-                mode,
-                "/etc/chutesfs.index",
-                exclude_file,
-            ],
-            output=stdout.decode("utf-8"),
-            stderr=stderr.decode("utf-8"),
-        )
-    stdout_text = stdout.decode("utf-8")
-    for line in stdout_text.strip().split("\n"):
-        if line.startswith("RESULT:"):
-            fsv_hash = line.split("RESULT:")[1].strip()
-            logger.success(f"Filesystem verification hash: {fsv_hash}")
-            break
     if not fsv_hash:
-        logger.warning("Failed to extract filesystem verification hash from cfsv output")
+        logger.warning("Failed to generate filesystem verification hash from cfsv library")
         raise Exception("Failed to generate filesystem challenge response.")
+    logger.success(f"Filesystem verification hash: {fsv_hash}")
     return fsv_hash
 
 
@@ -986,16 +969,11 @@ async def _gather_devices_and_initialize(
     disk_gb = token_data.get("disk_gb", 10)
     logger.info(f"Checking disk space availability: {disk_gb}GB required")
     try:
-        _ = subprocess.run(
-            [CFSV_PATH, "sizetest", "/tmp", str(disk_gb)],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        cfsv = get_cfsv_ref()
+        if not cfsv.sizetest("/tmp", disk_gb):
+            logger.error("Disk space check failed")
+            raise Exception(f"Insufficient disk space: {disk_gb}GB required in /tmp")
         logger.success(f"Disk space check passed: {disk_gb}GB available in /tmp")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Disk space check failed: {e.stderr}")
-        raise Exception(f"Insufficient disk space: {disk_gb}GB required in /tmp")
     except Exception as e:
         logger.error(f"Error checking disk space: {e}")
         raise Exception(f"Failed to verify disk space availability: {e}")

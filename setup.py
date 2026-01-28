@@ -33,6 +33,7 @@ setup(
             "*.so",
             "cfsv",
             "cfsv_v2",
+            "cfsv_v3",
         ],
         "chutes.envdump": ["*.so"],
     },
@@ -80,7 +81,6 @@ setup(
     entry_points={
         "console_scripts": [
             "chutes=chutes.cli:app",
-            "cfsv=chutes.cfsv_wrapper:main",
         ],
     },
 )
