@@ -142,7 +142,7 @@ class GravalGpuVerifier(GpuVerifier):
     async def fetch_symmetric_key(self):
         # Fetch the challenges.
         token = self._token
-        url = self._url
+        url = urljoin(self._url + "/", "graval")
 
         self._body["gpus"] = self.gather_gpus()
         async with aiohttp.ClientSession(raise_for_status=True) as session:
@@ -184,7 +184,7 @@ class GravalGpuVerifier(GpuVerifier):
     async def finalize_verification(self):
 
         token = self._token
-        url = self._url
+        url = urljoin(self._url + "/", "graval")
         plaintext = self._response_plaintext
 
         async with aiohttp.ClientSession(raise_for_status=True) as session:
@@ -325,6 +325,8 @@ class TeeGpuVerifier(GpuVerifier):
         
         # Gather GPUs before sending request
         gpus = await self.gather_gpus()
+        # Append /tee to instance path; urljoin(base, "/tee") replaces path, urljoin(base, "tee") replaces last segment
+        url = urljoin(self._url + "/", "tee")
         
         # Start evidence server as context manager - it will automatically stop when done
         async with TeeAttestationService():
@@ -338,8 +340,8 @@ class TeeGpuVerifier(GpuVerifier):
                     _body = self._body.copy()
                     _body["deployment_id"] = self.deployment_id
                     _body["gpus"] = gpus
-                    logger.info(f"Requesting verification from validator: {self._url}")
-                    async with session.post(self._url, headers=headers, json=_body) as resp:
+                    logger.info(f"Requesting verification from validator: {url}")
+                    async with session.post(url, headers=headers, json=_body) as resp:
                         data = await resp.json()
                         self._symmetric_key = bytes.fromhex(data["symmetric_key"])
                         logger.success("Successfully received symmetric key from validator")
@@ -352,7 +354,8 @@ class TeeGpuVerifier(GpuVerifier):
             raise RuntimeError("Symmetric key must be fetched before finalizing verification.")
 
         token = self._token
-        url = self._url
+        # Append /tee to instance path; urljoin(base, "/tee") would replace path with /tee (RFC 3986)
+        url = urljoin(self._url + "/", "tee")
 
         async with aiohttp.ClientSession(raise_for_status=False) as session:
             logger.info("Sending final verification request.")
