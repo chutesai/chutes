@@ -46,14 +46,13 @@ from chutes.entrypoint._shared import (
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local
-from chutes.cfsv_wrapper import CFSVWrapper
+from chutes.cfsv_wrapper import get_cfsv
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 
 
 RUNINT_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-runint.so")
-CFSV_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-cfsv.so")
 
 
 class _ConnStats:
@@ -592,11 +591,6 @@ async def check_connectivity(request: Request) -> dict[str, Any]:
         }
 
 
-@lru_cache(maxsize=1)
-def get_cfsv_ref():
-    return CFSVWrapper(lib_path=CFSV_PATH)
-
-
 async def generate_filesystem_hash(salt: str, exclude_file: str, mode: str = "full"):
     """
     Generate a hash of the filesystem, in either sparse or full mode.
@@ -605,7 +599,7 @@ async def generate_filesystem_hash(salt: str, exclude_file: str, mode: str = "fu
         f"Running filesystem verification challenge in {mode=} using {salt=} excluding {exclude_file}"
     )
     loop = asyncio.get_event_loop()
-    cfsv = get_cfsv_ref()
+    cfsv = get_cfsv()
     fsv_hash = await loop.run_in_executor(
         None,
         cfsv.challenge,
@@ -969,7 +963,7 @@ async def _gather_devices_and_initialize(
     disk_gb = token_data.get("disk_gb", 10)
     logger.info(f"Checking disk space availability: {disk_gb}GB required")
     try:
-        cfsv = get_cfsv_ref()
+        cfsv = get_cfsv()
         if not cfsv.sizetest("/tmp", disk_gb):
             logger.error("Disk space check failed")
             raise Exception(f"Insufficient disk space: {disk_gb}GB required in /tmp")

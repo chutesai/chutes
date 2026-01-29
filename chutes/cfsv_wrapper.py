@@ -1,6 +1,7 @@
 import os
 import ctypes
 import asyncio
+from functools import lru_cache
 from fastapi import Request
 
 
@@ -99,7 +100,10 @@ class CFSVWrapper:
         return None
 
 
-CFSV = CFSVWrapper()
+@lru_cache(maxsize=1)
+def get_cfsv():
+    """Lazily initialize CFSV wrapper (only works on Linux)."""
+    return CFSVWrapper()
 
 
 async def handle_challenge(request: Request):
@@ -109,7 +113,7 @@ async def handle_challenge(request: Request):
     exclude_path = request.state.decrypted.get("exclude_path", "/app/chute.py")
     result = await loop.run_in_executor(
         None,
-        CFSV.challenge,
+        get_cfsv().challenge,
         salt,
         mode,
         "/",
@@ -125,7 +129,7 @@ async def handle_sizetest(request: Request):
     size_gib = request.state.decrypted.get("size_gib", 10)
     result = await loop.run_in_executor(
         None,
-        CFSV.sizetest,
+        get_cfsv().sizetest,
         test_dir,
         size_gib,
     )
@@ -133,4 +137,4 @@ async def handle_sizetest(request: Request):
 
 
 async def handle_version(request: Request):
-    return {"result": CFSV.version()}
+    return {"result": get_cfsv().version()}
