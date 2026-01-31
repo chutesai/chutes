@@ -62,7 +62,7 @@ setup(
         "semver",
         "huggingface_hub",
         "setproctitle",
-        "cllmv>=0.0.7",
+        "cllmv==0.1.1",
     ],
     extras_require={
         "dev": [
