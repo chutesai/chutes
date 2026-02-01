@@ -11,7 +11,7 @@ from pathlib import Path
 from loguru import logger
 from concurrent.futures import ThreadPoolExecutor
 
-PROXY_URL = "https://api.chutes.ai/misc/hf_repo_info"
+PROXY_URL = "https://proxy.chutes.ai/misc/hf_repo_info"
 
 
 def purge_model_cache(repo_id: str, cache_dir: str = "/cache") -> bool:
