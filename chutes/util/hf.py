@@ -180,6 +180,20 @@ async def verify_cache(
         else:
             remote_files[item["path"]] = (item.get("blob_id"), item.get("size"), False)
 
+    # Directories.
+    directories = repo_info.get("directories")
+    if directories is not None:
+        for dir_path in directories:
+            if dir_path not in remote_files:
+                remote_files[dir_path] = (None, None, False)
+    else:
+        for item in repo_info["files"]:
+            parts = item["path"].split("/")
+            for i in range(1, len(parts)):
+                dir_path = "/".join(parts[:i])
+                if dir_path not in remote_files:
+                    remote_files[dir_path] = (None, None, False)
+
     # Find local cache
     repo_folder_name = f"models--{repo_id.replace('/', '--')}"
     snapshot_dir = cache_dir / "hub" / repo_folder_name / "snapshots" / revision
