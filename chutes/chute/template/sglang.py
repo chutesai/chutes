@@ -330,6 +330,9 @@ def build_sglang_chute(
         # Set torch inductor, flashinfer, etc., cache directories.
         set_default_cache_dirs(download_path)
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["SGL_MODEL_NAME"] = self.name
+        os.environ["SGL_REVISION"] = revision
 
         # Reset torch.
         torch.cuda.empty_cache()
