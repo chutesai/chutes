@@ -34,6 +34,7 @@ from fastapi import Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from chutes.entrypoint.verify import GpuVerifier
+from chutes.util.hf import verify_cache, CacheVerificationError
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import (
@@ -1410,6 +1411,37 @@ def run_chute(
         chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
         chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
         chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
+
+        async def _handle_hf_check(request: Request):
+            """
+            Verify HuggingFace cache integrity.
+            """
+            data = request.state.decrypted
+            repo_id = data.get("repo_id")
+            revision = data.get("revision")
+            full_hash_check = data.get("full_hash_check", False)
+
+            if not repo_id or not revision:
+                return {
+                    "error": True,
+                    "reason": "bad_request",
+                    "message": "repo_id and revision are required",
+                    "repo_id": repo_id,
+                    "revision": revision,
+                }
+
+            try:
+                result = await verify_cache(
+                    repo_id=repo_id,
+                    revision=revision,
+                    full_hash_check=full_hash_check,
+                )
+                result["error"] = False
+                return result
+            except CacheVerificationError as e:
+                return e.to_dict()
+
+        chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
 
         logger.success("Added all chutes internal endpoints.")
 
