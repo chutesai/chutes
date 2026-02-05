@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 import json
 import os
-from re import A
 import ssl
 import socket
 import threading
@@ -20,12 +19,14 @@ from chutes.entrypoint._shared import encrypt_response, get_launch_token, get_la
 
 
 # TEE endpoint constants
-TEE_EVIDENCE_ENDPOINT = "/_tee_evidence"
+TEE_VERIFICATION_ENDPOINT = "/verify"  # Validator only: uses nonce from fetch_symmetric_key
+TEE_EVIDENCE_RUNTIME_ENDPOINT = "/evidence"  # Third parties: accept nonce from request
 
-# Global nonce storage for TEE verification
-# This should only be set once during the verification process
+# Global nonce storage for TEE verification (validator flow only)
+# Set during fetch_symmetric_key; used only by /verify to prove same instance
 _evidence_nonce: str | None = None
 _evidence_nonce_locked: bool = False
+
 
 
 @asynccontextmanager
@@ -226,69 +227,142 @@ class GravalGpuVerifier(GpuVerifier):
         return gpus
 
 
-class TeeAttestationService:
+def _parse_evidence_port() -> int:
+    """Parse TEE evidence port from env (default 8002)."""
+    evidence_port = os.getenv("CHUTES_TEE_EVIDENCE_PORT", "8002")
+    if not evidence_port.isdigit():
+        raise ValueError(f"CHUTES_TEE_EVIDENCE_PORT must be a valid port number, got: {evidence_port}")
+    return int(evidence_port)
+
+
+class TeeEvidenceService:
     """
-    Context manager for TEE attestation evidence server.
-    
-    Starts a minimal FastAPI server to serve the /_tee_evidence endpoint during verification.
-    This is similar to how dummy sockets are started for port validation in Graval flow.
-    
-    The server runs on a dedicated port (8002 by default, configurable via CHUTES_TEE_EVIDENCE_PORT)
-    to isolate it from the main application port. This allows network policies to restrict access
-    to only the proxy service in the attestation-system namespace.
+    Singleton TEE attestation evidence server. Serves GET /_tee_evidence for the
+    validator (during verification) and for third-party runtime verification.
     """
-    
+
+    _instance: "TeeEvidenceService | None" = None
+
+    def __new__(cls) -> "TeeEvidenceService":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        self._server: Server | None = None
-        self._server_task: asyncio.Task | None = None
-    
-    async def __aenter__(self):
-        """Start the evidence server."""
-        # Use dedicated evidence port (default 8002) for security isolation
-        # This port should be restricted via network policy to only allow ingress from
-        # the proxy service in the attestation-system namespace
-        evidence_port = os.getenv("CHUTES_TEE_EVIDENCE_PORT", "8002")
-        if not evidence_port.isdigit():
-            raise ValueError(f"CHUTES_TEE_EVIDENCE_PORT must be a valid port number, got: {evidence_port}")
-        evidence_port = int(evidence_port)
-        
-        # Create minimal FastAPI app with only the evidence endpoint
+        if not hasattr(self, "_port"):
+            self._port: int | None = None
+            self._server: Server | None = None
+            self._task: asyncio.Task | None = None
+
+    async def start(self) -> dict:
+        """
+        Start the evidence server. Idempotent: if already started, returns the same
+        port mapping without starting a second server.
+
+        Returns:
+            Port mapping dict to append to port_mappings in the run entrypoint, e.g.:
+            {"proto": "tcp", "internal_port": 8002, "external_port": 8002, "default": False}
+        """
+        if self._task is not None:
+            return self._port_mapping()
+        self._port = _parse_evidence_port()
         evidence_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-        evidence_app.add_api_route(TEE_EVIDENCE_ENDPOINT, tee_evidence_endpoint, methods=["GET"])
-        
-        # Start server in background
+        evidence_app.add_api_route(TEE_VERIFICATION_ENDPOINT, self._get_verification_evidence, methods=["GET"])
+        evidence_app.add_api_route(TEE_EVIDENCE_RUNTIME_ENDPOINT, self._get_runtime_evidence, methods=["GET"])
         config = Config(
             app=evidence_app,
             host="0.0.0.0",
-            port=evidence_port,
+            port=self._port,
             limit_concurrency=1000,
-            log_level="warning",  # Reduce logging noise during verification
+            log_level="warning",
         )
         self._server = Server(config)
-        
-        async def run_evidence_server():
-            await self._server.serve()
-        
-        self._server_task = asyncio.create_task(run_evidence_server())
-        # Give the server a moment to start listening
+        self._task = asyncio.create_task(self._server.serve())
         await asyncio.sleep(0.5)
-        logger.info(f"Started evidence server on port {evidence_port} for TEE verification")
-        return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Stop the evidence server."""
-        if self._server is not None and self._server_task is not None:
-            logger.info("Stopping evidence server...")
-            self._server.should_exit = True
-            try:
-                await asyncio.wait_for(self._server_task, timeout=2.0)
-            except asyncio.TimeoutError:
-                logger.warning("Evidence server did not stop within timeout")
-            except Exception as e:
-                logger.warning(f"Error stopping evidence server: {e}")
-            finally:
-                self._server = None
-                self._server_task = None
+        logger.info(f"Started TEE evidence server on port {self._port}")
+        return self._port_mapping()
+
+    def _port_mapping(self) -> dict:
+        """Port mapping dict for this service (internal_port == external_port == configured port)."""
+        return {
+            "proto": "tcp",
+            "internal_port": self._port,
+            "external_port": self._port,
+            "default": False,
+        }
+
+    async def stop(self) -> None:
+        """Stop the evidence server. No-op if not started."""
+        if self._server is None or self._task is None:
+            return
+        logger.info("Stopping TEE evidence server...")
+        self._server.should_exit = True
+        try:
+            await asyncio.wait_for(self._task, timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.warning("TEE evidence server did not stop within timeout")
+        except Exception as e:
+            logger.warning(f"Error stopping TEE evidence server: {e}")
+        finally:
+            self._server = None
+            self._task = None
+            self._port = None
+
+    async def _fetch_evidence(self, nonce: str) -> dict:
+        """Request evidence from the attestation service for the given nonce."""
+        url = "https://attestation-service-internal.attestation-system.svc.cluster.local.:8443/server/attest"
+        params = {
+            "nonce": nonce,
+            "gpu_ids": os.environ.get("CHUTES_NVIDIA_DEVICES"),
+        }
+        async with _attestation_session() as http_session:
+            async with http_session.get(url, params=params) as resp:
+                evidence = await resp.json()
+                return {"evidence": evidence, "nonce": nonce}
+
+    async def _get_verification_evidence(self, request: Request):
+        """
+        TEE evidence for initial verification only. Called by the validator during
+        fetch_symmetric_key (Phase 2). Uses the nonce retrieved from the validator
+        when we started the process so we can prove we are the same instance.
+        """
+        nonce = _get_evidence_nonce()
+        if nonce is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No nonce found. Attestation not initiated. Use /evidence?nonce=... for third-party evidence.",
+            )
+        try:
+            logger.success("Retrieved attestation evidence for validator verification.")
+            return await self._fetch_evidence(nonce)
+        except Exception as e:
+            logger.error(f"Failed to fetch TEE evidence: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to fetch evidence: {str(e)}",
+            )
+
+    async def _get_runtime_evidence(self, request: Request):
+        """
+        TEE evidence for third-party runtime verification. Caller supplies a nonce
+        via query param ?nonce=...; we request evidence bound to that nonce and return it.
+        """
+        nonce = request.query_params.get("nonce")
+        if not nonce or not nonce.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Query parameter 'nonce' is required for runtime evidence.",
+            )
+        nonce = nonce.strip()
+        try:
+            logger.success("Retrieved attestation evidence.")
+            return await self._fetch_evidence(nonce)
+        except Exception as e:
+            logger.error(f"Failed to fetch TEE evidence: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to fetch evidence: {str(e)}",
+            )
 
 
 class TeeGpuVerifier(GpuVerifier):
@@ -315,8 +389,8 @@ class TeeGpuVerifier(GpuVerifier):
 
     async def fetch_symmetric_key(self):
         """
-        New TEE verification flow (3 phases):
-        Phase 1: Start evidence server and get nonce from validator
+        TEE verification flow (3 phases):
+        Phase 1: Get nonce from validator (evidence server is already running at chute startup)
         Phase 2: Validator calls our /_tee_evidence endpoint, we fetch evidence from attestation service,
                  validator verifies and returns symmetric key
         Phase 3: Start dummy sockets and finalize verification (handled by base class)
@@ -328,23 +402,20 @@ class TeeGpuVerifier(GpuVerifier):
         # Append /tee to instance path; urljoin(base, "/tee") replaces path, urljoin(base, "tee") replaces last segment
         url = urljoin(self._url + "/", "tee")
         
-        # Start evidence server as context manager - it will automatically stop when done
-        async with TeeAttestationService():
-            # Context manager fetches nonce, makes it available for evidence endpoint, and cleans up
-            async with _use_evidence_nonce(self.validator_url) as _nonce:
-                async with aiohttp.ClientSession(raise_for_status=True) as session:
-                    headers = {
-                        "Authorization": token,
-                        "X-Chutes-Nonce": _nonce
-                    }
-                    _body = self._body.copy()
-                    _body["deployment_id"] = self.deployment_id
-                    _body["gpus"] = gpus
-                    logger.info(f"Requesting verification from validator: {url}")
-                    async with session.post(url, headers=headers, json=_body) as resp:
-                        data = await resp.json()
-                        self._symmetric_key = bytes.fromhex(data["symmetric_key"])
-                        logger.success("Successfully received symmetric key from validator")
+        async with _use_evidence_nonce(self.validator_url) as _nonce:
+            async with aiohttp.ClientSession(raise_for_status=True) as session:
+                headers = {
+                    "Authorization": token,
+                    "X-Chutes-Nonce": _nonce
+                }
+                _body = self._body.copy()
+                _body["deployment_id"] = self.deployment_id
+                _body["gpus"] = gpus
+                logger.info(f"Requesting verification from validator: {url}")
+                async with session.post(url, headers=headers, json=_body) as resp:
+                    data = await resp.json()
+                    self._symmetric_key = bytes.fromhex(data["symmetric_key"])
+                    logger.success("Successfully received symmetric key from validator")
 
     async def finalize_verification(self):
         """
@@ -460,40 +531,3 @@ def start_udp_dummy(port, symmetric_key, response_plaintext):
     return thread
 
 
-async def tee_evidence_endpoint(request: Request):
-    """
-    Handle TEE evidence request from validator.
-    This endpoint is called by the validator during Phase 2 to fetch TDX quote and GPU evidence.
-    """
-    try:
-        # Get the nonce from module-level storage (already set by fetch_symmetric_key)
-        nonce = _get_evidence_nonce()
-        if nonce is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No nonce found. Attestation not initiated."
-            )
-        
-        # Request evidence from attestation service
-        url = "https://attestation-service-internal.attestation-system.svc.cluster.local.:8443/server/attest"
-        params = {
-            "nonce": nonce,
-            "gpu_ids": os.environ.get("CHUTES_NVIDIA_DEVICES"),
-        }
-        
-        async with _attestation_session() as http_session:
-            async with http_session.get(url, params=params) as resp:
-                logger.success("Successfully retrieved attestation evidence for validator request.")
-                evidence = await resp.json()
-                
-                # Return evidence with nonce for validator to verify it's the same pod
-                return {
-                    "evidence": evidence,
-                    "nonce": nonce,
-                }
-    except Exception as e:
-        logger.error(f"Failed to fetch TEE evidence: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch evidence: {str(e)}"
-        )
