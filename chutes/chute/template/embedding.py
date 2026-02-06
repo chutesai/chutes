@@ -185,7 +185,6 @@ def build_embedding_chute(
 
         pooler_config = {
             "pooling_type": pooling_type,
-            "normalize": True,
         }
         if enable_chunked_processing:
             pooler_config["enable_chunked_processing"] = True
