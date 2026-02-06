@@ -1108,6 +1108,23 @@ def run_chute(
                 logger.error(f"Must be PID 1 (container entrypoint), but got PID {os.getpid()}")
                 sys.exit(137)
 
+        # Clean up any bytecode not found in the original image.  Probably mainly
+        # irrelevant since we disable precompiled bytecode use anyways, but worth
+        # as a sanity check/safeguard.
+        if not (dev or generate_inspecto_hash):
+            logger.info("Running bytecode cleanup...")
+            try:
+                from chutes.cfsv_wrapper import get_cfsv
+
+                cfsv = get_cfsv()
+                if not cfsv.cleanup_bytecode("/", "/etc/chutesfs.index"):
+                    logger.error("Bytecode cleanup failed")
+                    sys.exit(137)
+                logger.info("Bytecode cleanup completed")
+            except Exception as e:
+                logger.error(f"Bytecode cleanup error: {e}")
+                sys.exit(137)
+
         # Generate inspecto hash.
         token = get_launch_token()
         token_data = get_launch_token_data()

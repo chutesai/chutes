@@ -213,6 +213,7 @@ def build_embedding_chute(
             raise ValueError("You may not override api key!")
 
         env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         if enable_chunked_processing:
             env["VLLM_ENABLE_CHUNKED_PROCESSING"] = "true"
 
