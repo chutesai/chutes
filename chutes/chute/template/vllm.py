@@ -372,6 +372,7 @@ def build_vllm_chute(
             raise ValueError("You may not override api key!")
 
         env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["HF_HUB_OFFLINE"] = "1"
         env["SGL_MODEL_NAME"] = self.name
         env["SGL_REVISION"] = revision

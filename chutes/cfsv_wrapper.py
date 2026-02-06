@@ -15,7 +15,7 @@ class CFSVWrapper:
         self.lib.cfsv_challenge.argtypes = [
             ctypes.c_char_p,  # base_path
             ctypes.c_char_p,  # salt
-            ctypes.c_int,     # sparse
+            ctypes.c_int,  # sparse
             ctypes.c_char_p,  # index_file
             ctypes.c_char_p,  # exclude_path
             ctypes.c_char_p,  # result_buf
@@ -29,6 +29,13 @@ class CFSVWrapper:
             ctypes.c_size_t,  # size_gib
         ]
         self.lib.cfsv_sizetest.restype = ctypes.c_int
+
+        # cfsv_cleanup_bytecode(base_path, index_file)
+        self.lib.cfsv_cleanup_bytecode.argtypes = [
+            ctypes.c_char_p,  # base_path
+            ctypes.c_char_p,  # index_file
+        ]
+        self.lib.cfsv_cleanup_bytecode.restype = ctypes.c_int
 
         # cfsv_version()
         self.lib.cfsv_version.argtypes = []
@@ -69,6 +76,23 @@ class CFSVWrapper:
         if ret == 0:
             return result_buf.value.decode("utf-8")
         return None
+
+    def cleanup_bytecode(self, base_path="/", index_file="/etc/chutesfs.index"):
+        """
+        Remove rogue .pyc and injectable files not present in the verified index.
+
+        Args:
+            base_path: Root path to scan (default: "/")
+            index_file: Path to encrypted index file (default: "/etc/chutesfs.index")
+
+        Returns:
+            True on success, False on failure
+        """
+        ret = self.lib.cfsv_cleanup_bytecode(
+            base_path.encode() if isinstance(base_path, str) else base_path,
+            index_file.encode() if isinstance(index_file, str) else index_file,
+        )
+        return ret == 0
 
     def sizetest(self, test_dir, size_gib):
         """

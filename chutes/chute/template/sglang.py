@@ -359,9 +359,9 @@ def build_sglang_chute(
         parts = command.split()
         display_cmd = startup_command.replace(api_key, "*" * len(api_key))
         logger.info(f"Launching SGLang with command: {display_cmd}")
-        self._sglang_process = subprocess.Popen(
-            parts, text=True, stderr=subprocess.STDOUT, env=os.environ.copy()
-        )
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        self._sglang_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
 
         server_ready = asyncio.Event()
         self._monitor_task = asyncio.create_task(
