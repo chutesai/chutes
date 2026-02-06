@@ -1111,7 +1111,7 @@ def run_chute(
         # Clean up any bytecode not found in the original image.  Probably mainly
         # irrelevant since we disable precompiled bytecode use anyways, but worth
         # as a sanity check/safeguard.
-        if not dev:
+        if not (dev or generate_inspecto_hash):
             logger.info("Running bytecode cleanup...")
             try:
                 from chutes.cfsv_wrapper import get_cfsv
@@ -1124,16 +1124,6 @@ def run_chute(
             except Exception as e:
                 logger.error(f"Bytecode cleanup error: {e}")
                 sys.exit(137)
-
-        # Prevent the bytecode use from here onwards.
-        sys.dont_write_bytecode = True
-        os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
-
-        # And other sneaky tampering methods.
-        os.environ["PYTHONNOUSERSITE"] = "1"
-        if "PYTHONSTARTUP" in os.environ:
-            logger.warning(f"Clearing PYTHONSTARTUP: {os.environ['PYTHONSTARTUP']}")
-            del os.environ["PYTHONSTARTUP"]
 
         # Generate inspecto hash.
         token = get_launch_token()
