@@ -1129,7 +1129,8 @@ def run_chute(
                 )
         try:
             if is_tee_env():
-                port_mappings.append(await TeeEvidenceService().start())
+                await TeeEvidenceService().start()
+                
             # GPU verification plus job fetching.
             job_data: dict | None = None
             job_id: str | None = None
