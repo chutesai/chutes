@@ -15,6 +15,7 @@ from loguru import logger
 from fastapi import FastAPI, Request, HTTPException, status
 from uvicorn import Config, Server
 
+from chutes.constants import ATTESTATION_SERVICE_BASE_URL
 from chutes.entrypoint._shared import encrypt_response, get_launch_token, get_launch_token_data, is_tee_env, miner
 
 
@@ -310,7 +311,7 @@ class TeeEvidenceService:
 
     async def _fetch_evidence(self, nonce: str) -> dict:
         """Request evidence from the attestation service for the given nonce."""
-        url = "https://attestation-service-internal.attestation-system.svc.cluster.local.:8443/server/attest"
+        url = f"{ATTESTATION_SERVICE_BASE_URL}/server/attest"
         params = {
             "nonce": nonce,
             "gpu_ids": os.environ.get("CHUTES_NVIDIA_DEVICES"),
@@ -452,7 +453,7 @@ class TeeGpuVerifier(GpuVerifier):
     async def gather_gpus(self):
         devices = []
         async with _attestation_session() as http_session:
-            url = "https://attestation-service-internal.attestation-system.svc.cluster.local.:8443/server/devices"
+            url = f"{ATTESTATION_SERVICE_BASE_URL}/server/devices"
             params = {"gpu_ids": os.environ.get("CHUTES_NVIDIA_DEVICES")}
             async with http_session.get(url=url, params=params) as resp:
                 devices = await resp.json()
