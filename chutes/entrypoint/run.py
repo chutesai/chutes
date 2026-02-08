@@ -17,7 +17,6 @@ import inspect
 import typer
 import psutil
 import base64
-import socket
 import secrets
 import threading
 import traceback
@@ -30,16 +29,20 @@ from datetime import datetime
 from pydantic import BaseModel
 from ipaddress import ip_address
 from uvicorn import Config, Server
-from fastapi import Request, Response, status, HTTPException
+from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from chutes.entrypoint.verify import GpuVerifier
+from chutes.entrypoint.verify import (
+    GpuVerifier,
+    TeeEvidenceService,
+)
 from chutes.util.hf import verify_cache, CacheVerificationError
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import (
     get_launch_token,
     get_launch_token_data,
+    is_tee_env,
     load_chute,
     miner,
     authenticate_request,
@@ -641,7 +644,7 @@ class DevMiddleware(BaseHTTPMiddleware):
 
 
 class GraValMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, concurrency: int = 1):
+    def __init__(self, app: FastAPI, concurrency: int = 1):
         """
         Initialize a semaphore for concurrency control/limits.
         """
@@ -822,105 +825,12 @@ class GraValMiddleware(BaseHTTPMiddleware):
             if not response or not hasattr(response, "body_iterator"):
                 _conn_stats.requests_in_flight.pop(request.request_id, None)
 
-
-def start_dummy_socket(port_mapping, symmetric_key):
-    """
-    Start a dummy socket based on the port mapping configuration to validate ports.
-    """
-    proto = port_mapping["proto"].lower()
-    internal_port = port_mapping["internal_port"]
-    response_text = f"response from {proto} {internal_port}"
-    if proto in ["tcp", "http"]:
-        return start_tcp_dummy(internal_port, symmetric_key, response_text)
-    return start_udp_dummy(internal_port, symmetric_key, response_text)
-
-
-def encrypt_response(symmetric_key, plaintext):
-    """
-    Encrypt the response using AES-CBC with PKCS7 padding.
-    """
-    padder = padding.PKCS7(128).padder()
-    new_iv = secrets.token_bytes(16)
-    cipher = Cipher(
-        algorithms.AES(symmetric_key),
-        modes.CBC(new_iv),
-        backend=default_backend(),
-    )
-    padded_data = padder.update(plaintext.encode()) + padder.finalize()
-    encryptor = cipher.encryptor()
-    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-    response_cipher = base64.b64encode(encrypted_data).decode()
-    return new_iv, response_cipher
-
-
-def start_tcp_dummy(port, symmetric_key, response_plaintext):
-    """
-    TCP port check socket.
-    """
-
-    def tcp_handler():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("0.0.0.0", port))
-            sock.listen(1)
-            logger.info(f"TCP socket listening on port {port}")
-            conn, addr = sock.accept()
-            logger.info(f"TCP connection from {addr}")
-            data = conn.recv(1024)
-            logger.info(f"TCP received: {data.decode('utf-8', errors='ignore')}")
-            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
-            full_response = f"{iv.hex()}|{encrypted_response}".encode()
-            conn.send(full_response)
-            logger.info(f"TCP sent encrypted response on port {port}: {full_response=}")
-            conn.close()
-        except Exception as e:
-            logger.info(f"TCP socket error on port {port}: {e}")
-            raise
-        finally:
-            sock.close()
-            logger.info(f"TCP socket on port {port} closed")
-
-    thread = threading.Thread(target=tcp_handler, daemon=True)
-    thread.start()
-    return thread
-
-
-def start_udp_dummy(port, symmetric_key, response_plaintext):
-    """
-    UDP port check socket.
-    """
-
-    def udp_handler():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("0.0.0.0", port))
-            logger.info(f"UDP socket listening on port {port}")
-            data, addr = sock.recvfrom(1024)
-            logger.info(f"UDP received from {addr}: {data.decode('utf-8', errors='ignore')}")
-            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
-            full_response = f"{iv.hex()}|{encrypted_response}".encode()
-            sock.sendto(full_response, addr)
-            logger.info(f"UDP sent encrypted response on port {port}")
-        except Exception as e:
-            logger.info(f"UDP socket error on port {port}: {e}")
-            raise
-        finally:
-            sock.close()
-            logger.info(f"UDP socket on port {port} closed")
-
-    thread = threading.Thread(target=udp_handler, daemon=True)
-    thread.start()
-    return thread
-
-
 async def _gather_devices_and_initialize(
     host: str,
     port_mappings: list[dict[str, Any]],
     chute_abspath: str,
     inspecto_hash: str,
-) -> tuple[bool, str, dict[str, Any]]:
+) -> tuple[bool, bytes, dict[str, Any]]:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
     """
@@ -929,7 +839,6 @@ async def _gather_devices_and_initialize(
     logger.info("Collecting GPUs and port mappings...")
     body = {"gpus": [], "port_mappings": port_mappings, "host": host}
     token_data = get_launch_token_data()
-    url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
 
     logger.info("Collecting full envdump...")
@@ -973,16 +882,9 @@ async def _gather_devices_and_initialize(
         logger.error(f"Error checking disk space: {e}")
         raise Exception(f"Failed to verify disk space availability: {e}")
 
-    # Start up dummy sockets to test port mappings.
-    dummy_socket_threads = []
-    for port_map in port_mappings:
-        if port_map.get("default"):
-            continue
-        dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
-
-    # Verify GPUs for symmetric key
-    verifier = GpuVerifier.create(url, body)
-    symmetric_key, response = await verifier.verify_devices()
+    # Verify GPUs, spin up dummy sockets, and finalize verification.
+    verifier = GpuVerifier.create(body)
+    response = await verifier.verify()
 
     # Derive runint session key from validator's pubkey via ECDH if provided
     # Key derivation happens entirely in C - key never touches Python memory
@@ -993,7 +895,7 @@ async def _gather_devices_and_initialize(
         else:
             logger.warning("Failed to derive runint session key - using legacy encryption")
 
-    return egress, symmetric_key, response
+    return egress, response
 
 
 # Run a chute (which can be an async job or otherwise long-running process).
@@ -1225,310 +1127,339 @@ def run_chute(
                         "default": False,
                     }
                 )
-
-        # GPU verification plus job fetching.
-        job_data: dict | None = None
-        symmetric_key: str | None = None
-        job_id: str | None = None
-        job_obj: Job | None = None
-        job_method: str | None = None
-        job_status_url: str | None = None
-        activation_url: str | None = None
-        allow_external_egress: bool | None = False
-
-        chute_filename = os.path.basename(chute_ref_str.split(":")[0] + ".py")
-        chute_abspath: str = os.path.abspath(os.path.join(os.getcwd(), chute_filename))
-        if token:
-            (
-                allow_external_egress,
-                symmetric_key,
-                response,
-            ) = await _gather_devices_and_initialize(
-                external_host,
-                port_mappings,
-                chute_abspath,
-                inspecto_hash,
-            )
-            job_id = response.get("job_id")
-            job_method = response.get("job_method")
-            job_status_url = response.get("job_status_url")
-            job_data = response.get("job_data")
-            activation_url = response.get("activation_url")
-            code = response["code"]
-            fs_key = response["fs_key"]
-            encrypted_cache = response.get("efs") is True
-            if (
-                fs_key
-                and netnanny.set_secure_fs(chute_abspath.encode(), fs_key.encode(), encrypted_cache)
-                != 0
-            ):
-                logger.error("NetNanny failed to set secure FS, aborting!")
-                sys.exit(137)
-            with open(chute_abspath, "w") as outfile:
-                outfile.write(code)
-
-            # Secret environment variables, e.g. HF tokens for private models.
-            if response.get("secrets"):
-                for secret_key, secret_value in response["secrets"].items():
-                    os.environ[secret_key] = secret_value
-
-        elif not dev:
-            logger.error("No GraVal token supplied!")
-            sys.exit(1)
-
-        # Now we have the chute code available, either because it's dev and the file is plain text here,
-        # or it's prod and we've fetched the code from the validator and stored it securely.
-        chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
-        chute = chute.chute if isinstance(chute, ChutePack) else chute
-        if job_method:
-            job_obj = next(j for j in chute._jobs if j.name == job_method)
-
-        # Configure dev method job payload/method/etc.
-        if dev and dev_job_data_path:
-            with open(dev_job_data_path) as infile:
-                job_data = json.loads(infile.read())
-            job_id = str(uuid.uuid4())
-            job_method = dev_job_method
-            job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
-            logger.info(f"Creating task, dev mode, for {job_method=}")
-
-        # Run the chute's initialization code.
-        await chute.initialize()
-
-        # Encryption/rate-limiting middleware setup.
-        if dev:
-            chute.add_middleware(DevMiddleware)
-        else:
-            chute.add_middleware(
-                GraValMiddleware,
-                concurrency=chute.concurrency,
-            )
-
-        # Slurps and processes.
-        async def _handle_slurp(request: Request):
-            nonlocal chute_module
-
-            return await handle_slurp(request, chute_module)
-
-        async def _wait_for_server_ready(timeout: float = 30.0):
-            """Wait until the server is accepting connections."""
-            import socket
-
-            start = asyncio.get_event_loop().time()
-            while (asyncio.get_event_loop().time() - start) < timeout:
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(1)
-                    result = sock.connect_ex(("127.0.0.1", port))
-                    sock.close()
-                    if result == 0:
-                        return True
-                except Exception:
-                    pass
-                await asyncio.sleep(0.1)
-            return False
-
-        async def _do_activation():
-            """Activate after server is listening."""
-            if not activation_url:
-                return
-
-            if not await _wait_for_server_ready():
-                logger.error("Server failed to start listening")
-                raise Exception("Server not ready for activation")
-
-            activated = False
-            for attempt in range(10):
-                if attempt > 0:
-                    await asyncio.sleep(attempt)
-                try:
-                    async with aiohttp.ClientSession(raise_for_status=False) as session:
-                        async with session.get(
-                            activation_url, headers={"Authorization": token}
-                        ) as resp:
-                            if resp.ok:
-                                logger.success(f"Instance activated: {await resp.text()}")
-                                activated = True
-                                if not dev and not allow_external_egress:
-                                    if netnanny.lock_network() != 0:
-                                        logger.error("Failed to unlock network")
-                                        sys.exit(137)
-                                    logger.success("Successfully enabled NetNanny network lock.")
-                                break
-
-                            logger.error(
-                                f"Instance activation failed: {resp.status=}: {await resp.text()}"
-                            )
-                            if resp.status == 423:
-                                break
-
-                except Exception as e:
-                    logger.error(f"Unexpected error attempting to activate instance: {str(e)}")
-            if not activated:
-                logger.error("Failed to activate instance, aborting...")
-                sys.exit(137)
-
-        @chute.on_event("startup")
-        async def activate_on_startup():
-            asyncio.create_task(_do_activation())
-
-        async def _handle_fs_hash_challenge(request: Request):
-            nonlocal chute_abspath
-            data = request.state.decrypted
-            return {
-                "result": await generate_filesystem_hash(
-                    data["salt"], chute_abspath, mode=data.get("mode", "sparse")
+        try:
+            if is_tee_env():
+                await TeeEvidenceService().start()
+                
+            # GPU verification plus job fetching.
+            job_data: dict | None = None
+            job_id: str | None = None
+            job_obj: Job | None = None
+            job_method: str | None = None
+            job_status_url: str | None = None
+            activation_url: str | None = None
+            allow_external_egress: bool | None = False
+    
+            chute_filename = os.path.basename(chute_ref_str.split(":")[0] + ".py")
+            chute_abspath: str = os.path.abspath(os.path.join(os.getcwd(), chute_filename))
+            if token:
+                (
+                    allow_external_egress,
+                    response,
+                ) = await _gather_devices_and_initialize(
+                    external_host,
+                    port_mappings,
+                    chute_abspath,
+                    inspecto_hash,
                 )
-            }
+                job_id = response.get("job_id")
+                job_method = response.get("job_method")
+                job_status_url = response.get("job_status_url")
+                job_data = response.get("job_data")
+                activation_url = response.get("activation_url")
+                code = response["code"]
+                fs_key = response["fs_key"]
+                encrypted_cache = response.get("efs") is True
+                if (
+                    fs_key
+                    and netnanny.set_secure_fs(chute_abspath.encode(), fs_key.encode(), encrypted_cache)
+                    != 0
+                ):
+                    logger.error("NetNanny failed to set secure FS, aborting!")
+                    sys.exit(137)
+                with open(chute_abspath, "w") as outfile:
+                    outfile.write(code)
 
-        async def _handle_conn_stats(request: Request):
-            return _conn_stats.get_stats()
+                # Secret environment variables, e.g. HF tokens for private models.
+                if response.get("secrets"):
+                    for secret_key, secret_value in response["secrets"].items():
+                        os.environ[secret_key] = secret_value
 
-        # Validation endpoints.
-        chute.add_api_route("/_ping", pong, methods=["POST"])
-        chute.add_api_route("/_token", get_token, methods=["POST"])
-        chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
-        chute.add_api_route("/_conn_stats", _handle_conn_stats, methods=["GET"])
-        chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
-        chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
-        chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
-        chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
-        chute.add_api_route("/_devices", get_devices, methods=["GET"])
-        chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
-        chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
-        chute.add_api_route("/_fs_hash", _handle_fs_hash_challenge, methods=["POST"])
-        chute.add_api_route("/_connectivity", check_connectivity, methods=["POST"])
+            elif not dev:
+                logger.error("No GraVal token supplied!")
+                sys.exit(1)
 
-        def _handle_nn(request: Request):
-            return process_netnanny_challenge(chute, request)
+            # Now we have the chute code available, either because it's dev and the file is plain text here,
+            # or it's prod and we've fetched the code from the validator and stored it securely.
+            chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
+            chute = chute.chute if isinstance(chute, ChutePack) else chute
+            if job_method:
+                job_obj = next(j for j in chute._jobs if j.name == job_method)
 
-        chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
+            # Configure dev method job payload/method/etc.
+            if dev and dev_job_data_path:
+                with open(dev_job_data_path) as infile:
+                    job_data = json.loads(infile.read())
+                job_id = str(uuid.uuid4())
+                job_method = dev_job_method
+                job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
+                logger.info(f"Creating task, dev mode, for {job_method=}")
 
-        # Runtime integrity challenge endpoint.
-        def _handle_rint(request: Request):
-            """Handle runtime integrity challenge."""
-            challenge = request.state.decrypted.get("challenge")
-            if not challenge:
-                return {"error": "missing challenge"}
-            result = runint_prove(challenge)
-            if result is None:
-                return {"error": "runtime integrity not initialized or not bound"}
-            signature, epoch = result
-            return {
-                "signature": signature,
-                "epoch": epoch,
-            }
+            # Run the chute's initialization code.
+            await chute.initialize()
 
-        chute.add_api_route("/_rint", _handle_rint, methods=["POST"])
+            # Encryption/rate-limiting middleware setup.
+            if dev:
+                chute.add_middleware(DevMiddleware)
+            else:
+                chute.add_middleware(
+                    GraValMiddleware,
+                    concurrency=chute.concurrency,
+                )
+    
+            # Slurps and processes.
+            async def _handle_slurp(request: Request):
+                nonlocal chute_module
+                return await handle_slurp(request, chute_module)
 
-        # New envdump endpoints.
-        import chutes.envdump as envdump
+            async def _wait_for_server_ready(timeout: float = 30.0):
+                """Wait until the server is accepting connections."""
+                import socket
+                start = asyncio.get_event_loop().time()
+                while (asyncio.get_event_loop().time() - start) < timeout:
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(1)
+                        result = sock.connect_ex(("127.0.0.1", port))
+                        sock.close()
+                        if result == 0:
+                            return True
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.1)
+                return False
 
-        chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
-        chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
-        chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
-        chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
+            async def _do_activation():
+                """Activate after server is listening."""
+                if not activation_url:
+                    return
+                if not await _wait_for_server_ready():
+                    logger.error("Server failed to start listening")
+                    raise Exception("Server not ready for activation")
+                activated = False
+                for attempt in range(10):
+                    if attempt > 0:
+                        await asyncio.sleep(attempt)
+                    try:
+                        async with aiohttp.ClientSession(raise_for_status=False) as session:
+                            async with session.get(
+                                activation_url, headers={"Authorization": token}
+                            ) as resp:
+                                if resp.ok:
+                                    logger.success(f"Instance activated: {await resp.text()}")
+                                    activated = True
+                                    if not dev and not allow_external_egress:
+                                        if netnanny.lock_network() != 0:
+                                            logger.error("Failed to unlock network")
+                                            sys.exit(137)
+                                        logger.success("Successfully enabled NetNanny network lock.")
+                                    break
+                                logger.error(
+                                    f"Instance activation failed: {resp.status=}: {await resp.text()}"
+                                )
+                                if resp.status == 423:
+                                    break
+                    except Exception as e:
+                        logger.error(f"Unexpected error attempting to activate instance: {str(e)}")
+                if not activated:
+                    logger.error("Failed to activate instance, aborting...")
+                    sys.exit(137)
 
-        async def _handle_hf_check(request: Request):
-            """
-            Verify HuggingFace cache integrity.
-            """
-            data = request.state.decrypted
-            repo_id = data.get("repo_id")
-            revision = data.get("revision")
-            full_hash_check = data.get("full_hash_check", False)
+            @chute.on_event("startup")
+            async def activate_on_startup():
+                asyncio.create_task(_do_activation())
 
-            if not repo_id or not revision:
+            async def _handle_fs_hash_challenge(request: Request):
+                nonlocal chute_abspath
+                data = request.state.decrypted
                 return {
-                    "error": True,
-                    "reason": "bad_request",
-                    "message": "repo_id and revision are required",
-                    "repo_id": repo_id,
-                    "revision": revision,
+                    "result": await generate_filesystem_hash(
+                        data["salt"], chute_abspath, mode=data.get("mode", "sparse")
+                    )
                 }
 
-            try:
-                result = await verify_cache(
-                    repo_id=repo_id,
-                    revision=revision,
-                    full_hash_check=full_hash_check,
-                )
-                result["error"] = False
-                return result
-            except CacheVerificationError as e:
-                return e.to_dict()
+            async def _handle_conn_stats(request: Request):
+                return _conn_stats.get_stats()
 
-        chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
+            # Validation endpoints.
+            chute.add_api_route("/_ping", pong, methods=["POST"])
+            chute.add_api_route("/_token", get_token, methods=["POST"])
+            chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
+            chute.add_api_route("/_conn_stats", _handle_conn_stats, methods=["GET"])
+            chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
+            chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
+            chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
+            chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
+            chute.add_api_route("/_devices", get_devices, methods=["GET"])
+            chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
+            chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
+            chute.add_api_route("/_fs_hash", _handle_fs_hash_challenge, methods=["POST"])
+            chute.add_api_route("/_connectivity", check_connectivity, methods=["POST"])
 
-        logger.success("Added all chutes internal endpoints.")
+            def _handle_nn(request: Request):
+                return process_netnanny_challenge(chute, request)
 
-        # Job shutdown/kill endpoint.
-        async def _shutdown():
-            nonlocal job_obj, server
-            if not job_obj:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Job task not found",
-                )
-            logger.warning("Shutdown requested.")
-            if job_obj and not job_obj.cancel_event.is_set():
-                job_obj.cancel_event.set()
-            server.should_exit = True
-            return {"ok": True}
+            chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
 
-        # Jobs can't be started until the full suite of validation tests run,
-        # so we need to provide an endpoint for the validator to use to kick
-        # it off.
-        if job_id:
-            job_task = None
+            # Runtime integrity challenge endpoint.
+            def _handle_rint(request: Request):
+                """Handle runtime integrity challenge."""
+                challenge = request.state.decrypted.get("challenge")
+                if not challenge:
+                    return {"error": "missing challenge"}
+                result = runint_prove(challenge)
+                if result is None:
+                    return {"error": "runtime integrity not initialized or not bound"}
+                signature, epoch = result
+                return {
+                    "signature": signature,
+                    "epoch": epoch,
+                }
 
-            async def start_job_with_monitoring(**kwargs):
-                nonlocal job_task
-                ssh_process = None
-                job_task = asyncio.create_task(job_obj.run(job_status_url=job_status_url, **kwargs))
+            chute.add_api_route("/_rint", _handle_rint, methods=["POST"])
 
-                async def monitor_job():
-                    try:
-                        result = await job_task
-                        logger.info(f"Job completed with result: {result}")
-                    except Exception as e:
-                        logger.error(f"Job failed with error: {e}")
-                    finally:
-                        logger.info("Job finished, shutting down server...")
-                        if ssh_process:
-                            try:
-                                ssh_process.terminate()
-                                await asyncio.sleep(0.5)
-                                if ssh_process.poll() is None:
-                                    ssh_process.kill()
-                                logger.info("SSH server stopped")
-                            except Exception as e:
-                                logger.error(f"Error stopping SSH server: {e}")
-                        server.should_exit = True
+            # New envdump endpoints.
+            import chutes.envdump as envdump
 
-                # If the pod defines SSH access, enable it.
-                if job_obj.ssh and job_data.get("_ssh_public_key"):
-                    ssh_process = await setup_ssh_access(job_data["_ssh_public_key"])
+            chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
+            chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
+            chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
+            chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
 
-                asyncio.create_task(monitor_job())
+            async def _handle_hf_check(request: Request):
+                """
+                Verify HuggingFace cache integrity.
+                """
+                data = request.state.decrypted
+                repo_id = data.get("repo_id")
+                revision = data.get("revision")
+                full_hash_check = data.get("full_hash_check", False)
 
-            await start_job_with_monitoring(**job_data)
-            logger.info("Started job!")
+                if not repo_id or not revision:
+                    return {
+                        "error": True,
+                        "reason": "bad_request",
+                        "message": "repo_id and revision are required",
+                        "repo_id": repo_id,
+                        "revision": revision,
+                    }
 
-            chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
-            logger.info("Added shutdown endpoint")
+                try:
+                    result = await verify_cache(
+                        repo_id=repo_id,
+                        revision=revision,
+                        full_hash_check=full_hash_check,
+                    )
+                    result["error"] = False
+                    return result
+                except CacheVerificationError as e:
+                    return e.to_dict()
 
-        # Start the uvicorn process, whether in job mode or not.
-        config = Config(
-            app=chute,
-            host=host or "0.0.0.0",
-            port=port or 8000,
-            limit_concurrency=1000,
-            ssl_certfile=certfile,
-            ssl_keyfile=keyfile,
-        )
-        server = Server(config)
-        await server.serve()
+            chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
+
+            async def _handle_hf_check(request: Request):
+                """
+                Verify HuggingFace cache integrity.
+                """
+                data = request.state.decrypted
+                repo_id = data.get("repo_id")
+                revision = data.get("revision")
+                full_hash_check = data.get("full_hash_check", False)
+
+                if not repo_id or not revision:
+                    return {
+                        "error": True,
+                        "reason": "bad_request",
+                        "message": "repo_id and revision are required",
+                        "repo_id": repo_id,
+                        "revision": revision,
+                    }
+
+                try:
+                    result = await verify_cache(
+                        repo_id=repo_id,
+                        revision=revision,
+                        full_hash_check=full_hash_check,
+                    )
+                    result["error"] = False
+                    return result
+                except CacheVerificationError as e:
+                    return e.to_dict()
+
+            chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
+
+            logger.success("Added all chutes internal endpoints.")
+
+            # Job shutdown/kill endpoint.
+            async def _shutdown():
+                nonlocal job_obj, server
+                if not job_obj:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Job task not found",
+                    )
+                logger.warning("Shutdown requested.")
+                if job_obj and not job_obj.cancel_event.is_set():
+                    job_obj.cancel_event.set()
+                server.should_exit = True
+                return {"ok": True}
+
+            # Jobs can't be started until the full suite of validation tests run,
+            # so we need to provide an endpoint for the validator to use to kick
+            # it off.
+            if job_id:
+                job_task = None
+
+                async def start_job_with_monitoring(**kwargs):
+                    nonlocal job_task
+                    ssh_process = None
+                    job_task = asyncio.create_task(job_obj.run(job_status_url=job_status_url, **kwargs))
+
+                    async def monitor_job():
+                        try:
+                            result = await job_task
+                            logger.info(f"Job completed with result: {result}")
+                        except Exception as e:
+                            logger.error(f"Job failed with error: {e}")
+                        finally:
+                            logger.info("Job finished, shutting down server...")
+                            if ssh_process:
+                                try:
+                                    ssh_process.terminate()
+                                    await asyncio.sleep(0.5)
+                                    if ssh_process.poll() is None:
+                                        ssh_process.kill()
+                                    logger.info("SSH server stopped")
+                                except Exception as e:
+                                    logger.error(f"Error stopping SSH server: {e}")
+                            server.should_exit = True
+
+                    # If the pod defines SSH access, enable it.
+                    if job_obj.ssh and job_data.get("_ssh_public_key"):
+                        ssh_process = await setup_ssh_access(job_data["_ssh_public_key"])
+
+                    asyncio.create_task(monitor_job())
+
+                await start_job_with_monitoring(**job_data)
+                logger.info("Started job!")
+
+                chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
+                logger.info("Added shutdown endpoint")
+
+            # Start the uvicorn process, whether in job mode or not.
+            config = Config(
+                app=chute,
+                host=host or "0.0.0.0",
+                port=port or 8000,
+                limit_concurrency=1000,
+                ssl_certfile=certfile,
+                ssl_keyfile=keyfile,
+            )
+            server = Server(config)
+            await server.serve()
+        finally:
+            if is_tee_env():
+                await TeeEvidenceService().stop()
 
     # Kick everything off
     async def _logged_run():
