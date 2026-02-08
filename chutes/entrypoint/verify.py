@@ -415,6 +415,7 @@ class TeeGpuVerifier(GpuVerifier):
                 async with session.post(url, headers=headers, json=_body) as resp:
                     data = await resp.json()
                     self._symmetric_key = bytes.fromhex(data["symmetric_key"])
+                    self._validator_pubkey = data["validator_pubkey"] if "validator_pubkey" in data else None
                     logger.success("Successfully received symmetric key from validator")
 
     async def finalize_verification(self):
@@ -439,7 +440,10 @@ class TeeGpuVerifier(GpuVerifier):
             ) as resp:
                 if resp.ok:
                     logger.success("Successfully completed final verification!")
-                    return await resp.json()
+                    response = await resp.json()
+                    if self._validator_pubkey:
+                        response["validator_pubkey"] = self._validator_pubkey
+                    return response
                 else:
                     detail = await resp.text(encoding="utf-8", errors="replace")
                     logger.error(f"Final verification failed: {resp.reason} ({resp.status}) {detail}")
