@@ -13,7 +13,16 @@ from typing import Dict, Callable, List, Optional, Literal
 from chutes.image import Image
 from chutes.image.standard.vllm import VLLM
 from chutes.chute import Chute, ChutePack, NodeSelector
-from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags, monitor_engine
+from chutes.chute.template.helpers import (
+    set_default_cache_dirs,
+    set_nccl_flags,
+    monitor_engine,
+    generate_mtls_certs,
+    build_client_ssl_context,
+    build_wrong_client_ssl_context,
+    validate_mtls,
+    mtls_enabled,
+)
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
@@ -212,6 +221,31 @@ def build_embedding_chute(
         if "--api-key" in engine_args:
             raise ValueError("You may not override api key!")
 
+        use_mtls = mtls_enabled()
+        ssl_ctx = None
+        wrong_ssl_ctx = None
+
+        if use_mtls:
+            # Generate ephemeral mTLS certificates.
+            certs = generate_mtls_certs()
+            ssl_ctx = build_client_ssl_context(
+                certs["ca_cert_file"],
+                certs["client_cert_file"],
+                certs["client_key_file"],
+                certs["password"],
+            )
+            wrong_ssl_ctx = build_wrong_client_ssl_context(
+                certs["ca_cert_file"],
+                certs["wrong_client_cert_file"],
+                certs["wrong_client_key_file"],
+                certs["password"],
+            )
+            self.passthrough_ssl_context = ssl_ctx
+            self._wrong_ssl_context = wrong_ssl_ctx
+            logger.info("mTLS enabled for vLLM embedding engine communication")
+        else:
+            logger.warning("mTLS disabled (LLM_ENGINE_MTLS_ENABLE not set)")
+
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         if enable_chunked_processing:
@@ -220,13 +254,19 @@ def build_embedding_chute(
         env["HF_HUB_OFFLINE"] = "1"
         env["SGL_MODEL_NAME"] = self.name
         env["SGL_REVISION"] = revision
+        if use_mtls:
+            env["VLLM_SSL_KEYFILE_PEM"] = certs["server_key_file"]
+            env["VLLM_SSL_CERTFILE_PEM"] = certs["server_cert_file"]
+            env["VLLM_SSL_CA_CERTS_PEM"] = certs["ca_cert_file"]
+            env["VLLM_SSL_KEYFILE_PASSWORD"] = certs["password"]
 
+        ssl_args = " --ssl-cert-reqs 2" if use_mtls else ""
         pooler_config_arg = shlex.quote(json.dumps(pooler_config))
         startup_command = (
             f"{sys.executable} -m vllm.entrypoints.openai.api_server "
             f"--model {model_name} --served-model-name {self.name} "
             f"--revision {revision} --pooler-config {pooler_config_arg} "
-            f"--port 10101 --host 127.0.0.1 --api-key {api_key} {engine_args}"
+            f"--port 10101 --host 127.0.0.1 --api-key {api_key}{ssl_args} {engine_args}"
         )
         display_cmd = startup_command.replace(api_key, "*" * len(api_key))
         parts = shlex.split(startup_command)
@@ -237,14 +277,23 @@ def build_embedding_chute(
 
         server_ready = asyncio.Event()
         self._monitor_task = asyncio.create_task(
-            monitor_engine(self._vllm_process, api_key, server_ready, model_name=self.name)
+            monitor_engine(
+                self._vllm_process,
+                api_key,
+                server_ready,
+                model_name=self.name,
+                ssl_context=ssl_ctx,
+                wrong_ssl_context=wrong_ssl_ctx,
+            )
         )
 
+        base_url = "https://127.0.0.1:10101" if use_mtls else "http://127.0.0.1:10101"
         while True:
             try:
-                async with aiohttp.ClientSession() as session:
+                connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
+                async with aiohttp.ClientSession(connector=connector) as session:
                     async with session.get(
-                        "http://127.0.0.1:10101/v1/models",
+                        f"{base_url}/v1/models",
                         headers={"Authorization": f"Bearer {api_key}"},
                     ) as resp:
                         if resp.status == 200:
@@ -255,8 +304,10 @@ def build_embedding_chute(
             await asyncio.sleep(1)
 
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
+        if use_mtls:
+            await validate_mtls(self.name, api_key, ssl_ctx, wrong_ssl_ctx)
         server_ready.set()
-        logger.info("✅ Embedding server initialized successfully!")
+        logger.info("Embedding server initialized successfully!")
 
     @chute.cord(
         passthrough_path="/v1/embeddings",

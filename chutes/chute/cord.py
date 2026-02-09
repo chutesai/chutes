@@ -295,10 +295,14 @@ class Cord:
             total_timeout = kwargs.pop("timeout", 1800)
             timeout = aiohttp.ClientTimeout(connect=5.0, total=total_timeout)
 
+        ssl_ctx = getattr(self._app, "passthrough_ssl_context", None)
+        scheme = "https" if ssl_ctx else "http"
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
         async with aiohttp.ClientSession(
             timeout=timeout,
             read_bufsize=8 * 1024 * 1024,
-            base_url=f"http://127.0.0.1:{self._passthrough_port or 8000}",
+            connector=connector,
+            base_url=f"{scheme}://127.0.0.1:{self._passthrough_port or 8000}",
         ) as session:
             async with getattr(session, self._method.lower())(
                 self.passthrough_path, **kwargs
@@ -560,9 +564,13 @@ class Cord:
         if not rid or not self._is_sglang_passthrough():
             return
         try:
+            ssl_ctx = getattr(self._app, "passthrough_ssl_context", None)
+            scheme = "https" if ssl_ctx else "http"
+            connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(connect=5.0, total=15.0),
-                base_url=f"http://127.0.0.1:{self._passthrough_port or 8000}",
+                connector=connector,
+                base_url=f"{scheme}://127.0.0.1:{self._passthrough_port or 8000}",
                 headers=self._app.passthrough_headers or {},
             ) as session:
                 logger.warning(f"Aborting SGLang request {rid=}")
