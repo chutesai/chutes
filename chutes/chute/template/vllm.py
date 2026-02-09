@@ -407,9 +407,9 @@ def build_vllm_chute(
         env["SGL_MODEL_NAME"] = self.name
         env["SGL_REVISION"] = revision
         if use_mtls:
-            env["VLLM_SSL_KEYFILE_PEM"] = certs["server_key_file"]
-            env["VLLM_SSL_CERTFILE_PEM"] = certs["server_cert_file"]
-            env["VLLM_SSL_CA_CERTS_PEM"] = certs["ca_cert_file"]
+            env["VLLM_SSL_KEYFILE_PEM"] = certs["server_key_pem"].decode()
+            env["VLLM_SSL_CERTFILE_PEM"] = certs["server_cert_pem"].decode()
+            env["VLLM_SSL_CA_CERTS_PEM"] = certs["ca_cert_pem"].decode()
             env["VLLM_SSL_KEYFILE_PASSWORD"] = certs["password"]
 
         ssl_args = " --ssl-cert-reqs 2" if use_mtls else ""

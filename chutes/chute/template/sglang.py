@@ -396,9 +396,9 @@ def build_sglang_chute(
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         if use_mtls:
-            env["SGLANG_SSL_KEYFILE_PEM"] = certs["server_key_file"]
-            env["SGLANG_SSL_CERTFILE_PEM"] = certs["server_cert_file"]
-            env["SGLANG_SSL_CA_CERTS_PEM"] = certs["ca_cert_file"]
+            env["SGLANG_SSL_KEYFILE_PEM"] = certs["server_key_pem"].decode()
+            env["SGLANG_SSL_CERTFILE_PEM"] = certs["server_cert_pem"].decode()
+            env["SGLANG_SSL_CA_CERTS_PEM"] = certs["ca_cert_pem"].decode()
             env["SGLANG_SSL_KEYFILE_PASSWORD"] = certs["password"]
         self._sglang_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
 
