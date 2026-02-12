@@ -1499,6 +1499,17 @@ async def _gather_devices_and_initialize(
     if rint_pubkey:
         body["rint_pubkey"] = rint_pubkey
 
+    # CLLMV V2 session init blob (for validator to decrypt session HMAC key)
+    try:
+        import cllmv as _cllmv
+
+        _cllmv_init = _cllmv.get_session_init()
+        if _cllmv_init:
+            body["cllmv_session_init"] = _cllmv_init
+            logger.info(f"CLLMV V2 session init blob attached ({len(_cllmv_init)} hex chars)")
+    except Exception as exc:
+        logger.warning(f"CLLMV session init unavailable: {exc}")
+
     # TLS certificate (for validator to trust)
     if cert_pem:
         body["tls_cert"] = cert_pem
