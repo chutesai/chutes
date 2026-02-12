@@ -415,6 +415,43 @@ def build_vllm_chute(
         server_ready.set()
         logger.info("✅ vLLM server warmed up and ready to roll!")
 
+    @chute.on_event("shutdown")
+    async def cleanup_vllm(self):
+        """
+        Cleanup vLLM subprocess and monitor task on shutdown.
+        """
+        logger.info("Cleaning up vLLM subprocess...")
+        try:
+            # Cancel the monitor task
+            if hasattr(self, "_monitor_task") and self._monitor_task:
+                self._monitor_task.cancel()
+                try:
+                    await self._monitor_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Terminate the subprocess gracefully
+            if hasattr(self, "_vllm_process") and self._vllm_process:
+                try:
+                    self._vllm_process.terminate()
+                    # Wait up to 5 seconds for graceful shutdown
+                    try:
+                        self._vllm_process.wait(timeout=5)
+                        logger.info("vLLM subprocess terminated gracefully")
+                    except subprocess.TimeoutExpired:
+                        # Force kill if it doesn't terminate
+                        logger.warning("vLLM subprocess did not terminate, forcing kill")
+                        self._vllm_process.kill()
+                        self._vllm_process.wait()
+                        logger.info("vLLM subprocess force killed")
+                except ProcessLookupError:
+                    # Process already terminated
+                    logger.debug("vLLM subprocess already terminated")
+                except Exception as e:
+                    logger.error(f"Error cleaning up vLLM subprocess: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during vLLM cleanup: {e}")
+
     def _parse_stream_chunk(encoded_chunk):
         chunk = encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()
         if "data: {" in chunk:

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import subprocess
 import uuid
 from enum import Enum
 from loguru import logger
@@ -373,6 +374,43 @@ def build_sglang_chute(
         await warmup_model(self, api_key=api_key)
         await validate_auth(self, api_key=api_key)
         server_ready.set()
+
+    @chute.on_event("shutdown")
+    async def cleanup_sglang(self):
+        """
+        Cleanup SGLang subprocess and monitor task on shutdown.
+        """
+        logger.info("Cleaning up SGLang subprocess...")
+        try:
+            # Cancel the monitor task
+            if hasattr(self, "_monitor_task") and self._monitor_task:
+                self._monitor_task.cancel()
+                try:
+                    await self._monitor_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Terminate the subprocess gracefully
+            if hasattr(self, "_sglang_process") and self._sglang_process:
+                try:
+                    self._sglang_process.terminate()
+                    # Wait up to 5 seconds for graceful shutdown
+                    try:
+                        self._sglang_process.wait(timeout=5)
+                        logger.info("SGLang subprocess terminated gracefully")
+                    except subprocess.TimeoutExpired:
+                        # Force kill if it doesn't terminate
+                        logger.warning("SGLang subprocess did not terminate, forcing kill")
+                        self._sglang_process.kill()
+                        self._sglang_process.wait()
+                        logger.info("SGLang subprocess force killed")
+                except ProcessLookupError:
+                    # Process already terminated
+                    logger.debug("SGLang subprocess already terminated")
+                except Exception as e:
+                    logger.error(f"Error cleaning up SGLang subprocess: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during SGLang cleanup: {e}")
 
     def _parse_stream_chunk(encoded_chunk):
         chunk = encoded_chunk if isinstance(encoded_chunk, str) else encoded_chunk.decode()
