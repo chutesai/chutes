@@ -1585,6 +1585,8 @@ def run_chute(
         """
         Run the chute (or job).
         """
+        ssl_certfile = certfile
+        ssl_keyfile = keyfile
         if not (dev or generate_inspecto_hash):
             preload = os.getenv("LD_PRELOAD")
             if preload != "/usr/local/lib/chutes-aegis.so":
@@ -1761,9 +1763,9 @@ def run_chute(
                 with open(tls_key_path, "w") as f:
                     f.write(key_pem)
                 os.chmod(tls_key_path, 0o600)
-                # Override certfile/keyfile for uvicorn
-                certfile = tls_cert_path
-                keyfile = tls_key_path
+                # Override TLS files for uvicorn
+                ssl_certfile = tls_cert_path
+                ssl_keyfile = tls_key_path
                 logger.info(f"In-memory TLS certificate generated: CN={cn}")
             else:
                 cert_pem, cert_sig = None, None
@@ -2153,8 +2155,8 @@ def run_chute(
             host=host or "0.0.0.0",
             port=port or 8000,
             limit_concurrency=1000,
-            ssl_certfile=certfile,
-            ssl_keyfile=keyfile,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
         )
         server = Server(config)
         await server.serve()
