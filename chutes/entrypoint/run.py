@@ -175,8 +175,8 @@ def get_netnanny_ref():
     netnanny.set_secure_env.argtypes = []
     netnanny.set_secure_env.restype = ctypes.c_int
     try:
-        netnanny.encrypt_cenv.argtypes = [ctypes.c_char_p]
-        netnanny.encrypt_cenv.restype = ctypes.c_char_p
+        netnanny.encrypt_cenv.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        netnanny.encrypt_cenv.restype = ctypes.c_int
         netnanny.decrypt_cenv.argtypes = [ctypes.c_char_p]
         netnanny.decrypt_cenv.restype = ctypes.c_char_p
     except AttributeError:

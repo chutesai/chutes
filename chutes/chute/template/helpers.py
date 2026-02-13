@@ -21,24 +21,35 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 
 def set_encrypted_env_var(env: dict, name: str, value: str) -> None:
-    """Set env var as CENC_<NAME> via LD_PRELOAD encrypt_cenv when available."""
+    """Set env var as CENC_<NAME> via LD_PRELOAD encrypt_cenv(name, value)."""
     try:
         lib = ctypes.CDLL(None)
         encrypt_fn = lib.encrypt_cenv
-        encrypt_fn.argtypes = [ctypes.c_char_p]
-        encrypt_fn.restype = ctypes.c_char_p
-        encrypted = encrypt_fn(value.encode())
-        if encrypted:
-            env[f"CENC_{name}"] = encrypted.decode()
-            env.pop(name, None)
-            return
-        logger.warning("encrypt_cenv returned NULL for %s, falling back to plaintext env", name)
+        encrypt_fn.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        encrypt_fn.restype = ctypes.c_int
+        rc = encrypt_fn(name.encode(), value.encode())
+        if rc == 0:
+            enc_name = f"CENC_{name}"
+            encrypted = os.environ.get(enc_name)
+            if encrypted:
+                env[enc_name] = encrypted
+                env.pop(name, None)
+                return
+            logger.warning(
+                "encrypt_cenv succeeded for %s but %s not present in env, falling back to plaintext env",
+                name,
+                enc_name,
+            )
+        else:
+            logger.warning("encrypt_cenv returned %d for %s, falling back to plaintext env", rc, name)
     except (OSError, AttributeError):
         logger.warning(
             "encrypt_cenv symbol unavailable for %s (LD_PRELOAD library not loaded?), "
             "falling back to plaintext env",
             name,
         )
+    except Exception as exc:
+        logger.warning("encrypt_cenv failed for %s (%s), falling back to plaintext env", name, exc)
     env[name] = value
 
 
