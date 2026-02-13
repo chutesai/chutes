@@ -22,6 +22,7 @@ from chutes.chute.template.helpers import (
     build_wrong_client_ssl_context,
     validate_mtls,
     mtls_enabled,
+    set_encrypted_env_var,
 )
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
@@ -258,7 +259,7 @@ def build_embedding_chute(
             env["VLLM_SSL_KEYFILE_PEM"] = certs["server_key_pem"].decode()
             env["VLLM_SSL_CERTFILE_PEM"] = certs["server_cert_pem"].decode()
             env["VLLM_SSL_CA_CERTS_PEM"] = certs["ca_cert_pem"].decode()
-            env["VLLM_SSL_KEYFILE_PASSWORD"] = certs["password"]
+            set_encrypted_env_var(env, "VLLM_SSL_KEYFILE_PASSWORD", certs["password"])
 
         ssl_args = " --ssl-cert-reqs 2" if use_mtls else ""
         pooler_config_arg = shlex.quote(json.dumps(pooler_config))

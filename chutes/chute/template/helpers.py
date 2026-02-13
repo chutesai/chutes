@@ -3,6 +3,7 @@ import re
 import ssl
 import sys
 import stat
+import ctypes
 import time
 import uuid
 import atexit
@@ -17,6 +18,28 @@ from cryptography import x509
 from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+
+
+def set_encrypted_env_var(env: dict, name: str, value: str) -> None:
+    """Set env var as CENC_<NAME> via LD_PRELOAD encrypt_cenv when available."""
+    try:
+        lib = ctypes.CDLL(None)
+        encrypt_fn = lib.encrypt_cenv
+        encrypt_fn.argtypes = [ctypes.c_char_p]
+        encrypt_fn.restype = ctypes.c_char_p
+        encrypted = encrypt_fn(value.encode())
+        if encrypted:
+            env[f"CENC_{name}"] = encrypted.decode()
+            env.pop(name, None)
+            return
+        logger.warning("encrypt_cenv returned NULL for %s, falling back to plaintext env", name)
+    except (OSError, AttributeError):
+        logger.warning(
+            "encrypt_cenv symbol unavailable for %s (LD_PRELOAD library not loaded?), "
+            "falling back to plaintext env",
+            name,
+        )
+    env[name] = value
 
 
 def mtls_enabled() -> bool:

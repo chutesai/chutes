@@ -21,6 +21,7 @@ from chutes.chute.template.helpers import (
     build_wrong_client_ssl_context,
     validate_mtls,
     mtls_enabled,
+    set_encrypted_env_var,
 )
 
 
@@ -399,7 +400,7 @@ def build_sglang_chute(
             env["SGLANG_SSL_KEYFILE_PEM"] = certs["server_key_pem"].decode()
             env["SGLANG_SSL_CERTFILE_PEM"] = certs["server_cert_pem"].decode()
             env["SGLANG_SSL_CA_CERTS_PEM"] = certs["ca_cert_pem"].decode()
-            env["SGLANG_SSL_KEYFILE_PASSWORD"] = certs["password"]
+            set_encrypted_env_var(env, "SGLANG_SSL_KEYFILE_PASSWORD", certs["password"])
         self._sglang_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
 
         server_ready = asyncio.Event()

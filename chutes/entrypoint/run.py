@@ -174,6 +174,14 @@ def get_netnanny_ref():
     netnanny.set_secure_fs.restype = ctypes.c_int
     netnanny.set_secure_env.argtypes = []
     netnanny.set_secure_env.restype = ctypes.c_int
+    try:
+        netnanny.encrypt_cenv.argtypes = [ctypes.c_char_p]
+        netnanny.encrypt_cenv.restype = ctypes.c_char_p
+        netnanny.decrypt_cenv.argtypes = [ctypes.c_char_p]
+        netnanny.decrypt_cenv.restype = ctypes.c_char_p
+    except AttributeError:
+        # Backward compatibility with older preload libs.
+        pass
 
     # Integrity query exports (V2 manifest).
     netnanny.integrity_query_status.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t]
@@ -1597,10 +1605,13 @@ def run_chute(
         if dev:
             try:
                 netnanny = get_netnanny_ref()
-                netnanny.initialize_network_control()
-                netnanny.unlock_network()
-            except AttributeError:
-                ...
+                rc = netnanny.initialize_network_control()
+                logger.info(f"[dev] initialize_network_control() returned {rc}")
+                rc = netnanny.unlock_network()
+                logger.info(f"[dev] unlock_network() returned {rc}")
+                logger.info(f"[dev] is_network_locked() = {netnanny.is_network_locked()}")
+            except Exception as e:
+                logger.error(f"[dev] netnanny unlock failed: {type(e).__name__}: {e}")
 
         if not (dev or generate_inspecto_hash):
             challenge = secrets.token_hex(16).encode("utf-8")
