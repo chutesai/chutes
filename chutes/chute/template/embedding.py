@@ -287,14 +287,18 @@ def build_embedding_chute(
                 wrong_ssl_context=wrong_ssl_ctx,
             )
         )
-        self._monitor_task.add_done_callback(
-            lambda t: logger.error(
-                "Embedding vLLM monitor task failed: {}",
-                t.exception() if t.exception() else "cancelled/unknown",
-            )
-            if not t.cancelled()
-            else None
-        )
+
+        def _on_monitor_done(t):
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.error("Embedding vLLM monitor task failed, killing process group: {}", exc)
+                import signal
+
+                os.kill(os.getpid(), signal.SIGKILL)
+
+        self._monitor_task.add_done_callback(_on_monitor_done)
 
         base_url = "https://127.0.0.1:10101" if use_mtls else "http://127.0.0.1:10101"
         while True:
