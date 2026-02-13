@@ -1,7 +1,6 @@
 import os
 import re
 import ssl
-import sys
 import stat
 import ctypes
 import time
@@ -21,36 +20,32 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 
 def set_encrypted_env_var(env: dict, name: str, value: str) -> None:
-    """Set env var as CENC_<NAME> via LD_PRELOAD encrypt_cenv(name, value)."""
+    """Set env var as CENC_<NAME> via LD_PRELOAD encrypt_string(value)."""
     try:
         lib = ctypes.CDLL(None)
-        encrypt_fn = lib.encrypt_cenv
-        encrypt_fn.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-        encrypt_fn.restype = ctypes.c_int
-        rc = encrypt_fn(name.encode(), value.encode())
-        if rc == 0:
-            enc_name = f"CENC_{name}"
-            encrypted = os.environ.get(enc_name)
-            if encrypted:
-                env[enc_name] = encrypted
-                env.pop(name, None)
-                return
-            logger.warning(
-                "encrypt_cenv succeeded for %s but %s not present in env, falling back to plaintext env",
-                name,
-                enc_name,
-            )
-        else:
-            logger.warning("encrypt_cenv returned %d for %s, falling back to plaintext env", rc, name)
-    except (OSError, AttributeError):
-        logger.warning(
-            "encrypt_cenv symbol unavailable for %s (LD_PRELOAD library not loaded?), "
-            "falling back to plaintext env",
+        encrypt_fn = lib.encrypt_string
+        encrypt_fn.argtypes = [ctypes.c_char_p]
+        encrypt_fn.restype = ctypes.c_char_p
+        encrypted = encrypt_fn(value.encode())
+        if not encrypted:
+            raise RuntimeError(f"encrypt_string returned NULL for {name}")
+        enc_name = f"CENC_{name}"
+        encrypted_str = encrypted.decode()
+        os.environ[enc_name] = encrypted_str
+        os.environ.pop(name, None)
+        env[enc_name] = encrypted_str
+        env.pop(name, None)
+        return
+    except (OSError, AttributeError) as exc:
+        logger.error(
+            "encrypt_string symbol unavailable for {} (LD_PRELOAD library not loaded?): {}",
             name,
+            exc,
         )
+        raise
     except Exception as exc:
-        logger.warning("encrypt_cenv failed for %s (%s), falling back to plaintext env", name, exc)
-    env[name] = value
+        logger.error("encrypt_string failed for {} ({})", name, exc)
+        raise
 
 
 def mtls_enabled() -> bool:
@@ -554,8 +549,7 @@ async def monitor_engine(
 
     while True:
         if process.poll() is not None:
-            logger.error(f"{model_name} subprocess died with exit code {process.returncode}")
-            sys.exit(137)
+            raise RuntimeError(f"{model_name} subprocess died with exit code {process.returncode}")
         if ready_event.is_set():
             # Normal health check
             try:
@@ -573,8 +567,10 @@ async def monitor_engine(
             except Exception:
                 consecutive_failures += 1
             if consecutive_failures >= failure_threshold:
-                logger.error(f"{model_name} server is unresponsive.")
-                sys.exit(137)
+                raise RuntimeError(
+                    f"{model_name} server is unresponsive "
+                    f"(consecutive_failures={consecutive_failures}, threshold={failure_threshold})"
+                )
 
             # Periodic mTLS re-validation
             if (
@@ -591,10 +587,9 @@ async def monitor_engine(
                     ) as session:
                         async with session.get(f"{scheme}://127.0.0.1:{port}/v1/models") as resp:
                             if resp.status != 401:
-                                logger.error(
+                                raise RuntimeError(
                                     f"mTLS monitor: no-key request got {resp.status}, expected 401"
                                 )
-                                sys.exit(137)
 
                     # Plain HTTP must fail
                     try:
@@ -605,10 +600,9 @@ async def monitor_engine(
                                 f"http://127.0.0.1:{port}/v1/models",
                                 headers={"Authorization": f"Bearer {api_key}"},
                             ) as resp:
-                                logger.error(
+                                raise RuntimeError(
                                     f"mTLS monitor: plain HTTP succeeded with status {resp.status}"
                                 )
-                                sys.exit(137)
                     except (aiohttp.ClientError, ConnectionError, OSError):
                         pass
 
@@ -622,10 +616,9 @@ async def monitor_engine(
                                 f"{scheme}://127.0.0.1:{port}/v1/models",
                                 headers={"Authorization": f"Bearer {api_key}"},
                             ) as resp:
-                                logger.error(
+                                raise RuntimeError(
                                     f"mTLS monitor: wrong cert succeeded with status {resp.status}"
                                 )
-                                sys.exit(137)
                     except (aiohttp.ClientError, ConnectionError, OSError, ssl.SSLError):
                         pass
 
@@ -633,7 +626,8 @@ async def monitor_engine(
                 except SystemExit:
                     raise
                 except Exception as exc:
-                    logger.error(f"mTLS monitor: unexpected error during re-validation: {exc}")
-                    sys.exit(137)
+                    raise RuntimeError(
+                        f"mTLS monitor: unexpected error during re-validation: {exc}"
+                    ) from exc
 
         await asyncio.sleep(check_interval)

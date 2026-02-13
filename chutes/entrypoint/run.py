@@ -56,7 +56,7 @@ from chutes.entrypoint._shared import (
 )
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
-from chutes.util.context import is_local
+from chutes.util.context import is_local, is_remote
 from chutes.cfsv_wrapper import get_cfsv
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
@@ -175,10 +175,10 @@ def get_netnanny_ref():
     netnanny.set_secure_env.argtypes = []
     netnanny.set_secure_env.restype = ctypes.c_int
     try:
-        netnanny.encrypt_cenv.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-        netnanny.encrypt_cenv.restype = ctypes.c_int
-        netnanny.decrypt_cenv.argtypes = [ctypes.c_char_p]
-        netnanny.decrypt_cenv.restype = ctypes.c_char_p
+        netnanny.encrypt_string.argtypes = [ctypes.c_char_p]
+        netnanny.encrypt_string.restype = ctypes.c_char_p
+        netnanny.decrypt_string.argtypes = [ctypes.c_char_p]
+        netnanny.decrypt_string.restype = ctypes.c_char_p
     except AttributeError:
         # Backward compatibility with older preload libs.
         pass
@@ -567,8 +567,23 @@ class _AegisHandle:
     def gen_tls_cert(self, cn: str) -> tuple[str, str, str] | None:
         """Generate self-signed Ed25519 TLS cert. Returns (cert_pem, key_pem, cert_sig_hex)."""
         if not self._initialized or not self._handle:
+            logger.warning(
+                "[aegis-debug] gen_tls_cert precondition failed initialized={} handle_ptr={} pid={} thread={} cn={}",
+                self._initialized,
+                self._handle,
+                os.getpid(),
+                threading.get_ident(),
+                cn,
+            )
             return None
         try:
+            logger.info(
+                "[aegis-debug] gen_tls_cert call handle_ptr={} pid={} thread={} cn_len={}",
+                self._handle,
+                os.getpid(),
+                threading.get_ident(),
+                len(cn),
+            )
             cert_buf = ctypes.create_string_buffer(4096)
             key_buf = ctypes.create_string_buffer(512)
             sig_buf = ctypes.create_string_buffer(129)
@@ -583,6 +598,13 @@ class _AegisHandle:
                 len(key_buf),
                 sig_buf,
                 len(sig_buf),
+            )
+            logger.info(
+                "[aegis-debug] gen_tls_cert return ret={} handle_ptr={} pid={} thread={}",
+                ret,
+                self._handle,
+                os.getpid(),
+                threading.get_ident(),
             )
             if ret == 0:
                 return cert_buf.value.decode(), key_buf.value.decode(), sig_buf.value.decode()
@@ -1573,8 +1595,6 @@ def run_chute(
     host: str | None = typer.Option("0.0.0.0", help="host to bind to"),
     port: int | None = typer.Option(8000, help="port to listen on"),
     logging_port: int | None = typer.Option(8001, help="logging port"),
-    keyfile: str | None = typer.Option(None, help="path to TLS key file"),
-    certfile: str | None = typer.Option(None, help="path to TLS certificate file"),
     debug: bool = typer.Option(False, help="enable debug logging"),
     dev: bool = typer.Option(False, help="dev/local mode"),
     dev_job_data_path: str = typer.Option(None, help="dev mode: job payload JSON path"),
@@ -1585,8 +1605,8 @@ def run_chute(
         """
         Run the chute (or job).
         """
-        ssl_certfile = certfile
-        ssl_keyfile = keyfile
+        ssl_certfile = None
+        ssl_keyfile = None
         if not (dev or generate_inspecto_hash):
             preload = os.getenv("LD_PRELOAD")
             if preload != "/usr/local/lib/chutes-aegis.so":
@@ -1749,29 +1769,8 @@ def run_chute(
                 sys.exit(137)
             logger.info(f"Runtime integrity initialized: commitment={aegis_commitment[:16]}...")
 
-            # Generate in-memory TLS certificate (Ed25519, self-signed in C)
-            _aegis_handle = get_aegis_handle()
-            cn = f"{token_data['sub']}.int.chutes.dev"
-            tls_result = _aegis_handle.gen_tls_cert(cn)
-            if tls_result:
-                cert_pem, key_pem, cert_sig = tls_result
-                tls_cert_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_cert.pem"
-                tls_key_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_key.pem"
-                with open(tls_cert_path, "w") as f:
-                    f.write(cert_pem)
-                os.chmod(tls_cert_path, 0o600)
-                with open(tls_key_path, "w") as f:
-                    f.write(key_pem)
-                os.chmod(tls_key_path, 0o600)
-                # Override TLS files for uvicorn
-                ssl_certfile = tls_cert_path
-                ssl_keyfile = tls_key_path
-                logger.info(f"In-memory TLS certificate generated: CN={cn}")
-            else:
-                cert_pem, cert_sig = None, None
-                logger.warning("TLS certificate generation failed, continuing without TLS")
-
             # Initialize post-quantum E2E encryption (ML-KEM-768)
+            _aegis_handle = get_aegis_handle()
             e2e_pubkey = _aegis_handle.e2e_init()
             if e2e_pubkey:
                 logger.info("ML-KEM-768 E2E encryption initialized")
@@ -1785,11 +1784,86 @@ def run_chute(
             print(inspecto_hash)
             return
 
+        if not generate_inspecto_hash:
+            # Ensure aegis handle is initialized before TLS/E2E APIs are used.
+            # In dev mode we don't have validator bootstrap, so initialize with
+            # an ephemeral nonce to create the runtime handle.
+            bootstrap_nonce = secrets.token_hex(16) if dev else None
+            logger.info(
+                "[aegis-debug] init start dev={} pid={} thread={} nonce_len={}",
+                dev,
+                os.getpid(),
+                threading.get_ident(),
+                len(bootstrap_nonce or ""),
+            )
+            init_ok = init_aegis(bootstrap_nonce)
+            logger.info(
+                "[aegis-debug] init done ok={} commitment_prefix={}",
+                bool(init_ok),
+                init_ok[:24] if init_ok else None,
+            )
+            if not init_ok:
+                logger.error("Aegis runtime initialization failed")
+                sys.exit(137)
+
+            # TLS is always generated by aegis; CLI cert/key overrides are not allowed.
+            _aegis_handle = get_aegis_handle()
+            cn_source = None
+            if isinstance(token_data, dict):
+                cn_source = token_data.get("sub")
+            if not cn_source:
+                cn_source = miner_ss58 or "dev"
+            cn = f"{cn_source}.int.chutes.dev"
+            logger.info(
+                "[aegis-debug] cert start cn={} pid={} thread={} handle_initialized={} handle_ptr={}",
+                cn,
+                os.getpid(),
+                threading.get_ident(),
+                getattr(_aegis_handle, "_initialized", None),
+                getattr(_aegis_handle, "_handle", None),
+            )
+            tls_result = _aegis_handle.gen_tls_cert(cn)
+            logger.info("[aegis-debug] cert done ok={}", bool(tls_result))
+            if not tls_result:
+                logger.error(
+                    "Aegis TLS certificate generation failed handle_initialized={} handle_ptr={}",
+                    getattr(_aegis_handle, "_initialized", None),
+                    getattr(_aegis_handle, "_handle", None),
+                )
+                sys.exit(137)
+            cert_pem, key_pem, _cert_sig = tls_result
+            logger.info(
+                "[aegis-debug] cert material cert_len={} key_len={} sig_prefix={}",
+                len(cert_pem),
+                len(key_pem),
+                _cert_sig[:16] if _cert_sig else None,
+            )
+            tls_cert_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_cert.pem"
+            tls_key_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_key.pem"
+            with open(tls_cert_path, "w") as f:
+                f.write(cert_pem)
+            os.chmod(tls_cert_path, 0o600)
+            with open(tls_key_path, "w") as f:
+                f.write(key_pem)
+            os.chmod(tls_key_path, 0o600)
+            ssl_certfile = tls_cert_path
+            ssl_keyfile = tls_key_path
+            logger.info(f"In-memory TLS certificate generated: CN={cn}")
+
         if dev:
+            logger.info("[aegis-debug] setting CHUTES_DEV_MODE=true")
             os.environ["CHUTES_DEV_MODE"] = "true"
+            logger.info("[aegis-debug] set CHUTES_DEV_MODE complete")
+        logger.info(
+            "[aegis-debug] context CHUTES_EXECUTION_CONTEXT={} is_remote={} is_local={}",
+            os.getenv("CHUTES_EXECUTION_CONTEXT"),
+            is_remote(),
+            is_local(),
+        )
         if is_local():
             logger.error("Cannot run chutes in local context!")
             sys.exit(1)
+        logger.info("[aegis-debug] post-context guard ok")
 
         # Load token and port mappings from the environment.
         port_mappings = [
@@ -1882,7 +1956,9 @@ def run_chute(
 
         # Now we have the chute code available, either because it's dev and the file is plain text here,
         # or it's prod and we've fetched the code from the validator and stored it securely.
+        logger.info("[aegis-debug] loading chute ref={}", chute_ref_str)
         chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
+        logger.info("[aegis-debug] load_chute complete module={}", chute_module.__name__)
         chute = chute.chute if isinstance(chute, ChutePack) else chute
         if job_method:
             job_obj = next(j for j in chute._jobs if j.name == job_method)
@@ -1897,7 +1973,9 @@ def run_chute(
             logger.info(f"Creating task, dev mode, for {job_method=}")
 
         # Run the chute's initialization code.
+        logger.info("[aegis-debug] chute.initialize start")
         await chute.initialize()
+        logger.info("[aegis-debug] chute.initialize complete")
 
         # Encryption/rate-limiting middleware setup.
         if dev:
@@ -2186,8 +2264,6 @@ def run_chute(
                     host=host or "0.0.0.0",
                     port=logging_port,
                     dev=dev,
-                    certfile=certfile,
-                    keyfile=keyfile,
                 )
             )
 
@@ -2204,6 +2280,15 @@ def run_chute(
             )
             exception_raised = True
             await asyncio.sleep(60)
+            raise
+        except BaseException as exc:
+            logger.error(
+                "Unexpected base exception executing _run_chute(): {} ({})\n{}",
+                type(exc).__name__,
+                str(exc),
+                traceback.format_exc(),
+            )
+            exception_raised = True
             raise
         finally:
             if not exception_raised:

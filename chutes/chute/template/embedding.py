@@ -287,9 +287,22 @@ def build_embedding_chute(
                 wrong_ssl_context=wrong_ssl_ctx,
             )
         )
+        self._monitor_task.add_done_callback(
+            lambda t: logger.error(
+                "Embedding vLLM monitor task failed: {}",
+                t.exception() if t.exception() else "cancelled/unknown",
+            )
+            if not t.cancelled()
+            else None
+        )
 
         base_url = "https://127.0.0.1:10101" if use_mtls else "http://127.0.0.1:10101"
         while True:
+            if self._vllm_process.poll() is not None:
+                raise RuntimeError(
+                    "Embedding vLLM subprocess exited before readiness check "
+                    f"(exit={self._vllm_process.returncode})"
+                )
             try:
                 connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
                 async with aiohttp.ClientSession(connector=connector) as session:

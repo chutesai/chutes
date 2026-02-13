@@ -4,18 +4,15 @@ Helper to distinguish between local and remote contexts.
 
 import os
 
-IS_REMOTE = os.getenv("CHUTES_EXECUTION_CONTEXT") == "REMOTE"
-
-
 def is_remote() -> bool:
     """
     Check if we are in the remote context.
     """
-    return IS_REMOTE
+    return os.getenv("CHUTES_EXECUTION_CONTEXT") == "REMOTE"
 
 
 def is_local() -> bool:
     """
     Check if we are in the local context.
     """
-    return not IS_REMOTE
+    return not is_remote()
