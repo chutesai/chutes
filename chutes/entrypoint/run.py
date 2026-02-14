@@ -1886,6 +1886,7 @@ def run_chute(
             # Ensure aegis handle is initialized before TLS/E2E APIs are used.
             # In dev mode we don't have validator bootstrap, so initialize with
             # an ephemeral nonce to create the runtime handle.
+            validator_nonce = None
             bootstrap_nonce = secrets.token_hex(16) if dev else None
             logger.info(
                 "[aegis-debug] init start dev={} pid={} thread={} nonce_len={}",
@@ -1991,6 +1992,27 @@ def run_chute(
                 ssl_keyfile_password = key_password
 
             logger.info(f"In-memory TLS certificate generated: CN={cn} mtls={bool(ca_cert_pem)}")
+
+        # Start logging server with TLS (cert is now available).
+        from chutes.entrypoint.logger import launch_server as _launch_logging
+
+        def _run_logging_server():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                _launch_logging(
+                    host=host or "0.0.0.0",
+                    port=logging_port,
+                    dev=dev,
+                    certfile=ssl_certfile,
+                    keyfile=ssl_keyfile,
+                    keyfile_password=ssl_keyfile_password,
+                    ca_certs=ssl_ca_certs,
+                )
+            )
+
+        logging_thread = threading.Thread(target=_run_logging_server, daemon=True)
+        logging_thread.start()
 
         if dev:
             logger.info("[aegis-debug] setting CHUTES_DEV_MODE=true")
@@ -2395,8 +2417,6 @@ def run_chute(
         Wrap the actual chute execution with the logging process, which is
         kept alive briefly after the main process terminates.
         """
-        from chutes.entrypoint.logger import launch_server
-
         if not (dev or generate_inspecto_hash):
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58
@@ -2406,25 +2426,6 @@ def run_chute(
             await _run_chute()
             return
 
-        def run_logging_server():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(
-                launch_server(
-                    host=host or "0.0.0.0",
-                    port=logging_port,
-                    dev=dev,
-                    certfile=ssl_certfile,
-                    keyfile=ssl_keyfile,
-                    keyfile_password=ssl_keyfile_password,
-                    ca_certs=ssl_ca_certs,
-                )
-            )
-
-        logging_thread = threading.Thread(target=run_logging_server, daemon=True)
-        logging_thread.start()
-
-        await asyncio.sleep(3)
         exception_raised = False
         try:
             await _run_chute()
