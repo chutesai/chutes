@@ -602,13 +602,16 @@ class Cord:
                     detail=message,
                 )
         else:
-            # Dev mode hacks.
             if not self._passthrough:
                 args = [request.state.decrypted] if request.state.decrypted else []
                 kwargs = {}
             else:
+                decrypted = request.state.decrypted
+                if isinstance(decrypted, dict) and "json" in decrypted and "params" in decrypted:
+                    kwargs = decrypted  # Already wrapped for passthrough
+                else:
+                    kwargs = {"json": decrypted} if decrypted else {}
                 args = []
-                kwargs = {"json": request.state.decrypted} if request.state.decrypted else {}
 
         # Set a custom request ID for SGLang passthroughs.
         if self._is_sglang_passthrough() and isinstance(kwargs.get("json"), dict):

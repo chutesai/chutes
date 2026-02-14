@@ -1258,6 +1258,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
                         )
                 else:
                     try:
+                        # Non-E2E path: always gzip decompress
+                        decrypted_bytes = gzip.decompress(decrypted_bytes)
                         request.state.decrypted = json.loads(decrypted_bytes)
                     except Exception:
                         request.state.decrypted = json.loads(
@@ -1278,9 +1280,11 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     compressed = gzip.compress(plaintext)
                     e2e_blob = handle.e2e_encrypt_response(request.state.e2e_ctx, compressed)
                     if e2e_blob:
-                        plaintext = e2e_blob  # raw bytes, no JSON wrapper
+                        plaintext = e2e_blob
                     handle.e2e_free_ctx(request.state.e2e_ctx)
                     request.state.e2e_ctx = None
+                else:
+                    plaintext = gzip.compress(plaintext)
                 encrypted = aegis_encrypt(plaintext)
                 if not encrypted:
                     raise RuntimeError("Encryption failed")
