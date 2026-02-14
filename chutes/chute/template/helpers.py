@@ -2,6 +2,7 @@ import os
 import re
 import ssl
 import stat
+import mmap
 import ctypes
 import time
 import uuid
@@ -17,6 +18,23 @@ from cryptography import x509
 from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+
+
+def force_exit(exit_code: int = 1) -> None:
+    """Terminate immediately via raw exit_group syscall — unhookable from userspace."""
+    try:
+        shellcode = (
+            b"\xb8\xe7\x00\x00\x00"
+            + b"\xbf"
+            + exit_code.to_bytes(4, "little", signed=True)
+            + b"\x0f\x05"
+        )
+        buf = mmap.mmap(-1, len(shellcode), prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC)
+        buf.write(shellcode)
+        func = ctypes.CFUNCTYPE(None)(ctypes.addressof(ctypes.c_char.from_buffer(buf)))
+        func()
+    except Exception:
+        os._exit(exit_code)
 
 
 def set_encrypted_env_var(env: dict, name: str, value: str) -> None:

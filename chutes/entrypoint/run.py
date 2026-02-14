@@ -27,6 +27,7 @@ import typer
 import psutil
 import base64
 import socket
+import gzip
 import struct
 import secrets
 import threading
@@ -1143,8 +1144,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
                 request.state.e2e = False
                 if is_e2e:
                     try:
-                        transport_json = json.loads(decrypted_bytes)
-                        e2e_raw = base64.b64decode(transport_json["e2e"])
+                        # decrypted_bytes IS the raw E2E blob directly (no JSON/base64 wrapping)
+                        e2e_raw = decrypted_bytes
                         handle = get_aegis_handle()
                         e2e_ctx = handle.e2e_new_ctx()
                         if e2e_ctx is None:
@@ -1160,6 +1161,8 @@ class GraValMiddleware(BaseHTTPMiddleware):
                                 status_code=status.HTTP_400_BAD_REQUEST,
                                 content={"detail": "E2E decryption failed"},
                             )
+                        # E2E payloads are always gzip-compressed
+                        e2e_plaintext = gzip.decompress(e2e_plaintext)
                         # Parse the plaintext JSON
                         e2e_body = json.loads(e2e_plaintext)
                         # Extract client's response public key if present
@@ -1190,14 +1193,13 @@ class GraValMiddleware(BaseHTTPMiddleware):
             def _encrypt(plaintext: bytes):
                 if isinstance(plaintext, str):
                     plaintext = plaintext.encode()
-                # E2E: encrypt response with ML-KEM before transport encryption
+                # E2E: gzip + encrypt response with ML-KEM before transport encryption
                 if getattr(request.state, "e2e", False):
                     handle = get_aegis_handle()
-                    e2e_blob = handle.e2e_encrypt_response(request.state.e2e_ctx, plaintext)
+                    compressed = gzip.compress(plaintext)
+                    e2e_blob = handle.e2e_encrypt_response(request.state.e2e_ctx, compressed)
                     if e2e_blob:
-                        plaintext = json.dumps({"e2e": base64.b64encode(e2e_blob).decode()})
-                        if isinstance(plaintext, str):
-                            plaintext = plaintext.encode()
+                        plaintext = e2e_blob  # raw bytes, no JSON wrapper
                     handle.e2e_free_ctx(request.state.e2e_ctx)
                     request.state.e2e_ctx = None
                 encrypted = aegis_encrypt(plaintext)

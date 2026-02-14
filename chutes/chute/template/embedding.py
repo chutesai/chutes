@@ -21,6 +21,7 @@ from chutes.chute.template.helpers import (
     build_client_ssl_context,
     build_wrong_client_ssl_context,
     validate_mtls,
+    force_exit,
     mtls_enabled,
     set_encrypted_env_var,
 )
@@ -293,10 +294,8 @@ def build_embedding_chute(
                 return
             exc = t.exception()
             if exc:
-                logger.error("Embedding vLLM monitor task failed, killing process group: {}", exc)
-                import signal
-
-                os.kill(os.getpid(), signal.SIGKILL)
+                logger.error("Embedding vLLM monitor task failed, terminating: {}", exc)
+                force_exit(1)
 
         self._monitor_task.add_done_callback(_on_monitor_done)
 
