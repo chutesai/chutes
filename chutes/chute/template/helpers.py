@@ -102,7 +102,7 @@ def generate_mtls_certs() -> dict:
     encryption = serialization.BestAvailableEncryption(password_bytes)
 
     now = datetime.datetime.now(datetime.timezone.utc)
-    one_hour = datetime.timedelta(hours=1)
+    cert_validity = datetime.timedelta(days=365)
 
     # Ephemeral CA
     ca_key = ec.generate_private_key(ec.SECP256R1())
@@ -114,7 +114,7 @@ def generate_mtls_certs() -> dict:
         .public_key(ca_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
-        .not_valid_after(now + one_hour)
+        .not_valid_after(now + cert_validity)
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .sign(ca_key, hashes.SHA256())
     )
@@ -128,7 +128,7 @@ def generate_mtls_certs() -> dict:
         .public_key(server_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
-        .not_valid_after(now + one_hour)
+        .not_valid_after(now + cert_validity)
         .add_extension(
             x509.SubjectAlternativeName([x509.IPAddress(ipaddress_from_string("127.0.0.1"))]),
             critical=False,
@@ -149,7 +149,7 @@ def generate_mtls_certs() -> dict:
         .public_key(client_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
-        .not_valid_after(now + one_hour)
+        .not_valid_after(now + cert_validity)
         .add_extension(
             x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
             critical=False,
@@ -167,7 +167,7 @@ def generate_mtls_certs() -> dict:
         .public_key(wrong_ca_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
-        .not_valid_after(now + one_hour)
+        .not_valid_after(now + cert_validity)
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .sign(wrong_ca_key, hashes.SHA256())
     )
@@ -179,7 +179,7 @@ def generate_mtls_certs() -> dict:
         .public_key(wrong_client_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
-        .not_valid_after(now + one_hour)
+        .not_valid_after(now + cert_validity)
         .add_extension(
             x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
             critical=False,

@@ -286,10 +286,14 @@ async def launch_server(
     dev: bool = False,
     certfile: Optional[str] = None,
     keyfile: Optional[str] = None,
+    keyfile_password: Optional[str] = None,
+    ca_certs: Optional[str] = None,
 ):
     """
     Start the logging server using uvicorn.
     """
+    import ssl as _ssl
+
     if dev:
         app.dev = True
 
@@ -300,6 +304,9 @@ async def launch_server(
         limit_concurrency=1000,
         ssl_certfile=certfile,
         ssl_keyfile=keyfile,
+        ssl_keyfile_password=keyfile_password,
+        ssl_ca_certs=ca_certs,
+        ssl_cert_reqs=_ssl.CERT_REQUIRED if ca_certs else _ssl.CERT_NONE,
         log_level="info",
         access_log=True,
     )

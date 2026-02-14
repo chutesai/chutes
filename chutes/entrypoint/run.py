@@ -323,6 +323,30 @@ class _AegisHandle:
         ]
         self._lib.aegis_gen_tls_cert.restype = ctypes.c_int
 
+        # mTLS cert generation: CA + server cert + client cert + passphrase
+        self._lib.aegis_gen_tls_mtls.argtypes = [
+            ctypes.c_void_p,  # handle
+            ctypes.c_char_p,  # cn
+            ctypes.c_size_t,  # cn_len
+            ctypes.c_char_p,  # nonce
+            ctypes.c_size_t,  # nonce_len
+            ctypes.c_char_p,  # server_cert_buf
+            ctypes.c_size_t,  # server_cert_sz
+            ctypes.c_char_p,  # server_key_buf (encrypted PEM)
+            ctypes.c_size_t,  # server_key_sz
+            ctypes.c_char_p,  # sig_buf
+            ctypes.c_size_t,  # sig_sz
+            ctypes.c_char_p,  # ca_cert_buf
+            ctypes.c_size_t,  # ca_cert_sz
+            ctypes.c_char_p,  # client_cert_buf
+            ctypes.c_size_t,  # client_cert_sz
+            ctypes.c_char_p,  # client_key_buf (encrypted PEM)
+            ctypes.c_size_t,  # client_key_sz
+            ctypes.c_char_p,  # key_password_buf
+            ctypes.c_size_t,  # key_password_sz
+        ]
+        self._lib.aegis_gen_tls_mtls.restype = ctypes.c_int
+
         self._lib.aegis_e2e_init.argtypes = [
             ctypes.c_void_p,
             ctypes.c_char_p,
@@ -612,6 +636,61 @@ class _AegisHandle:
             logger.warning(f"aegis_gen_tls_cert failed with code {ret}")
         except Exception as e:
             logger.warning(f"aegis_gen_tls_cert failed: {e}")
+        return None
+
+    def gen_tls_mtls(self, cn: str, nonce: str) -> tuple[str, str, str, str, str, str, str] | None:
+        """Generate mTLS certs via aegis.
+
+        Returns (server_cert_pem, encrypted_server_key_pem, cert_sig_hex,
+                 ca_cert_pem, client_cert_pem, encrypted_client_key_pem, key_password).
+        """
+        if not self._initialized or not self._handle:
+            logger.warning("[aegis-debug] gen_tls_mtls precondition failed")
+            return None
+        try:
+            server_cert_buf = ctypes.create_string_buffer(4096)
+            server_key_buf = ctypes.create_string_buffer(4096)
+            sig_buf = ctypes.create_string_buffer(256)
+            ca_cert_buf = ctypes.create_string_buffer(4096)
+            client_cert_buf = ctypes.create_string_buffer(4096)
+            client_key_buf = ctypes.create_string_buffer(4096)
+            key_password_buf = ctypes.create_string_buffer(128)
+            cn_bytes = cn.encode()
+            nonce_bytes = nonce.encode()
+            ret = self._lib.aegis_gen_tls_mtls(
+                self._handle,
+                cn_bytes,
+                len(cn_bytes),
+                nonce_bytes,
+                len(nonce_bytes),
+                server_cert_buf,
+                len(server_cert_buf),
+                server_key_buf,
+                len(server_key_buf),
+                sig_buf,
+                len(sig_buf),
+                ca_cert_buf,
+                len(ca_cert_buf),
+                client_cert_buf,
+                len(client_cert_buf),
+                client_key_buf,
+                len(client_key_buf),
+                key_password_buf,
+                len(key_password_buf),
+            )
+            if ret == 0:
+                return (
+                    server_cert_buf.value.decode(),
+                    server_key_buf.value.decode(),
+                    sig_buf.value.decode(),
+                    ca_cert_buf.value.decode(),
+                    client_cert_buf.value.decode(),
+                    client_key_buf.value.decode(),
+                    key_password_buf.value.decode(),
+                )
+            logger.warning(f"aegis_gen_tls_mtls failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_gen_tls_mtls failed: {e}")
         return None
 
     def e2e_init(self) -> str | None:
@@ -1490,6 +1569,9 @@ async def _gather_devices_and_initialize(
     cert_pem: str | None = None,
     cert_sig: str | None = None,
     e2e_pubkey: str | None = None,
+    tls_client_cert: str | None = None,
+    tls_client_key: str | None = None,
+    tls_client_key_password: str | None = None,
 ) -> tuple[bool, str, dict[str, Any]]:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
@@ -1547,6 +1629,12 @@ async def _gather_devices_and_initialize(
         body["tls_cert"] = cert_pem
         body["tls_cert_sig"] = cert_sig
 
+    # mTLS client cert + key (for API to connect back to us)
+    if tls_client_cert:
+        body["tls_client_cert"] = tls_client_cert
+        body["tls_client_key"] = tls_client_key
+        body["tls_client_key_password"] = tls_client_key_password
+
     # E2E public key (for clients to encrypt requests to us)
     if e2e_pubkey:
         body["e2e_pubkey"] = e2e_pubkey
@@ -1603,12 +1691,16 @@ def run_chute(
     dev_job_method: str = typer.Option(None, help="dev mode: job method"),
     generate_inspecto_hash: bool = typer.Option(False, help="only generate inspecto hash and exit"),
 ):
+    ssl_certfile = None
+    ssl_keyfile = None
+    ssl_keyfile_password = None
+    ssl_ca_certs = None
+
     async def _run_chute():
         """
         Run the chute (or job).
         """
-        ssl_certfile = None
-        ssl_keyfile = None
+        nonlocal ssl_certfile, ssl_keyfile, ssl_keyfile_password, ssl_ca_certs
         if not (dev or generate_inspecto_hash):
             preload = os.getenv("LD_PRELOAD")
             if preload != "/usr/local/lib/chutes-aegis.so":
@@ -1824,22 +1916,54 @@ def run_chute(
                 getattr(_aegis_handle, "_initialized", None),
                 getattr(_aegis_handle, "_handle", None),
             )
-            tls_result = _aegis_handle.gen_tls_cert(cn)
-            logger.info("[aegis-debug] cert done ok={}", bool(tls_result))
-            if not tls_result:
-                logger.error(
-                    "Aegis TLS certificate generation failed handle_initialized={} handle_ptr={}",
-                    getattr(_aegis_handle, "_initialized", None),
-                    getattr(_aegis_handle, "_handle", None),
+            # Try mTLS first (nonce-bound), fall back to plain TLS cert.
+            mtls_nonce = validator_nonce if validator_nonce else None
+            tls_result = None
+            client_cert_pem = None
+            client_key_pem = None
+            key_password = None
+            ca_cert_pem = None
+
+            if mtls_nonce:
+                tls_result = _aegis_handle.gen_tls_mtls(cn, mtls_nonce)
+            if tls_result:
+                (
+                    cert_pem,
+                    key_pem,
+                    cert_sig,
+                    ca_cert_pem,
+                    client_cert_pem,
+                    client_key_pem,
+                    key_password,
+                ) = tls_result
+                logger.info(
+                    "[aegis-debug] mtls material cert_len={} key_len={} sig_prefix={} ca_len={} client_cert_len={}",
+                    len(cert_pem),
+                    len(key_pem),
+                    cert_sig[:16] if cert_sig else None,
+                    len(ca_cert_pem),
+                    len(client_cert_pem),
                 )
-                sys.exit(137)
-            cert_pem, key_pem, _cert_sig = tls_result
-            logger.info(
-                "[aegis-debug] cert material cert_len={} key_len={} sig_prefix={}",
-                len(cert_pem),
-                len(key_pem),
-                _cert_sig[:16] if _cert_sig else None,
-            )
+            else:
+                # Fallback to plain TLS cert generation.
+                tls_result = _aegis_handle.gen_tls_cert(cn)
+                logger.info("[aegis-debug] cert done ok={}", bool(tls_result))
+                if not tls_result:
+                    logger.error(
+                        "Aegis TLS certificate generation failed handle_initialized={} handle_ptr={}",
+                        getattr(_aegis_handle, "_initialized", None),
+                        getattr(_aegis_handle, "_handle", None),
+                    )
+                    sys.exit(137)
+                cert_pem, key_pem, cert_sig = tls_result
+                logger.info(
+                    "[aegis-debug] cert material cert_len={} key_len={} sig_prefix={}",
+                    len(cert_pem),
+                    len(key_pem),
+                    cert_sig[:16] if cert_sig else None,
+                )
+
+            # Write cert files to /dev/shm/ (key is passphrase-encrypted if mTLS).
             tls_cert_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_cert.pem"
             tls_key_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_key.pem"
             with open(tls_cert_path, "w") as f:
@@ -1850,7 +1974,19 @@ def run_chute(
             os.chmod(tls_key_path, 0o600)
             ssl_certfile = tls_cert_path
             ssl_keyfile = tls_key_path
-            logger.info(f"In-memory TLS certificate generated: CN={cn}")
+
+            # mTLS: write CA cert and set password/ca_certs for uvicorn.
+            if ca_cert_pem:
+                ca_cert_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_ca.pem"
+                with open(ca_cert_path, "w") as f:
+                    f.write(ca_cert_pem)
+                os.chmod(ca_cert_path, 0o600)
+                ssl_ca_certs = ca_cert_path
+
+            if key_password:
+                ssl_keyfile_password = key_password
+
+            logger.info(f"In-memory TLS certificate generated: CN={cn} mtls={bool(ca_cert_pem)}")
 
         if dev:
             logger.info("[aegis-debug] setting CHUTES_DEV_MODE=true")
@@ -1928,6 +2064,9 @@ def run_chute(
                 cert_pem=locals().get("cert_pem"),
                 cert_sig=locals().get("cert_sig"),
                 e2e_pubkey=locals().get("e2e_pubkey"),
+                tls_client_cert=locals().get("client_cert_pem"),
+                tls_client_key=locals().get("client_key_pem"),
+                tls_client_key_password=locals().get("key_password"),
             )
             job_id = response.get("job_id")
             job_method = response.get("job_method")
@@ -2230,6 +2369,8 @@ def run_chute(
             logger.info("Added shutdown endpoint")
 
         # Start the uvicorn process, whether in job mode or not.
+        import ssl as _ssl
+
         config = Config(
             app=chute,
             host=host or "0.0.0.0",
@@ -2237,6 +2378,9 @@ def run_chute(
             limit_concurrency=1000,
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
+            ssl_keyfile_password=ssl_keyfile_password,
+            ssl_ca_certs=ssl_ca_certs,
+            ssl_cert_reqs=_ssl.CERT_REQUIRED if ssl_ca_certs else _ssl.CERT_NONE,
         )
         server = Server(config)
         await server.serve()
@@ -2266,6 +2410,10 @@ def run_chute(
                     host=host or "0.0.0.0",
                     port=logging_port,
                     dev=dev,
+                    certfile=ssl_certfile,
+                    keyfile=ssl_keyfile,
+                    keyfile_password=ssl_keyfile_password,
+                    ca_certs=ssl_ca_certs,
                 )
             )
 
