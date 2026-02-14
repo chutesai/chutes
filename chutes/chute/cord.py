@@ -329,102 +329,82 @@ class Cord:
             if self._passthrough:
                 rid = getattr(request.state, "sglang_rid", None)
 
-                # SGLang passthrough: run upstream call and disconnect watcher in parallel
-                if self._is_sglang_passthrough():
+                # Run upstream call and disconnect watcher in parallel for all passthroughs.
+                is_sglang = self._is_sglang_passthrough()
 
-                    async def call_upstream():
-                        async with self._passthrough_call(request, **kwargs) as response:
-                            if not 200 <= response.status < 300:
-                                try:
-                                    error_detail = await response.json()
-                                except Exception:
-                                    error_detail = await response.text()
-                                logger.error(
-                                    f"Failed to generate response from func={self._func.__name__}: {response.status=} -> {error_detail}"
-                                )
-                                raise HTTPException(
-                                    status_code=response.status,
-                                    detail=error_detail,
-                                )
-                            if encrypt:
-                                raw = await response.read()
-                                return {"json": encrypt(raw)}
-                            return await response.json()
+                async def call_upstream():
+                    async with self._passthrough_call(request, **kwargs) as response:
+                        if not 200 <= response.status < 300:
+                            try:
+                                error_detail = await response.json()
+                            except Exception:
+                                error_detail = await response.text()
+                            logger.error(
+                                f"Failed to generate response from func={self._func.__name__}: {response.status=} -> {error_detail}"
+                            )
+                            raise HTTPException(
+                                status_code=response.status,
+                                detail=error_detail,
+                            )
+                        if encrypt:
+                            raw = await response.read()
+                            return {"json": encrypt(raw)}
+                        return await response.json()
 
-                    async def watch_disconnect():
-                        try:
-                            while True:
-                                message = await request._receive()
-                                if message.get("type") == "http.disconnect":
-                                    logger.info(
-                                        f"[{self._func.__name__}] Received http.disconnect, "
-                                        f"aborting upstream SGLang request (rid={rid})"
-                                    )
+                async def watch_disconnect():
+                    try:
+                        while True:
+                            message = await request._receive()
+                            if message.get("type") == "http.disconnect":
+                                logger.info(
+                                    f"[{self._func.__name__}] Received http.disconnect, "
+                                    f"aborting upstream request (rid={rid}, sglang={is_sglang})"
+                                )
+                                if is_sglang:
                                     try:
                                         await self._abort_sglang_request(rid)
                                     except Exception as exc:
                                         logger.warning(
                                             f"Error while sending abort_request for rid={rid}: {exc}"
                                         )
-                                    raise HTTPException(
-                                        status_code=499,
-                                        detail="Client disconnected during SGLang request",
-                                    )
-                        except HTTPException:
-                            raise
-                        except Exception as exc:
-                            logger.warning(f"watch_disconnect error: {exc}")
-                            raise HTTPException(
-                                status_code=499,
-                                detail="Client disconnected during SGLang request",
-                            )
-
-                    upstream_task = asyncio.create_task(call_upstream())
-                    watcher_task = asyncio.create_task(watch_disconnect())
-
-                    done, pending = await asyncio.wait(
-                        {upstream_task, watcher_task},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    for task in pending:
-                        task.cancel()
-
-                    if watcher_task in done:
-                        exc = watcher_task.exception()
-
-                        if exc:
-                            raise exc
+                                raise HTTPException(
+                                    status_code=499,
+                                    detail="Client disconnected during upstream request",
+                                )
+                    except HTTPException:
+                        raise
+                    except Exception as exc:
+                        logger.warning(f"watch_disconnect error: {exc}")
                         raise HTTPException(
                             status_code=499,
-                            detail="Client disconnected during SGLang request",
+                            detail="Client disconnected during upstream request",
                         )
-                    result = upstream_task.result()
-                    logger.success(
-                        f"Completed request [{self._func.__name__} passthrough={self._passthrough}] "
-                        f"in {time.time() - started_at} seconds"
-                    )
-                    return result
 
-                async with self._passthrough_call(request, **kwargs) as response:
-                    if not 200 <= response.status < 300:
-                        try:
-                            error_detail = await response.json()
-                        except Exception:
-                            error_detail = await response.text()
-                        logger.error(
-                            f"Failed to generate response from func={self._func.__name__}: {response.status=} -> {error_detail}"
-                        )
-                        raise HTTPException(
-                            status_code=response.status,
-                            detail=error_detail,
-                        )
-                    logger.success(
-                        f"Completed request [{self._func.__name__} passthrough={self._passthrough}] "
-                        f"in {time.time() - started_at} seconds"
+                upstream_task = asyncio.create_task(call_upstream())
+                watcher_task = asyncio.create_task(watch_disconnect())
+
+                done, pending = await asyncio.wait(
+                    {upstream_task, watcher_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+
+                if watcher_task in done:
+                    exc = watcher_task.exception()
+
+                    if exc:
+                        raise exc
+                    raise HTTPException(
+                        status_code=499,
+                        detail="Client disconnected during upstream request",
                     )
-                    if encrypt:
-                        return {"json": encrypt(await response.read())}
-                    return await response.json()
+                result = upstream_task.result()
+                logger.success(
+                    f"Completed request [{self._func.__name__} passthrough={self._passthrough}] "
+                    f"in {time.time() - started_at} seconds"
+                )
+                return result
 
             # Non-passthrough call (local Python function)
             response = await asyncio.wait_for(self._func(self._app, *args, **kwargs), 1800)
@@ -457,6 +437,11 @@ class Cord:
                     await self._abort_sglang_request(rid)
                 except Exception as exc:
                     logger.warning(f"Error while sending abort_request for rid={rid}: {exc}")
+            elif self._passthrough:
+                logger.info(
+                    f"Non-stream request for {self._func.__name__} cancelled "
+                    f"(likely client disconnect), closing upstream connection"
+                )
             status = 499
             raise
         except Exception as exc:
@@ -510,7 +495,9 @@ class Cord:
                             logger.info(
                                 f"Client disconnected for {self._func.__name__}, aborting upstream (rid={rid})"
                             )
-                            await self._abort_sglang_request(rid)
+                            if self._is_sglang_passthrough():
+                                await self._abort_sglang_request(rid)
+                            await response.release()
                             break
 
                         if encrypt:
@@ -541,6 +528,11 @@ class Cord:
                     await self._abort_sglang_request(rid)
                 except Exception as exc:
                     logger.warning(f"Error while sending abort_request for rid={rid}: {exc}")
+            elif self._passthrough:
+                logger.info(
+                    f"Streaming cancelled for {self._func.__name__} "
+                    f"(likely client disconnect), closing upstream connection"
+                )
             status = 499
             raise
 
