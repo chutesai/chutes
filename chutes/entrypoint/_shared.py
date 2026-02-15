@@ -179,6 +179,21 @@ def load_chute(
         logger.error(f"Unable to find chute '{chute_name}' in module '{module_name}'")
         sys.exit(1)
 
+    # Store a bytecode-derived hash on the chute for cache invalidation.
+    # We use the compiled code object (already in memory after loading)
+    # rather than reading the source file, which may be encrypted on disk.
+    _chute_obj = chute.chute if isinstance(chute, ChutePack) else chute
+    try:
+        import marshal
+
+        code_obj = spec.loader.get_code(module_name)
+        if code_obj is not None:
+            _chute_obj._source_hash = hashlib.sha256(marshal.dumps(code_obj)).hexdigest()[:16]
+        else:
+            _chute_obj._source_hash = None
+    except Exception:
+        _chute_obj._source_hash = None
+
     return module, chute
 
 

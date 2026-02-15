@@ -74,6 +74,8 @@ class Chute(FastAPI):
         self.allow_external_egress = allow_external_egress
         self.encrypted_fs = encrypted_fs
         self.passthrough_headers = passthrough_headers
+        self.passthrough_ssl_context = None
+        self._wrong_ssl_context = None
         self.docs_url = None
         self.redoc_url = None
         self.tee = tee

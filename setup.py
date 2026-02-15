@@ -34,6 +34,7 @@ setup(
             "cfsv",
             "cfsv_v2",
             "cfsv_v3",
+            "cfsv_v4",
         ],
         "chutes.envdump": ["*.so"],
     },

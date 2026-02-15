@@ -1,12 +1,21 @@
 """
 Run a chute, automatically handling encryption/decryption via GraVal.
 """
+# ruff: noqa: E402
+
+import sys
+
+# Disable .pyc reading before any further imports. cache_tag=None tells
+# importlib to skip __pycache__ entirely, preventing timed .pyc injection.
+# Netnanny also sets this, but we set it here as defense-in-depth in case
+# netnanny hasn't initialized yet.
+sys.implementation._cache_tag = None
+sys.dont_write_bytecode = True
 
 import os
 import re
 import asyncio
 import aiohttp
-import sys
 import ssl
 import site
 import ctypes
@@ -18,6 +27,8 @@ import typer
 import psutil
 import base64
 import socket
+import gzip
+import struct
 import secrets
 import threading
 import traceback
@@ -46,14 +57,71 @@ from chutes.entrypoint._shared import (
 )
 from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
-from chutes.util.context import is_local
+from chutes.util.context import is_local, is_remote
 from chutes.cfsv_wrapper import get_cfsv
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 
 
-RUNINT_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-runint.so")
+AEGIS_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-aegis.so")
+TCP_STATES = {
+    "01": "ESTABLISHED",
+    "02": "SYN_SENT",
+    "03": "SYN_RECV",
+    "04": "FIN_WAIT1",
+    "05": "FIN_WAIT2",
+    "06": "TIME_WAIT",
+    "07": "CLOSE",
+    "08": "CLOSE_WAIT",
+    "09": "LAST_ACK",
+    "0A": "LISTEN",
+    "0B": "CLOSING",
+    "0C": "NEW_SYN_RECV",
+}
+
+
+def _hex_to_ipv4(hex_ip: str) -> str:
+    return socket.inet_ntoa(struct.pack("<I", int(hex_ip, 16)))
+
+
+def _hex_to_ipv6(hex_ip: str) -> str:
+    # /proc/net/tcp6 stores 4 groups of 4 bytes, each in host (little-endian) order
+    groups = [hex_ip[i : i + 8] for i in range(0, 32, 8)]
+    packed = b"".join(struct.pack("<I", int(g, 16)) for g in groups)
+    return socket.inet_ntop(socket.AF_INET6, packed)
+
+
+def _parse_netconns() -> list[dict]:
+    connections: list[dict] = []
+    for path, parser in [
+        ("/proc/net/tcp", _hex_to_ipv4),
+        ("/proc/net/tcp6", _hex_to_ipv6),
+    ]:
+        try:
+            with open(path) as f:
+                for line in f.readlines()[1:]:
+                    fields = line.split()
+                    if len(fields) < 10:
+                        continue
+                    local_addr, local_port = fields[1].split(":")
+                    remote_addr, remote_port = fields[2].split(":")
+                    state_hex = fields[3]
+                    uid = fields[7]
+                    inode = fields[9]
+                    connections.append(
+                        {
+                            "local": f"{parser(local_addr)}:{int(local_port, 16)}",
+                            "remote": f"{parser(remote_addr)}:{int(remote_port, 16)}",
+                            "state": TCP_STATES.get(state_hex, state_hex),
+                            "uid": int(uid),
+                            "inode": int(inode),
+                            "family": "tcp6" if "tcp6" in path else "tcp",
+                        }
+                    )
+        except FileNotFoundError:
+            pass
+    return sorted(connections, key=lambda c: c["state"])
 
 
 class _ConnStats:
@@ -95,8 +163,8 @@ def get_netnanny_ref():
     netnanny = ctypes.CDLL(None, ctypes.RTLD_GLOBAL)
     netnanny.generate_challenge_response.argtypes = [ctypes.c_char_p]
     netnanny.generate_challenge_response.restype = ctypes.c_char_p
-    netnanny.verify.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint8]
-    netnanny.verify.restype = ctypes.c_int
+    netnanny.verify_challenge_response.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint8]
+    netnanny.verify_challenge_response.restype = ctypes.c_int
     netnanny.initialize_network_control.argtypes = []
     netnanny.initialize_network_control.restype = ctypes.c_int
     netnanny.unlock_network.argtypes = []
@@ -107,10 +175,33 @@ def get_netnanny_ref():
     netnanny.set_secure_fs.restype = ctypes.c_int
     netnanny.set_secure_env.argtypes = []
     netnanny.set_secure_env.restype = ctypes.c_int
+    try:
+        netnanny.encrypt_string.argtypes = [ctypes.c_char_p]
+        netnanny.encrypt_string.restype = ctypes.c_char_p
+        netnanny.decrypt_string.argtypes = [ctypes.c_char_p]
+        netnanny.decrypt_string.restype = ctypes.c_char_p
+    except AttributeError:
+        # Backward compatibility with older preload libs.
+        pass
+
+    # Integrity query exports (V2 manifest).
+    netnanny.integrity_query_status.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t]
+    netnanny.integrity_query_status.restype = ctypes.c_int
+    netnanny.integrity_query_packages.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t]
+    netnanny.integrity_query_packages.restype = ctypes.c_int
+    netnanny.integrity_query_verify.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    netnanny.integrity_query_verify.restype = ctypes.c_int
+    netnanny.integ_query_maps.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
+    netnanny.integ_query_maps.restype = ctypes.c_int
     return netnanny
 
 
-class _RunintHandle:
+class _AegisHandle:
     _instance = None
     _lock = threading.Lock()
 
@@ -125,10 +216,15 @@ class _RunintHandle:
     def _load_lib(self):
         if hasattr(self, "_lib") and self._lib is not None:
             return self._lib
-        lib_path = RUNINT_PATH
-        if not os.path.exists(lib_path):
-            return None
-        self._lib = ctypes.CDLL(lib_path)
+        # Try RTLD_DEFAULT first (aegis already loaded via LD_PRELOAD),
+        # fall back to explicit .so path
+        try:
+            self._lib = ctypes.CDLL(None)
+            self._lib._io_pool_init  # probe for symbol
+        except (OSError, AttributeError):
+            if not os.path.exists(AEGIS_PATH):
+                return None
+            self._lib = ctypes.CDLL(AEGIS_PATH)
         self._lib._io_pool_init.argtypes = [
             ctypes.c_char_p,
             ctypes.c_size_t,
@@ -184,12 +280,142 @@ class _RunintHandle:
             ctypes.c_size_t,
         ]
         self._lib._io_pool_get_pubkey.restype = ctypes.c_int
+        self._lib._io_pool_get_x25519_pubkey.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib._io_pool_get_x25519_pubkey.restype = ctypes.c_int
         self._lib._io_pool_set_session_key.argtypes = [
             ctypes.c_void_p,
             ctypes.c_char_p,
             ctypes.c_size_t,
         ]
         self._lib._io_pool_set_session_key.restype = ctypes.c_int
+        self._lib.aegis_dump.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib.aegis_dump.restype = ctypes.c_int
+
+        self._lib.aegis_sign_raw.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib.aegis_sign_raw.restype = ctypes.c_int
+
+        self._lib.aegis_gen_tls_cert.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib.aegis_gen_tls_cert.restype = ctypes.c_int
+
+        # mTLS cert generation: CA + server cert + client cert + passphrase
+        self._lib.aegis_gen_tls_mtls.argtypes = [
+            ctypes.c_void_p,  # handle
+            ctypes.c_char_p,  # cn
+            ctypes.c_size_t,  # cn_len
+            ctypes.c_char_p,  # nonce
+            ctypes.c_size_t,  # nonce_len
+            ctypes.c_char_p,  # server_cert_buf
+            ctypes.c_size_t,  # server_cert_sz
+            ctypes.c_char_p,  # server_key_buf (encrypted PEM)
+            ctypes.c_size_t,  # server_key_sz
+            ctypes.c_char_p,  # sig_buf
+            ctypes.c_size_t,  # sig_sz
+            ctypes.c_char_p,  # ca_cert_buf
+            ctypes.c_size_t,  # ca_cert_sz
+            ctypes.c_char_p,  # client_cert_buf
+            ctypes.c_size_t,  # client_cert_sz
+            ctypes.c_char_p,  # client_key_buf (encrypted PEM)
+            ctypes.c_size_t,  # client_key_sz
+            ctypes.c_char_p,  # key_password_buf
+            ctypes.c_size_t,  # key_password_sz
+        ]
+        self._lib.aegis_gen_tls_mtls.restype = ctypes.c_int
+
+        self._lib.aegis_e2e_init.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib.aegis_e2e_init.restype = ctypes.c_int
+
+        self._lib.aegis_e2e_new_ctx.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        self._lib.aegis_e2e_new_ctx.restype = ctypes.c_int
+
+        self._lib.aegis_e2e_free_ctx.argtypes = [ctypes.c_void_p]
+        self._lib.aegis_e2e_free_ctx.restype = None
+
+        self._lib.aegis_e2e_decrypt_request.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib.aegis_e2e_decrypt_request.restype = ctypes.c_int
+
+        self._lib.aegis_e2e_set_client_pk.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib.aegis_e2e_set_client_pk.restype = ctypes.c_int
+
+        self._lib.aegis_e2e_encrypt_response.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib.aegis_e2e_encrypt_response.restype = ctypes.c_int
+
+        self._lib.aegis_e2e_stream_begin.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib.aegis_e2e_stream_begin.restype = ctypes.c_int
+
+        self._lib.aegis_e2e_stream_chunk.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        self._lib.aegis_e2e_stream_chunk.restype = ctypes.c_int
+
+        self._lib.aegis_e2e_stream_end.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        self._lib.aegis_e2e_stream_end.restype = ctypes.c_int
+
+        self._lib.aegis_e2e_shutdown.argtypes = [ctypes.c_void_p]
+        self._lib.aegis_e2e_shutdown.restype = None
 
         return self._lib
 
@@ -214,7 +440,7 @@ class _RunintHandle:
             try:
                 lib = self._load_lib()
                 if lib is None:
-                    logger.warning("runint library not found")
+                    logger.warning("aegis library not found")
                     return None
                 # Commitment v3: 03 + ver(2) + pubkey(128) + nonce(32) + lib_fp(32) + sig(128) = 324 chars + null
                 commitment_buf = ctypes.create_string_buffer(325)
@@ -252,7 +478,7 @@ class _RunintHandle:
         return None
 
     def get_pubkey(self) -> str | None:
-        """Get our public key in hex format for ECDH."""
+        """Get our Ed25519 public key in hex format."""
         if not self._initialized or not self._handle:
             return None
         try:
@@ -261,7 +487,20 @@ class _RunintHandle:
             if ret == 0:
                 return pubkey_buf.value.decode()
         except Exception as e:
-            logger.warning(f"Failed to get runint pubkey: {e}")
+            logger.warning(f"Failed to get aegis pubkey: {e}")
+        return None
+
+    def get_x25519_pubkey(self) -> str | None:
+        """Get our X25519 public key in hex format for DH key exchange."""
+        if not self._initialized or not self._handle:
+            return None
+        try:
+            pubkey_buf = ctypes.create_string_buffer(65)
+            ret = self._lib._io_pool_get_x25519_pubkey(self._handle, pubkey_buf, 65)
+            if ret == 0:
+                return pubkey_buf.value.decode()
+        except Exception as e:
+            logger.warning(f"Failed to get aegis x25519 pubkey: {e}")
         return None
 
     def derive_session_key(self, validator_pubkey_hex: str) -> bool:
@@ -335,46 +574,290 @@ class _RunintHandle:
             logger.warning(f"Decryption failed: {e}")
         return None
 
+    def dump(self) -> tuple[str, str] | None:
+        """Call aegis_dump → (json_str, sig_hex)."""
+        if not self._initialized or not self._handle:
+            return None
+        try:
+            json_buf = ctypes.create_string_buffer(1024 * 1024)  # 1MB
+            sig_buf = ctypes.create_string_buffer(129)
+            ret = self._lib.aegis_dump(self._handle, json_buf, len(json_buf), sig_buf, len(sig_buf))
+            if ret > 0:
+                return json_buf.value.decode(), sig_buf.value.decode()
+            logger.warning(f"aegis_dump failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_dump failed: {e}")
+        return None
+
+    def gen_tls_cert(self, cn: str) -> tuple[str, str, str] | None:
+        """Generate self-signed Ed25519 TLS cert. Returns (cert_pem, key_pem, cert_sig_hex)."""
+        if not self._initialized or not self._handle:
+            logger.warning(
+                "[aegis-debug] gen_tls_cert precondition failed initialized={} handle_ptr={} pid={} thread={} cn={}",
+                self._initialized,
+                self._handle,
+                os.getpid(),
+                threading.get_ident(),
+                cn,
+            )
+            return None
+        try:
+            logger.info(
+                "[aegis-debug] gen_tls_cert call handle_ptr={} pid={} thread={} cn_len={}",
+                self._handle,
+                os.getpid(),
+                threading.get_ident(),
+                len(cn),
+            )
+            cert_buf = ctypes.create_string_buffer(4096)
+            key_buf = ctypes.create_string_buffer(512)
+            sig_buf = ctypes.create_string_buffer(129)
+            cn_bytes = cn.encode()
+            ret = self._lib.aegis_gen_tls_cert(
+                self._handle,
+                cn_bytes,
+                len(cn_bytes),
+                cert_buf,
+                len(cert_buf),
+                key_buf,
+                len(key_buf),
+                sig_buf,
+                len(sig_buf),
+            )
+            logger.info(
+                "[aegis-debug] gen_tls_cert return ret={} handle_ptr={} pid={} thread={}",
+                ret,
+                self._handle,
+                os.getpid(),
+                threading.get_ident(),
+            )
+            if ret == 0:
+                return cert_buf.value.decode(), key_buf.value.decode(), sig_buf.value.decode()
+            logger.warning(f"aegis_gen_tls_cert failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_gen_tls_cert failed: {e}")
+        return None
+
+    def gen_tls_mtls(self, cn: str, nonce: str) -> tuple[str, str, str, str, str, str, str] | None:
+        """Generate mTLS certs via aegis.
+
+        Returns (server_cert_pem, encrypted_server_key_pem, cert_sig_hex,
+                 ca_cert_pem, client_cert_pem, encrypted_client_key_pem, key_password).
+        """
+        if not self._initialized or not self._handle:
+            logger.warning("[aegis-debug] gen_tls_mtls precondition failed")
+            return None
+        try:
+            server_cert_buf = ctypes.create_string_buffer(4096)
+            server_key_buf = ctypes.create_string_buffer(4096)
+            sig_buf = ctypes.create_string_buffer(256)
+            ca_cert_buf = ctypes.create_string_buffer(4096)
+            client_cert_buf = ctypes.create_string_buffer(4096)
+            client_key_buf = ctypes.create_string_buffer(4096)
+            key_password_buf = ctypes.create_string_buffer(128)
+            cn_bytes = cn.encode()
+            nonce_bytes = nonce.encode()
+            ret = self._lib.aegis_gen_tls_mtls(
+                self._handle,
+                cn_bytes,
+                len(cn_bytes),
+                nonce_bytes,
+                len(nonce_bytes),
+                server_cert_buf,
+                len(server_cert_buf),
+                server_key_buf,
+                len(server_key_buf),
+                sig_buf,
+                len(sig_buf),
+                ca_cert_buf,
+                len(ca_cert_buf),
+                client_cert_buf,
+                len(client_cert_buf),
+                client_key_buf,
+                len(client_key_buf),
+                key_password_buf,
+                len(key_password_buf),
+            )
+            if ret == 0:
+                return (
+                    server_cert_buf.value.decode(),
+                    server_key_buf.value.decode(),
+                    sig_buf.value.decode(),
+                    ca_cert_buf.value.decode(),
+                    client_cert_buf.value.decode(),
+                    client_key_buf.value.decode(),
+                    key_password_buf.value.decode(),
+                )
+            logger.warning(f"aegis_gen_tls_mtls failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_gen_tls_mtls failed: {e}")
+        return None
+
+    def e2e_init(self) -> str | None:
+        """Initialize ML-KEM-768 keypair. Returns base64 public key."""
+        if not self._initialized or not self._handle:
+            return None
+        try:
+            pk_buf = ctypes.create_string_buffer(2048)
+            ret = self._lib.aegis_e2e_init(self._handle, pk_buf, len(pk_buf))
+            if ret == 0:
+                return pk_buf.value.decode()
+            logger.warning(f"aegis_e2e_init failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_e2e_init failed: {e}")
+        return None
+
+    def e2e_new_ctx(self) -> ctypes.c_void_p | None:
+        """Allocate per-request E2E context."""
+        if not self._initialized or not self._handle:
+            return None
+        try:
+            ctx_ptr = ctypes.c_void_p()
+            ret = self._lib.aegis_e2e_new_ctx(self._handle, ctypes.byref(ctx_ptr))
+            if ret == 0:
+                return ctx_ptr
+            logger.warning(f"aegis_e2e_new_ctx failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_e2e_new_ctx failed: {e}")
+        return None
+
+    def e2e_free_ctx(self, ctx) -> None:
+        """Free per-request E2E context."""
+        if ctx:
+            self._lib.aegis_e2e_free_ctx(ctx)
+
+    def e2e_decrypt_request(self, ctx, raw_bytes: bytes) -> bytes | None:
+        """Decrypt E2E request. Returns plaintext payload."""
+        if not self._initialized or not self._handle or not ctx:
+            return None
+        try:
+            output_len = len(raw_bytes)
+            output_buf = ctypes.create_string_buffer(output_len)
+            ret = self._lib.aegis_e2e_decrypt_request(
+                self._handle, ctx, raw_bytes, len(raw_bytes), output_buf, output_len
+            )
+            if ret > 0:
+                return output_buf.raw[:ret]
+            logger.warning(f"aegis_e2e_decrypt_request failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_e2e_decrypt_request failed: {e}")
+        return None
+
+    def e2e_set_client_pk(self, ctx, pk_bytes: bytes) -> bool:
+        """Set the client's ML-KEM public key for response encryption."""
+        if not ctx:
+            return False
+        try:
+            ret = self._lib.aegis_e2e_set_client_pk(ctx, pk_bytes, len(pk_bytes))
+            return ret == 0
+        except Exception as e:
+            logger.warning(f"aegis_e2e_set_client_pk failed: {e}")
+            return False
+
+    def e2e_encrypt_response(self, ctx, plaintext: bytes) -> bytes | None:
+        """Encrypt E2E response. Returns blob."""
+        if not self._initialized or not self._handle or not ctx:
+            return None
+        try:
+            output_len = 1088 + 12 + len(plaintext) + 16  # mlkem_ct + nonce + ct + tag
+            output_buf = ctypes.create_string_buffer(output_len)
+            ret = self._lib.aegis_e2e_encrypt_response(
+                self._handle, ctx, plaintext, len(plaintext), output_buf, output_len
+            )
+            if ret > 0:
+                return output_buf.raw[:ret]
+            logger.warning(f"aegis_e2e_encrypt_response failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_e2e_encrypt_response failed: {e}")
+        return None
+
+    def e2e_stream_begin(self, ctx) -> bytes | None:
+        """Begin E2E stream. Returns 1088-byte ML-KEM ciphertext."""
+        if not self._initialized or not self._handle or not ctx:
+            return None
+        try:
+            ct_buf = ctypes.create_string_buffer(1088)
+            ret = self._lib.aegis_e2e_stream_begin(self._handle, ctx, ct_buf, 1088)
+            if ret > 0:
+                return ct_buf.raw[:ret]
+            logger.warning(f"aegis_e2e_stream_begin failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_e2e_stream_begin failed: {e}")
+        return None
+
+    def e2e_stream_chunk(self, ctx, chunk_bytes: bytes) -> bytes | None:
+        """Encrypt a stream chunk. Returns nonce(12) || ciphertext || tag(16)."""
+        if not self._initialized or not self._handle or not ctx:
+            return None
+        try:
+            output_len = 12 + len(chunk_bytes) + 16
+            output_buf = ctypes.create_string_buffer(output_len)
+            ret = self._lib.aegis_e2e_stream_chunk(
+                self._handle, ctx, chunk_bytes, len(chunk_bytes), output_buf, output_len
+            )
+            if ret > 0:
+                return output_buf.raw[:ret]
+            logger.warning(f"aegis_e2e_stream_chunk failed with code {ret}")
+        except Exception as e:
+            logger.warning(f"aegis_e2e_stream_chunk failed: {e}")
+        return None
+
+    def e2e_stream_end(self, ctx) -> None:
+        """End E2E stream, wipe keys."""
+        if not self._initialized or not self._handle or not ctx:
+            return
+        self._lib.aegis_e2e_stream_end(self._handle, ctx)
+
+    def e2e_shutdown(self) -> None:
+        """Shutdown E2E + worker pool."""
+        if not self._initialized or not self._handle:
+            return
+        self._lib.aegis_e2e_shutdown(self._handle)
+
 
 @lru_cache(maxsize=1)
-def get_runint_handle():
-    return _RunintHandle()
+def get_aegis_handle():
+    return _AegisHandle()
 
 
-def init_runint(validator_nonce: str = None):
-    return get_runint_handle().init(validator_nonce)
+def init_aegis(validator_nonce: str = None):
+    return get_aegis_handle().init(validator_nonce)
 
 
-def runint_get_nonce() -> str | None:
-    return get_runint_handle().get_nonce()
+def aegis_get_nonce() -> str | None:
+    return get_aegis_handle().get_nonce()
 
 
-def runint_prove(challenge: str) -> tuple[str, int] | None:
-    return get_runint_handle().prove(challenge)
+def aegis_prove(challenge: str) -> tuple[str, int] | None:
+    return get_aegis_handle().prove(challenge)
 
 
-def runint_get_pubkey() -> str | None:
-    return get_runint_handle().get_pubkey()
+def aegis_get_pubkey() -> str | None:
+    return get_aegis_handle().get_pubkey()
 
 
-def runint_derive_session_key(validator_pubkey_hex: str) -> bool:
-    return get_runint_handle().derive_session_key(validator_pubkey_hex)
+def aegis_get_x25519_pubkey() -> str | None:
+    return get_aegis_handle().get_x25519_pubkey()
 
 
-def runint_set_session_key(key: bytes) -> bool:
-    return get_runint_handle().set_session_key(key)
+def aegis_derive_session_key(validator_pubkey_hex: str) -> bool:
+    return get_aegis_handle().derive_session_key(validator_pubkey_hex)
 
 
-def runint_session_ready() -> bool:
-    return get_runint_handle().session_ready()
+def aegis_set_session_key(key: bytes) -> bool:
+    return get_aegis_handle().set_session_key(key)
 
 
-def runint_encrypt(plaintext: bytes) -> bytes | None:
-    return get_runint_handle().encrypt(plaintext)
+def aegis_session_ready() -> bool:
+    return get_aegis_handle().session_ready()
 
 
-def runint_decrypt(ciphertext: bytes) -> bytes | None:
-    return get_runint_handle().decrypt(ciphertext)
+def aegis_encrypt(plaintext: bytes) -> bytes | None:
+    return get_aegis_handle().encrypt(plaintext)
+
+
+def aegis_decrypt(ciphertext: bytes) -> bytes | None:
+    return get_aegis_handle().decrypt(ciphertext)
 
 
 def get_all_process_info():
@@ -473,6 +956,70 @@ def process_netnanny_challenge(chute, request: Request):
         "hash": netnanny.generate_challenge_response(challenge.encode()),
         "allow_external_egress": chute.allow_external_egress,
     }
+
+
+def process_integrity_status(request: Request):
+    """
+    Query per-slot SHM integrity status (PID, cycle count, violations, manifest digest).
+    """
+    challenge = request.state.decrypted.get("challenge", "")
+    netnanny = get_netnanny_ref()
+    buf = ctypes.create_string_buffer(8192)
+    netnanny.integrity_query_status(challenge.encode(), buf, 8192)
+    try:
+        return json.loads(buf.value)
+    except Exception:
+        return {"error": "integrity_query_status returned invalid JSON"}
+
+
+def process_integrity_packages(request: Request):
+    """
+    Per-package verification: compile every .py in manifest, hash, compare.
+    """
+    challenge = request.state.decrypted.get("challenge", "")
+    netnanny = get_netnanny_ref()
+    buf = ctypes.create_string_buffer(65536)
+    netnanny.integrity_query_packages(challenge.encode(), buf, 65536)
+    try:
+        return json.loads(buf.value)
+    except Exception:
+        return {"error": "integrity_query_packages returned invalid JSON"}
+
+
+def process_integrity_verify(request: Request):
+    """
+    Per-module deep verify: disk hash, memory hash, per-function hashes, manifest comparison.
+    """
+    challenge = request.state.decrypted.get("challenge", "")
+    modules = request.state.decrypted.get("modules", "")
+    netnanny = get_netnanny_ref()
+    buf = ctypes.create_string_buffer(131072)
+    netnanny.integrity_query_verify(
+        challenge.encode(),
+        modules.encode() if isinstance(modules, str) else modules,
+        buf,
+        131072,
+    )
+    try:
+        return json.loads(buf.value)
+    except Exception:
+        return {"error": "integrity_query_verify returned invalid JSON"}
+
+
+def process_maps_query(request: Request):
+    """
+    Query /proc/self/maps and LD_PRELOAD for remote validator introspection.
+    Returns LD_PRELOAD value + deduplicated list of loaded .so paths.
+    """
+    netnanny = get_netnanny_ref()
+    buf = ctypes.create_string_buffer(65536)
+    ret = netnanny.integ_query_maps(buf, 65536)
+    if ret < 0:
+        return {"error": "integ_query_maps failed"}
+    return Response(
+        content=buf.value.decode("utf-8", errors="replace"),
+        media_type="text/plain",
+    )
 
 
 async def handle_slurp(request: Request, chute_module):
@@ -664,18 +1211,60 @@ class GraValMiddleware(BaseHTTPMiddleware):
         if request.method in ("POST", "PUT", "PATCH"):
             try:
                 ciphertext = base64.b64decode(body_bytes)
-                decrypted_bytes = runint_decrypt(ciphertext)
+                decrypted_bytes = aegis_decrypt(ciphertext)
                 if not decrypted_bytes:
                     return ORJSONResponse(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         content={"detail": "Decryption failed"},
                     )
-                try:
-                    request.state.decrypted = json.loads(decrypted_bytes)
-                except Exception:
-                    request.state.decrypted = json.loads(
-                        decrypted_bytes.rstrip(bytes(range(1, 17)))
-                    )
+
+                # Check for E2E encryption
+                is_e2e = request.headers.get("X-E2E-Encrypted") == "true"
+                request.state.e2e = False
+                if is_e2e:
+                    try:
+                        # decrypted_bytes IS the raw E2E blob directly (no JSON/base64 wrapping)
+                        e2e_raw = decrypted_bytes
+                        handle = get_aegis_handle()
+                        e2e_ctx = handle.e2e_new_ctx()
+                        if e2e_ctx is None:
+                            return ORJSONResponse(
+                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                content={"detail": "E2E context allocation failed"},
+                            )
+                        request.state.e2e_ctx = e2e_ctx
+                        e2e_plaintext = handle.e2e_decrypt_request(e2e_ctx, e2e_raw)
+                        if not e2e_plaintext:
+                            handle.e2e_free_ctx(e2e_ctx)
+                            return ORJSONResponse(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                content={"detail": "E2E decryption failed"},
+                            )
+                        # E2E payloads are always gzip-compressed
+                        e2e_plaintext = gzip.decompress(e2e_plaintext)
+                        # Parse the plaintext JSON
+                        e2e_body = json.loads(e2e_plaintext)
+                        # Extract client's response public key if present
+                        e2e_response_pk_b64 = e2e_body.pop("e2e_response_pk", None)
+                        if e2e_response_pk_b64:
+                            pk_bytes = base64.b64decode(e2e_response_pk_b64)
+                            handle.e2e_set_client_pk(e2e_ctx, pk_bytes)
+                        request.state.decrypted = e2e_body
+                        request.state.e2e = True
+                    except Exception as exc:
+                        return ORJSONResponse(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            content={"detail": f"E2E decryption failed: {exc}"},
+                        )
+                else:
+                    try:
+                        # Non-E2E path: always gzip decompress
+                        decrypted_bytes = gzip.decompress(decrypted_bytes)
+                        request.state.decrypted = json.loads(decrypted_bytes)
+                    except Exception:
+                        request.state.decrypted = json.loads(
+                            decrypted_bytes.rstrip(bytes(range(1, 17)))
+                        )
             except Exception as exc:
                 return ORJSONResponse(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -685,7 +1274,18 @@ class GraValMiddleware(BaseHTTPMiddleware):
             def _encrypt(plaintext: bytes):
                 if isinstance(plaintext, str):
                     plaintext = plaintext.encode()
-                encrypted = runint_encrypt(plaintext)
+                # E2E: gzip + encrypt response with ML-KEM before transport encryption
+                if getattr(request.state, "e2e", False):
+                    handle = get_aegis_handle()
+                    compressed = gzip.compress(plaintext)
+                    e2e_blob = handle.e2e_encrypt_response(request.state.e2e_ctx, compressed)
+                    if e2e_blob:
+                        plaintext = e2e_blob
+                    handle.e2e_free_ctx(request.state.e2e_ctx)
+                    request.state.e2e_ctx = None
+                else:
+                    plaintext = gzip.compress(plaintext)
+                encrypted = aegis_encrypt(plaintext)
                 if not encrypted:
                     raise RuntimeError("Encryption failed")
                 return base64.b64encode(encrypted).decode()
@@ -739,7 +1339,7 @@ class GraValMiddleware(BaseHTTPMiddleware):
         # All other paths must be encrypted.
         try:
             ciphertext = bytes.fromhex(path[1:])
-            decrypted = runint_decrypt(ciphertext)
+            decrypted = aegis_decrypt(ciphertext)
             if not decrypted:
                 return ORJSONResponse(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -803,19 +1403,69 @@ class GraValMiddleware(BaseHTTPMiddleware):
 
             if hasattr(response, "body_iterator"):
                 original_iterator = response.body_iterator
+                is_e2e_stream = getattr(request.state, "e2e", False)
 
-                async def wrapped_iterator():
-                    try:
-                        async for chunk in original_iterator:
-                            yield chunk
-                    except Exception as exc:
-                        logger.warning(f"Unhandled exception in body iterator: {exc}")
-                        _conn_stats.requests_in_flight.pop(request.request_id, None)
-                        raise
-                    finally:
-                        _conn_stats.requests_in_flight.pop(request.request_id, None)
+                if is_e2e_stream:
+                    handle = get_aegis_handle()
+                    e2e_ctx = getattr(request.state, "e2e_ctx", None)
+                    # Determine if this is a vLLM/sglang chute for usage extraction
+                    is_vllm = (
+                        getattr(locals().get("chute_obj"), "standard_template", None) == "vllm"
+                    )
 
-                response.body_iterator = wrapped_iterator()
+                    async def e2e_wrapped_iterator():
+                        try:
+                            # Send ML-KEM ciphertext as first SSE event
+                            mlkem_ct = handle.e2e_stream_begin(e2e_ctx)
+                            if mlkem_ct:
+                                yield f"data: {json.dumps({'e2e_init': base64.b64encode(mlkem_ct).decode()}).decode()}\n\n"
+
+                            async for chunk in original_iterator:
+                                if not chunk:
+                                    continue
+                                chunk_bytes = chunk if isinstance(chunk, bytes) else chunk.encode()
+
+                                # Extract usage data from SSE chunks for billing (vLLM/sglang only)
+                                if is_vllm and b'"usage"' in chunk_bytes:
+                                    try:
+                                        line = chunk_bytes.decode()
+                                        if line.startswith("data: "):
+                                            obj = json.loads(line[6:].encode())
+                                            if "usage" in obj:
+                                                yield f"data: {json.dumps({'usage': obj['usage']}).decode()}\n\n"
+                                    except Exception:
+                                        pass
+
+                                # E2E encrypt the chunk
+                                enc_chunk = handle.e2e_stream_chunk(e2e_ctx, chunk_bytes)
+                                if enc_chunk:
+                                    yield f"data: {json.dumps({'e2e': base64.b64encode(enc_chunk).decode()}).decode()}\n\n"
+
+                        except Exception as exc:
+                            logger.warning(f"Unhandled exception in E2E body iterator: {exc}")
+                            _conn_stats.requests_in_flight.pop(request.request_id, None)
+                            raise
+                        finally:
+                            handle.e2e_stream_end(e2e_ctx)
+                            handle.e2e_free_ctx(e2e_ctx)
+                            request.state.e2e_ctx = None
+                            _conn_stats.requests_in_flight.pop(request.request_id, None)
+
+                    response.body_iterator = e2e_wrapped_iterator()
+                else:
+
+                    async def wrapped_iterator():
+                        try:
+                            async for chunk in original_iterator:
+                                yield chunk
+                        except Exception as exc:
+                            logger.warning(f"Unhandled exception in body iterator: {exc}")
+                            _conn_stats.requests_in_flight.pop(request.request_id, None)
+                            raise
+                        finally:
+                            _conn_stats.requests_in_flight.pop(request.request_id, None)
+
+                    response.body_iterator = wrapped_iterator()
                 return response
             return response
         finally:
@@ -920,6 +1570,12 @@ async def _gather_devices_and_initialize(
     port_mappings: list[dict[str, Any]],
     chute_abspath: str,
     inspecto_hash: str,
+    cert_pem: str | None = None,
+    cert_sig: str | None = None,
+    e2e_pubkey: str | None = None,
+    tls_client_cert: str | None = None,
+    tls_client_key: str | None = None,
+    tls_client_key_password: str | None = None,
 ) -> tuple[bool, str, dict[str, Any]]:
     """
     Gather the GPU info assigned to this pod, submit with our one-time token to get GraVal seed.
@@ -952,13 +1608,40 @@ async def _gather_devices_and_initialize(
     body["fsv"] = await generate_filesystem_hash(token_data["sub"], chute_abspath, mode="full")
 
     # Runtime integrity (already initialized at this point).
-    handle = get_runint_handle()
+    handle = get_aegis_handle()
     body["rint_commitment"] = handle._commitment
     body["rint_nonce"] = handle.get_nonce()
-    # Include our pubkey for ECDH session key derivation
-    rint_pubkey = runint_get_pubkey()
+    # Include our X25519 pubkey for DH session key derivation
+    # (Ed25519 pubkey is already embedded in the commitment)
+    rint_pubkey = aegis_get_x25519_pubkey()
     if rint_pubkey:
         body["rint_pubkey"] = rint_pubkey
+
+    # CLLMV V2 session init blob (for validator to decrypt session HMAC key)
+    try:
+        import cllmv as _cllmv
+
+        _cllmv_init = _cllmv.get_session_init()
+        if _cllmv_init:
+            body["cllmv_session_init"] = _cllmv_init
+            logger.info(f"CLLMV V2 session init blob attached ({len(_cllmv_init)} hex chars)")
+    except Exception as exc:
+        logger.warning(f"CLLMV session init unavailable: {exc}")
+
+    # TLS certificate (for validator to trust)
+    if cert_pem:
+        body["tls_cert"] = cert_pem
+        body["tls_cert_sig"] = cert_sig
+
+    # mTLS client cert + key (for API to connect back to us)
+    if tls_client_cert:
+        body["tls_client_cert"] = tls_client_cert
+        body["tls_client_key"] = tls_client_key
+        body["tls_client_key_password"] = tls_client_key_password
+
+    # E2E public key (for clients to encrypt requests to us)
+    if e2e_pubkey:
+        body["e2e_pubkey"] = e2e_pubkey
 
     # Disk space.
     disk_gb = token_data.get("disk_gb", 10)
@@ -984,14 +1667,14 @@ async def _gather_devices_and_initialize(
     verifier = GpuVerifier.create(url, body)
     symmetric_key, response = await verifier.verify_devices()
 
-    # Derive runint session key from validator's pubkey via ECDH if provided
+    # Derive aegis session key from validator's pubkey via ECDH if provided
     # Key derivation happens entirely in C - key never touches Python memory
     validator_pubkey = response.get("validator_pubkey")
     if validator_pubkey:
-        if runint_derive_session_key(validator_pubkey):
-            logger.success("Derived runint session key via ECDH (key never in Python)")
+        if aegis_derive_session_key(validator_pubkey):
+            logger.success("Derived aegis session key via ECDH (key never in Python)")
         else:
-            logger.warning("Failed to derive runint session key - using legacy encryption")
+            logger.warning("Failed to derive aegis session key - using legacy encryption")
 
     return egress, symmetric_key, response
 
@@ -1006,21 +1689,25 @@ def run_chute(
     host: str | None = typer.Option("0.0.0.0", help="host to bind to"),
     port: int | None = typer.Option(8000, help="port to listen on"),
     logging_port: int | None = typer.Option(8001, help="logging port"),
-    keyfile: str | None = typer.Option(None, help="path to TLS key file"),
-    certfile: str | None = typer.Option(None, help="path to TLS certificate file"),
     debug: bool = typer.Option(False, help="enable debug logging"),
     dev: bool = typer.Option(False, help="dev/local mode"),
     dev_job_data_path: str = typer.Option(None, help="dev mode: job payload JSON path"),
     dev_job_method: str = typer.Option(None, help="dev mode: job method"),
     generate_inspecto_hash: bool = typer.Option(False, help="only generate inspecto hash and exit"),
 ):
+    ssl_certfile = None
+    ssl_keyfile = None
+    ssl_keyfile_password = None
+    ssl_ca_certs = None
+
     async def _run_chute():
         """
         Run the chute (or job).
         """
+        nonlocal ssl_certfile, ssl_keyfile, ssl_keyfile_password, ssl_ca_certs
         if not (dev or generate_inspecto_hash):
             preload = os.getenv("LD_PRELOAD")
-            if preload != "/usr/local/lib/chutes-netnanny.so:/usr/local/lib/chutes-logintercept.so":
+            if preload != "/usr/local/lib/chutes-aegis.so":
                 logger.error(f"LD_PRELOAD not set to expected values: {os.getenv('LD_PRELOAD')}")
                 sys.exit(137)
             if set(k.lower() for k in os.environ) & {"http_proxy", "https_proxy"}:
@@ -1038,10 +1725,13 @@ def run_chute(
         if dev:
             try:
                 netnanny = get_netnanny_ref()
-                netnanny.initialize_network_control()
-                netnanny.unlock_network()
-            except AttributeError:
-                ...
+                rc = netnanny.initialize_network_control()
+                logger.info(f"[dev] initialize_network_control() returned {rc}")
+                rc = netnanny.unlock_network()
+                logger.info(f"[dev] unlock_network() returned {rc}")
+                logger.info(f"[dev] is_network_locked() = {netnanny.is_network_locked()}")
+            except Exception as e:
+                logger.error(f"[dev] netnanny unlock failed: {type(e).__name__}: {e}")
 
         if not (dev or generate_inspecto_hash):
             challenge = secrets.token_hex(16).encode("utf-8")
@@ -1053,7 +1743,7 @@ def run_chute(
                 if not response:
                     logger.error("NetNanny validation failed: no response")
                     sys.exit(137)
-                if netnanny.verify(challenge, response, 0) != 1:
+                if netnanny.verify_challenge_response(challenge, response, 0) != 1:
                     logger.error("NetNanny validation failed: invalid response")
                     sys.exit(137)
                 if netnanny.initialize_network_control() != 0:
@@ -1094,7 +1784,7 @@ def run_chute(
                     logger.error("Failed to unlock network")
                     sys.exit(137)
                 response = netnanny.generate_challenge_response(challenge)
-                if netnanny.verify(challenge, response, 1) != 1:
+                if netnanny.verify_challenge_response(challenge, response, 1) != 1:
                     logger.error("NetNanny validation failed: invalid response")
                     sys.exit(137)
                 logger.debug("NetNanny initialized and network unlocked")
@@ -1131,9 +1821,9 @@ def run_chute(
 
         # Runtime integrity must be initialized first to get the nonce.
         inspecto_hash = None
-        runint_nonce = None
+        aegis_nonce = None
         if not (dev or generate_inspecto_hash):
-            # Fetch validator-provided nonce before initializing runint.
+            # Fetch validator-provided nonce before initializing aegis.
             # This nonce is embedded in the commitment (signed by the keypair),
             # proving the keypair was created for this specific session.
             # Attacker cannot pre-compute keypairs because they don't know the nonce.
@@ -1156,13 +1846,13 @@ def run_chute(
                 logger.error("No URL in token for validator nonce")
                 sys.exit(137)
 
-            runint_commitment = init_runint(validator_nonce)
-            if not runint_commitment:
+            aegis_commitment = init_aegis(validator_nonce)
+            if not aegis_commitment:
                 logger.error("Runtime integrity initialization failed")
                 sys.exit(137)
 
-            runint_nonce = runint_get_nonce()
-            if not runint_nonce:
+            aegis_nonce = aegis_get_nonce()
+            if not aegis_nonce:
                 logger.error("Runtime integrity nonce retrieval failed")
                 sys.exit(137)
 
@@ -1170,12 +1860,20 @@ def run_chute(
             # This prevents replay attacks because the nonce is fresh per init
             from chutes.inspecto import generate_hash
 
-            inspecto_seed = runint_nonce + token_data["sub"]
+            inspecto_seed = aegis_nonce + token_data["sub"]
             inspecto_hash = await generate_hash(hash_type="base", challenge=inspecto_seed)
             if not inspecto_hash:
                 logger.error("Inspecto hash generation failed")
                 sys.exit(137)
-            logger.info(f"Runtime integrity initialized: commitment={runint_commitment[:16]}...")
+            logger.info(f"Runtime integrity initialized: commitment={aegis_commitment[:16]}...")
+
+            # Initialize post-quantum E2E encryption (ML-KEM-768)
+            _aegis_handle = get_aegis_handle()
+            e2e_pubkey = _aegis_handle.e2e_init()
+            if e2e_pubkey:
+                logger.info("ML-KEM-768 E2E encryption initialized")
+            else:
+                logger.warning("E2E encryption initialization failed")
 
         elif generate_inspecto_hash:
             from chutes.inspecto import generate_hash
@@ -1184,11 +1882,152 @@ def run_chute(
             print(inspecto_hash)
             return
 
+        if not generate_inspecto_hash:
+            # Ensure aegis handle is initialized before TLS/E2E APIs are used.
+            # In dev mode we don't have validator bootstrap, so initialize with
+            # an ephemeral nonce to create the runtime handle.
+            validator_nonce = None
+            bootstrap_nonce = secrets.token_hex(16) if dev else None
+            logger.info(
+                "[aegis-debug] init start dev={} pid={} thread={} nonce_len={}",
+                dev,
+                os.getpid(),
+                threading.get_ident(),
+                len(bootstrap_nonce or ""),
+            )
+            init_ok = init_aegis(bootstrap_nonce)
+            logger.info(
+                "[aegis-debug] init done ok={} commitment_prefix={}",
+                bool(init_ok),
+                init_ok[:24] if init_ok else None,
+            )
+            if not init_ok:
+                logger.error("Aegis runtime initialization failed")
+                sys.exit(137)
+
+            # TLS is always generated by aegis; CLI cert/key overrides are not allowed.
+            _aegis_handle = get_aegis_handle()
+            cn_source = None
+            if isinstance(token_data, dict):
+                cn_source = token_data.get("sub")
+            if not cn_source:
+                cn_source = miner_ss58 or "dev"
+            cn = f"{cn_source}.int.chutes.dev"
+            logger.info(
+                "[aegis-debug] cert start cn={} pid={} thread={} handle_initialized={} handle_ptr={}",
+                cn,
+                os.getpid(),
+                threading.get_ident(),
+                getattr(_aegis_handle, "_initialized", None),
+                getattr(_aegis_handle, "_handle", None),
+            )
+            # Try mTLS first (nonce-bound), fall back to plain TLS cert.
+            mtls_nonce = validator_nonce if validator_nonce else None
+            tls_result = None
+            client_cert_pem = None
+            client_key_pem = None
+            key_password = None
+            ca_cert_pem = None
+
+            if mtls_nonce:
+                tls_result = _aegis_handle.gen_tls_mtls(cn, mtls_nonce)
+            if tls_result:
+                (
+                    cert_pem,
+                    key_pem,
+                    cert_sig,
+                    ca_cert_pem,
+                    client_cert_pem,
+                    client_key_pem,
+                    key_password,
+                ) = tls_result
+                logger.info(
+                    "[aegis-debug] mtls material cert_len={} key_len={} sig_prefix={} ca_len={} client_cert_len={}",
+                    len(cert_pem),
+                    len(key_pem),
+                    cert_sig[:16] if cert_sig else None,
+                    len(ca_cert_pem),
+                    len(client_cert_pem),
+                )
+            else:
+                # Fallback to plain TLS cert generation.
+                tls_result = _aegis_handle.gen_tls_cert(cn)
+                logger.info("[aegis-debug] cert done ok={}", bool(tls_result))
+                if not tls_result:
+                    logger.error(
+                        "Aegis TLS certificate generation failed handle_initialized={} handle_ptr={}",
+                        getattr(_aegis_handle, "_initialized", None),
+                        getattr(_aegis_handle, "_handle", None),
+                    )
+                    sys.exit(137)
+                cert_pem, key_pem, cert_sig = tls_result
+                logger.info(
+                    "[aegis-debug] cert material cert_len={} key_len={} sig_prefix={}",
+                    len(cert_pem),
+                    len(key_pem),
+                    cert_sig[:16] if cert_sig else None,
+                )
+
+            # Write cert files to /dev/shm/ (key is passphrase-encrypted if mTLS).
+            tls_cert_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_cert.pem"
+            tls_key_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_key.pem"
+            with open(tls_cert_path, "w") as f:
+                f.write(cert_pem)
+            os.chmod(tls_cert_path, 0o600)
+            with open(tls_key_path, "w") as f:
+                f.write(key_pem)
+            os.chmod(tls_key_path, 0o600)
+            ssl_certfile = tls_cert_path
+            ssl_keyfile = tls_key_path
+
+            # mTLS: write CA cert and set password/ca_certs for uvicorn.
+            if ca_cert_pem:
+                ca_cert_path = f"/dev/shm/aegis_{secrets.token_hex(8)}_ca.pem"
+                with open(ca_cert_path, "w") as f:
+                    f.write(ca_cert_pem)
+                os.chmod(ca_cert_path, 0o600)
+                ssl_ca_certs = ca_cert_path
+
+            if key_password:
+                ssl_keyfile_password = key_password
+
+            logger.info(f"In-memory TLS certificate generated: CN={cn} mtls={bool(ca_cert_pem)}")
+
+        # Start logging server with TLS (cert is now available).
+        from chutes.entrypoint.logger import launch_server as _launch_logging
+
+        def _run_logging_server():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                _launch_logging(
+                    host=host or "0.0.0.0",
+                    port=logging_port,
+                    dev=dev,
+                    certfile=ssl_certfile,
+                    keyfile=ssl_keyfile,
+                    keyfile_password=ssl_keyfile_password,
+                    ca_certs=ssl_ca_certs,
+                )
+            )
+
+        logging_thread = threading.Thread(target=_run_logging_server, daemon=True)
+        logging_thread.start()
+
         if dev:
+            logger.info("[aegis-debug] setting CHUTES_DEV_MODE=true")
             os.environ["CHUTES_DEV_MODE"] = "true"
+            logger.info("[aegis-debug] set CHUTES_DEV_MODE complete")
+        logger.info(
+            "[aegis-debug] context CHUTES_EXECUTION_CONTEXT={} is_remote={} is_local={}",
+            os.getenv("CHUTES_EXECUTION_CONTEXT"),
+            is_remote(),
+            is_local(),
+        )
         if is_local():
             logger.error("Cannot run chutes in local context!")
             sys.exit(1)
+        logger.info("[aegis-debug] post-context guard ok")
 
         # Load token and port mappings from the environment.
         port_mappings = [
@@ -1248,6 +2087,12 @@ def run_chute(
                 port_mappings,
                 chute_abspath,
                 inspecto_hash,
+                cert_pem=locals().get("cert_pem"),
+                cert_sig=locals().get("cert_sig"),
+                e2e_pubkey=locals().get("e2e_pubkey"),
+                tls_client_cert=locals().get("client_cert_pem"),
+                tls_client_key=locals().get("client_key_pem"),
+                tls_client_key_password=locals().get("key_password"),
             )
             job_id = response.get("job_id")
             job_method = response.get("job_method")
@@ -1278,7 +2123,9 @@ def run_chute(
 
         # Now we have the chute code available, either because it's dev and the file is plain text here,
         # or it's prod and we've fetched the code from the validator and stored it securely.
+        logger.info("[aegis-debug] loading chute ref={}", chute_ref_str)
         chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
+        logger.info("[aegis-debug] load_chute complete module={}", chute_module.__name__)
         chute = chute.chute if isinstance(chute, ChutePack) else chute
         if job_method:
             job_obj = next(j for j in chute._jobs if j.name == job_method)
@@ -1293,7 +2140,9 @@ def run_chute(
             logger.info(f"Creating task, dev mode, for {job_method=}")
 
         # Run the chute's initialization code.
+        logger.info("[aegis-debug] chute.initialize start")
         await chute.initialize()
+        logger.info("[aegis-debug] chute.initialize complete")
 
         # Encryption/rate-limiting middleware setup.
         if dev:
@@ -1384,11 +2233,19 @@ def run_chute(
         async def _handle_conn_stats(request: Request):
             return _conn_stats.get_stats()
 
+        def _handle_netconns(request: Request):
+            """Return parsed TCP/TCP6 connections from /proc/net/tcp{,6}."""
+            return Response(
+                content=json.dumps(_parse_netconns()).decode(),
+                media_type="application/json",
+            )
+
         # Validation endpoints.
         chute.add_api_route("/_ping", pong, methods=["POST"])
         chute.add_api_route("/_token", get_token, methods=["POST"])
         chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
         chute.add_api_route("/_conn_stats", _handle_conn_stats, methods=["GET"])
+        chute.add_api_route("/_netconns", _handle_netconns, methods=["GET"])
         chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
         chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
@@ -1404,13 +2261,19 @@ def run_chute(
 
         chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
 
+        # Bytecode integrity query endpoints.
+        chute.add_api_route("/_integrity_status", process_integrity_status, methods=["POST"])
+        chute.add_api_route("/_integrity_packages", process_integrity_packages, methods=["POST"])
+        chute.add_api_route("/_integrity_verify", process_integrity_verify, methods=["POST"])
+        chute.add_api_route("/_maps", process_maps_query, methods=["POST"])
+
         # Runtime integrity challenge endpoint.
         def _handle_rint(request: Request):
             """Handle runtime integrity challenge."""
             challenge = request.state.decrypted.get("challenge")
             if not challenge:
                 return {"error": "missing challenge"}
-            result = runint_prove(challenge)
+            result = aegis_prove(challenge)
             if result is None:
                 return {"error": "runtime integrity not initialized or not bound"}
             signature, epoch = result
@@ -1420,6 +2283,19 @@ def run_chute(
             }
 
         chute.add_api_route("/_rint", _handle_rint, methods=["POST"])
+
+        # Aegis dump endpoint — comprehensive system introspection, Ed25519-signed.
+        def _handle_aegis_dump(request: Request):
+            """Return signed system introspection JSON."""
+            handle = get_aegis_handle()
+            result = handle.dump()
+            if result is None:
+                return {"error": "aegis_dump failed"}
+            json_str, sig_hex = result
+            encrypted = request.state._encrypt(json.dumps({"data": json_str, "sig": sig_hex}))
+            return {"payload": encrypted}
+
+        chute.add_api_route("/_aegis_dump", _handle_aegis_dump, methods=["POST"])
 
         # New envdump endpoints.
         import chutes.envdump as envdump
@@ -1519,13 +2395,18 @@ def run_chute(
             logger.info("Added shutdown endpoint")
 
         # Start the uvicorn process, whether in job mode or not.
+        import ssl as _ssl
+
         config = Config(
             app=chute,
             host=host or "0.0.0.0",
             port=port or 8000,
             limit_concurrency=1000,
-            ssl_certfile=certfile,
-            ssl_keyfile=keyfile,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
+            ssl_keyfile_password=ssl_keyfile_password,
+            ssl_ca_certs=ssl_ca_certs,
+            ssl_cert_reqs=_ssl.CERT_REQUIRED if ssl_ca_certs else _ssl.CERT_NONE,
         )
         server = Server(config)
         await server.serve()
@@ -1536,8 +2417,6 @@ def run_chute(
         Wrap the actual chute execution with the logging process, which is
         kept alive briefly after the main process terminates.
         """
-        from chutes.entrypoint.logger import launch_server
-
         if not (dev or generate_inspecto_hash):
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58
@@ -1547,23 +2426,6 @@ def run_chute(
             await _run_chute()
             return
 
-        def run_logging_server():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(
-                launch_server(
-                    host=host or "0.0.0.0",
-                    port=logging_port,
-                    dev=dev,
-                    certfile=certfile,
-                    keyfile=keyfile,
-                )
-            )
-
-        logging_thread = threading.Thread(target=run_logging_server, daemon=True)
-        logging_thread.start()
-
-        await asyncio.sleep(3)
         exception_raised = False
         try:
             await _run_chute()
@@ -1573,6 +2435,15 @@ def run_chute(
             )
             exception_raised = True
             await asyncio.sleep(60)
+            raise
+        except BaseException as exc:
+            logger.error(
+                "Unexpected base exception executing _run_chute(): {} ({})\n{}",
+                type(exc).__name__,
+                str(exc),
+                traceback.format_exc(),
+            )
+            exception_raised = True
             raise
         finally:
             if not exception_raised:

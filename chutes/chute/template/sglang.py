@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import uuid
+import aiohttp
 from enum import Enum
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -11,7 +12,18 @@ from typing import Dict, Callable, Literal, Optional, Union, List
 from chutes.image import Image
 from chutes.image.standard.sglang import SGLANG
 from chutes.chute import Chute, ChutePack, NodeSelector
-from chutes.chute.template.helpers import set_default_cache_dirs, set_nccl_flags, monitor_engine
+from chutes.chute.template.helpers import (
+    set_default_cache_dirs,
+    set_nccl_flags,
+    monitor_engine,
+    generate_mtls_certs,
+    build_client_ssl_context,
+    build_wrong_client_ssl_context,
+    validate_mtls,
+    force_exit,
+    mtls_enabled,
+    set_encrypted_env_var,
+)
 
 
 class DefaultRole(Enum):
@@ -289,9 +301,6 @@ def build_sglang_chute(
         import torch
         import multiprocessing
         import subprocess
-        from sglang.utils import (
-            wait_for_server,
-        )
         from chutes.util.hf import verify_cache, purge_model_cache, CacheVerificationError
         from huggingface_hub import snapshot_download
         from chutes.chute.template.helpers import warmup_model, validate_auth
@@ -328,7 +337,10 @@ def build_sglang_chute(
             raise
 
         # Set torch inductor, flashinfer, etc., cache directories.
-        set_default_cache_dirs(download_path)
+        set_default_cache_dirs(
+            download_path,
+            cache_version=getattr(self, "_source_hash", None),
+        )
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["SGL_MODEL_NAME"] = self.name
@@ -354,24 +366,95 @@ def build_sglang_chute(
         if "--api-key" in engine_args:
             raise ValueError("You may not override api key!")
         api_key = str(uuid.uuid4())
+        use_mtls = mtls_enabled()
+        ssl_ctx = None
+        wrong_ssl_ctx = None
+
+        if use_mtls:
+            # Generate ephemeral mTLS certificates.
+            certs = generate_mtls_certs()
+            ssl_ctx = build_client_ssl_context(
+                certs["ca_cert_file"],
+                certs["client_cert_file"],
+                certs["client_key_file"],
+                certs["password"],
+            )
+            wrong_ssl_ctx = build_wrong_client_ssl_context(
+                certs["ca_cert_file"],
+                certs["wrong_client_cert_file"],
+                certs["wrong_client_key_file"],
+                certs["password"],
+            )
+            self.passthrough_ssl_context = ssl_ctx
+            self._wrong_ssl_context = wrong_ssl_ctx
+            logger.info("mTLS enabled for SGLang engine communication")
+        else:
+            logger.warning("mTLS disabled (LLM_ENGINE_MTLS_ENABLE not set)")
+
         startup_command = f"{sys.executable} -m sglang.launch_server --host 127.0.0.1 --port 10101 --model-path {model_name} {engine_args} --api-key {api_key}"
+        if use_mtls:
+            startup_command += " --ssl-cert-reqs 2"
         command = startup_command.replace("\\\n", " ").replace("\\", " ")
         parts = command.split()
         display_cmd = startup_command.replace(api_key, "*" * len(api_key))
         logger.info(f"Launching SGLang with command: {display_cmd}")
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        if use_mtls:
+            env["SGLANG_SSL_KEYFILE_PEM"] = certs["server_key_pem"].decode()
+            env["SGLANG_SSL_CERTFILE_PEM"] = certs["server_cert_pem"].decode()
+            env["SGLANG_SSL_CA_CERTS_PEM"] = certs["ca_cert_pem"].decode()
+            set_encrypted_env_var(env, "SGLANG_SSL_KEYFILE_PASSWORD", certs["password"])
         self._sglang_process = subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT, env=env)
 
         server_ready = asyncio.Event()
         self._monitor_task = asyncio.create_task(
-            monitor_engine(self._sglang_process, api_key, server_ready, model_name=self.name)
+            monitor_engine(
+                self._sglang_process,
+                api_key,
+                server_ready,
+                model_name=self.name,
+                ssl_context=ssl_ctx,
+                wrong_ssl_context=wrong_ssl_ctx,
+            )
         )
 
-        wait_for_server("http://127.0.0.1:10101", api_key=api_key)
+        def _on_monitor_done(t):
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.error("SGLang monitor task failed, terminating: {}", exc)
+                force_exit(1)
+
+        self._monitor_task.add_done_callback(_on_monitor_done)
+
+        # Poll for server readiness.
+        base_url = "https://127.0.0.1:10101" if use_mtls else "http://127.0.0.1:10101"
+        while True:
+            if self._sglang_process.poll() is not None:
+                raise RuntimeError(
+                    f"SGLang subprocess exited before readiness check (exit={self._sglang_process.returncode})"
+                )
+            try:
+                connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
+                async with aiohttp.ClientSession(connector=connector) as session:
+                    async with session.get(
+                        f"{base_url}/v1/models",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    ) as resp:
+                        if resp.status == 200:
+                            logger.success("SGLang engine /v1/models endpoint ping success!")
+                            break
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
-        await warmup_model(self, api_key=api_key)
-        await validate_auth(self, api_key=api_key)
+        await warmup_model(self, base_url=base_url, api_key=api_key, ssl_context=ssl_ctx)
+        await validate_auth(self, base_url=base_url, api_key=api_key, ssl_context=ssl_ctx)
+        if use_mtls:
+            await validate_mtls(self.name, api_key, ssl_ctx, wrong_ssl_ctx)
         server_ready.set()
 
     def _parse_stream_chunk(encoded_chunk):
