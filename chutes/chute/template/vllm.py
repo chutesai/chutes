@@ -343,7 +343,10 @@ def build_vllm_chute(
         if not download_path:
             raise Exception(f"Failed to download {model_name} after 5 attempts")
 
-        set_default_cache_dirs(download_path)
+        set_default_cache_dirs(
+            download_path,
+            cache_version=getattr(self, "_source_hash", None),
+        )
 
         # Verify the cache.
         try:
