@@ -1354,6 +1354,11 @@ class GraValMiddleware(BaseHTTPMiddleware):
         """
         Rate-limiting wrapper around the actual dispatch function.
         """
+        # Hypercorn shares scope["state"] (backing dict for request.state)
+        # across all H2 streams on the same TCP connection.  Replace it with
+        # a fresh dict so every request gets truly isolated per-request state.
+        request.scope["state"] = {}
+
         request.request_id = str(uuid.uuid4())
         request.state.serialized = request.headers.get("X-Chutes-Serialized") is not None
         path = request.scope.get("path", "")
