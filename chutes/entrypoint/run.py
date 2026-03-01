@@ -42,6 +42,37 @@ from pydantic import BaseModel
 from ipaddress import ip_address
 from hypercorn.config import Config as HypercornConfig
 from hypercorn.asyncio import serve as hypercorn_serve
+from hypercorn.asyncio.tcp_server import TCPServer as _HypercornTCPServer
+
+# Hypercorn's TCPServer._close doesn't catch TimeoutError from SSL shutdown,
+# which causes "Unhandled exception in client_connected_cb" log spam when the
+# remote peer drops the connection without completing TLS close_notify.
+_original_tcp_close = _HypercornTCPServer._close
+
+
+async def _patched_tcp_close(self):
+    try:
+        self.writer.write_eof()
+    except (NotImplementedError, OSError, RuntimeError):
+        pass
+    try:
+        self.writer.close()
+        await self.writer.wait_closed()
+    except (
+        BrokenPipeError,
+        ConnectionAbortedError,
+        ConnectionResetError,
+        RuntimeError,
+        asyncio.CancelledError,
+        TimeoutError,
+        OSError,
+    ):
+        pass
+    finally:
+        await self.idle_task.stop()
+
+
+_HypercornTCPServer._close = _patched_tcp_close
 from fastapi import Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
