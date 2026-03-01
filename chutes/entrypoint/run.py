@@ -40,7 +40,8 @@ from typing import Optional, Any
 from datetime import datetime
 from pydantic import BaseModel
 from ipaddress import ip_address
-from uvicorn import Config, Server
+from hypercorn.config import Config as HypercornConfig
+from hypercorn.asyncio import serve as hypercorn_serve
 from fastapi import Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -2193,6 +2194,7 @@ def run_chute(
         activation_url: str | None = None
         allow_external_egress: bool | None = False
         lock_modules: bool = False
+        server_shutdown_event = asyncio.Event()
 
         chute_filename = os.path.basename(chute_ref_str.split(":")[0] + ".py")
         chute_abspath: str = os.path.abspath(os.path.join(os.getcwd(), chute_filename))
@@ -2499,7 +2501,7 @@ def run_chute(
 
         # Job shutdown/kill endpoint.
         async def _shutdown():
-            nonlocal job_obj, server
+            nonlocal job_obj
             if not job_obj:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -2508,7 +2510,7 @@ def run_chute(
             logger.warning("Shutdown requested.")
             if job_obj and not job_obj.cancel_event.is_set():
                 job_obj.cancel_event.set()
-            server.should_exit = True
+            server_shutdown_event.set()
             return {"ok": True}
 
         # Jobs can't be started until the full suite of validation tests run,
@@ -2539,7 +2541,7 @@ def run_chute(
                                 logger.info("SSH server stopped")
                             except Exception as e:
                                 logger.error(f"Error stopping SSH server: {e}")
-                        server.should_exit = True
+                        server_shutdown_event.set()
 
                 # If the pod defines SSH access, enable it.
                 if job_obj.ssh and job_data.get("_ssh_public_key"):
@@ -2553,7 +2555,7 @@ def run_chute(
             chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
             logger.info("Added shutdown endpoint")
 
-        # Start the uvicorn process, whether in job mode or not.
+        # Start the API server.
         import ssl as _ssl
 
         # Retry server startup to handle transient SSL cert loading failures
@@ -2561,24 +2563,35 @@ def run_chute(
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
-                config = Config(
-                    app=chute,
-                    host=host or "0.0.0.0",
-                    port=port or 8000,
-                    limit_concurrency=1000,
-                    ssl_certfile=ssl_certfile,
-                    ssl_keyfile=ssl_keyfile,
-                    ssl_keyfile_password=ssl_keyfile_password,
-                    ssl_ca_certs=ssl_ca_certs,
-                    ssl_cert_reqs=_ssl.CERT_REQUIRED if ssl_ca_certs else _ssl.CERT_NONE,
+                bind_host = host or "0.0.0.0"
+                bind_port = port or 8000
+                chute_concurrency = max(1, int(getattr(chute, "concurrency", 1) or 1))
+                h2_max_streams = max(256, chute_concurrency * 8)
+
+                config = HypercornConfig()
+                config.bind = [f"{bind_host}:{bind_port}"]
+                config.certfile = ssl_certfile
+                config.keyfile = ssl_keyfile
+                config.keyfile_password = ssl_keyfile_password
+                config.ca_certs = ssl_ca_certs
+                config.cert_reqs = _ssl.CERT_REQUIRED if ssl_ca_certs else _ssl.CERT_NONE
+                config.alpn_protocols = ["h2", "http/1.1"]
+                config.h2_max_concurrent_streams = h2_max_streams
+                config.keep_alive_timeout = 75
+                config.graceful_timeout = 30
+
+                logger.info(
+                    "Starting Hypercorn with h2: bind={} h2_max_concurrent_streams={} chute_concurrency={}",
+                    config.bind,
+                    h2_max_streams,
+                    chute_concurrency,
                 )
-                server = Server(config)
-                await server.serve()
+                await hypercorn_serve(chute, config, shutdown_trigger=server_shutdown_event.wait)
                 break
             except OSError as exc:
                 if attempt < max_attempts:
                     logger.warning(
-                        f"Uvicorn SSL startup failed (attempt {attempt}/{max_attempts}): {exc}, retrying in 2s..."
+                        f"Server SSL startup failed (attempt {attempt}/{max_attempts}): {exc}, retrying in 2s..."
                     )
                     await asyncio.sleep(2)
                 else:
