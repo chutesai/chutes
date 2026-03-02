@@ -379,6 +379,8 @@ def build_vllm_chute(
             raise ValueError(
                 "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
             )
+        if "--disable-custom-all-reduce" not in engine_args:
+            engine_args += " --disable-custom-all-reduce"
         if "--api-key" in engine_args:
             raise ValueError("You may not override api key!")
 
