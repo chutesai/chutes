@@ -946,31 +946,6 @@ def get_all_process_info():
     )
 
 
-def get_env_sig(request: Request):
-    """
-    Environment signature check.
-    """
-    import chutes.envcheck as envcheck
-
-    return Response(
-        content=envcheck.signature(request.state.decrypted["salt"]),
-        media_type="text/plain",
-    )
-
-
-def get_env_dump(request: Request):
-    """
-    Base level environment check, running processes and things.
-    """
-    import chutes.envcheck as envcheck
-
-    key = bytes.fromhex(request.state.decrypted["key"])
-    return Response(
-        content=envcheck.dump(key),
-        media_type="text/plain",
-    )
-
-
 async def get_metrics():
     """
     Get the latest prometheus metrics.
@@ -2466,8 +2441,6 @@ def run_chute(
         chute.add_api_route("/_netconns", _handle_netconns, methods=["GET"])
         chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
         chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
-        chute.add_api_route("/_env_sig", get_env_sig, methods=["POST"])
-        chute.add_api_route("/_env_dump", get_env_dump, methods=["POST"])
         chute.add_api_route("/_devices", get_devices, methods=["GET"])
         chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
         chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
