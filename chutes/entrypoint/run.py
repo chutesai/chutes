@@ -1504,7 +1504,22 @@ class GraValMiddleware(BaseHTTPMiddleware):
         # Perform the actual request.
         response = None
         try:
-            response = await self._dispatch(request, call_next)
+            try:
+                response = await self._dispatch(request, call_next)
+            except asyncio.CancelledError:
+                # With H2, letting CancelledError propagate kills hypercorn's
+                # TaskGroup and tears down all streams on the TCP connection.
+                # Convert to a 499 response so the connection stays healthy.
+                logger.info(f"Request cancelled (client disconnect): {path}")
+                _conn_stats.requests_in_flight.pop(request.request_id, None)
+                e2e_ctx = getattr(request.state, "e2e_ctx", None)
+                if e2e_ctx:
+                    get_aegis_handle().e2e_free_ctx(e2e_ctx)
+                    request.state.e2e_ctx = None
+                return ORJSONResponse(
+                    status_code=499,
+                    content={"detail": "Client disconnected"},
+                )
 
             # Add concurrency headers to the response.
             in_flight = len(_conn_stats.requests_in_flight)
@@ -1568,6 +1583,9 @@ class GraValMiddleware(BaseHTTPMiddleware):
                                 if enc_chunk:
                                     yield f"data: {json.dumps({'e2e': base64.b64encode(enc_chunk).decode()}).decode()}\n\n".encode()
 
+                        except asyncio.CancelledError:
+                            logger.info("E2E stream cancelled (client disconnect)")
+                            _conn_stats.requests_in_flight.pop(request.request_id, None)
                         except Exception as exc:
                             logger.warning(f"Unhandled exception in E2E body iterator: {exc}")
                             _conn_stats.requests_in_flight.pop(request.request_id, None)
@@ -1619,6 +1637,9 @@ class GraValMiddleware(BaseHTTPMiddleware):
                         try:
                             async for chunk in original_iterator:
                                 yield chunk
+                        except asyncio.CancelledError:
+                            logger.info("Stream cancelled (client disconnect)")
+                            _conn_stats.requests_in_flight.pop(request.request_id, None)
                         except Exception as exc:
                             logger.warning(f"Unhandled exception in body iterator: {exc}")
                             _conn_stats.requests_in_flight.pop(request.request_id, None)

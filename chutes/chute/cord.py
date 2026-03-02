@@ -492,6 +492,10 @@ class Cord:
                 )
                 for task in pending:
                     task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
                 if watcher_task in done:
                     exc = watcher_task.exception()
