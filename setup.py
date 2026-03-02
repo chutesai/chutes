@@ -27,9 +27,6 @@ setup(
     include_package_data=True,
     package_data={
         "chutes": [
-            "chutes/pyarmor_runtime_006563/*",
-            "chutes/pyarmor_runtime_006563/**/*",
-            "chutes/envcheck/*.py",
             "*.so",
             "cfsv",
             "cfsv_v2",
