@@ -527,8 +527,6 @@ async def warmup_model(
 
 
 def set_default_cache_dirs(download_path, cache_version=None):
-    import shutil
-
     cache_keys = [
         "TRITON_CACHE_DIR",
         "TORCHINDUCTOR_CACHE_DIR",
@@ -543,25 +541,6 @@ def set_default_cache_dirs(download_path, cache_version=None):
         if not os.getenv(key):
             cache_dir = os.path.join(download_path, f"_{key.lower()}")
             os.environ[key] = cache_dir
-
-            # Invalidate stale caches when the chute code changes.
-            if cache_version is not None:
-                version_file = os.path.join(cache_dir, "_cache_version")
-                try:
-                    existing = open(version_file).read().strip()
-                except FileNotFoundError:
-                    existing = None
-                if existing != cache_version:
-                    if os.path.isdir(cache_dir):
-                        logger.warning(
-                            f"Cache version mismatch for {key} "
-                            f"({existing!r} != {cache_version!r}), "
-                            f"purging {cache_dir}"
-                        )
-                        shutil.rmtree(cache_dir)
-                    os.makedirs(cache_dir, exist_ok=True)
-                    with open(version_file, "w") as f:
-                        f.write(cache_version)
 
 
 def set_nccl_flags(gpu_count, model_name):
