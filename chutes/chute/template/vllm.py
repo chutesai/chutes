@@ -343,10 +343,7 @@ def build_vllm_chute(
         if not download_path:
             raise Exception(f"Failed to download {model_name} after 5 attempts")
 
-        set_default_cache_dirs(
-            download_path,
-            cache_version=getattr(self, "_source_hash", None),
-        )
+        set_default_cache_dirs(download_path)
 
         # Verify the cache.
         try:
@@ -379,6 +376,7 @@ def build_vllm_chute(
             raise ValueError(
                 "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
             )
+        # XXX Unfortunately, broadcast is disabled in TDX+PPCIE mode.
         if "--disable-custom-all-reduce" not in engine_args:
             engine_args += " --disable-custom-all-reduce"
         if "--api-key" in engine_args:

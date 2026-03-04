@@ -338,10 +338,8 @@ def build_sglang_chute(
                 raise
 
         # Set torch inductor, flashinfer, etc., cache directories.
-        set_default_cache_dirs(
-            download_path,
-            cache_version=getattr(self, "_source_hash", None),
-        )
+        set_default_cache_dirs(download_path)
+
         os.environ["SGL_MODEL_NAME"] = self.name
         os.environ["SGL_REVISION"] = revision
 
@@ -364,6 +362,9 @@ def build_sglang_chute(
             engine_args += f" --revision {self.revision}"
         if "--api-key" in engine_args:
             raise ValueError("You may not override api key!")
+        # XXX Unfortunately, broadcast is disabled in TDX+PPCIE mode.
+        if "--disable-custom-all-reduce" not in engine_args:
+            engine_args += " --disable-custom-all-reduce"
         api_key = str(uuid.uuid4())
         use_mtls = mtls_enabled()
         ssl_ctx = None

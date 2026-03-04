@@ -59,6 +59,7 @@ setup(
         "aiofiles>=23",
         "semver",
         "huggingface_hub",
+        "hf_transfer",
         "setproctitle",
         "cllmv==0.1.3",
     ],

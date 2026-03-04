@@ -183,10 +183,7 @@ def build_embedding_chute(
         # Verify the cache contents.
         await verify_cache(repo_id=model_name, revision=revision)
 
-        set_default_cache_dirs(
-            download_path,
-            cache_version=getattr(self, "_source_hash", None),
-        )
+        set_default_cache_dirs(download_path)
 
         torch.cuda.empty_cache()
         torch.cuda.init()

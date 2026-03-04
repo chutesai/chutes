@@ -96,11 +96,6 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 
 
-import logging
-
-logging.getLogger("asyncio").setLevel(logging.WARNING)
-logging.getLogger("aiohttp").setLevel(logging.WARNING)
-
 AEGIS_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-aegis.so")
 LDSO_PRELOAD_PATH = "/etc/ld.so.preload"
 TCP_STATES = {
