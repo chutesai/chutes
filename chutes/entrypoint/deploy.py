@@ -54,6 +54,7 @@ async def _deploy(
         "allow_external_egress": chute.allow_external_egress,
         "encrypted_fs": chute.encrypted_fs,
         "tee": chute.tee,
+        "lock_modules": chute.lock_modules,
         "revision": chute.revision,
         "cords": [
             {

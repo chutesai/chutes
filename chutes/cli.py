@@ -12,6 +12,7 @@ from chutes.entrypoint.fingerprint import change_fingerprint
 from chutes.entrypoint.share import share_chute
 from chutes.entrypoint.warmup import warmup_chute
 from chutes.entrypoint.secret import create_secret
+from chutes.entrypoint.transfer_balance import transfer_balance
 from chutes.crud import chutes_app, images_app, api_keys_app, secrets_app
 
 app = typer.Typer(no_args_is_help=True)
@@ -29,6 +30,9 @@ app.command(help="Deploy a chute!", no_args_is_help=True, name="deploy")(deploy_
 app.command(help="Build an image!", no_args_is_help=True, name="build")(build_image)
 app.command(help="Share a chute!", no_args_is_help=True, name="share")(share_chute)
 app.command(help="Warm up a chute!", no_args_is_help=True, name="warmup")(warmup_chute)
+app.command(
+    help="Transfer balance to another user.", no_args_is_help=True, name="transfer-balance"
+)(transfer_balance)
 
 # Chutes
 app.add_typer(chutes_app, name="chutes")

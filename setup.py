@@ -27,13 +27,11 @@ setup(
     include_package_data=True,
     package_data={
         "chutes": [
-            "chutes/pyarmor_runtime_006563/*",
-            "chutes/pyarmor_runtime_006563/**/*",
-            "chutes/envcheck/*.py",
             "*.so",
             "cfsv",
             "cfsv_v2",
             "cfsv_v3",
+            "cfsv_v4",
         ],
         "chutes.envdump": ["*.so"],
     },
@@ -44,9 +42,9 @@ setup(
         "loguru>=0.7.2",
         "fastapi>=0.110",
         "uvicorn>=0.32.0,<0.39",
+        "hypercorn[h2]>=0.16,<0.18",
         "pydantic>=2.9,<3",
         "orjson>=3.10",
-        "fickling>=0.1.3",
         "setuptools>=0.75",
         "substrate-interface>=1.7.11",
         "rich>=13.0.0",
@@ -61,8 +59,9 @@ setup(
         "aiofiles>=23",
         "semver",
         "huggingface_hub",
+        "hf_transfer",
         "setproctitle",
-        "cllmv==0.1.1",
+        "cllmv==0.1.3",
     ],
     extras_require={
         "dev": [

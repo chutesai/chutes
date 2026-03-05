@@ -15,17 +15,19 @@ from chutes.entrypoint._shared import load_chute
 from chutes.util.auth import sign_request
 
 
-async def poll_for_instances(chute_name: str, config, headers, poll_interval: float = 2.0, max_wait: float = 600.0):
+async def poll_for_instances(
+    chute_name: str, config, headers, poll_interval: float = 2.0, max_wait: float = 600.0
+):
     """
     Poll for instances of a chute. Returns a list of instance info dicts (with instance_id and status).
-    
+
     Args:
         chute_name: Name or ID of the chute
         config: Config object
         headers: Request headers
         poll_interval: Seconds between polls
         max_wait: Maximum seconds to wait for an instance (default 10 minutes)
-    
+
     Returns:
         List of dicts with 'instance_id' and status information
     """
@@ -61,15 +63,17 @@ async def poll_for_instances(chute_name: str, config, headers, poll_interval: fl
                         raise ValueError(f"Chute '{chute_name}' not found: {error_text}")
                     else:
                         error_text = await response.text()
-                        logger.debug(f"Failed to get chute (status {response.status}): {error_text}")
+                        logger.debug(
+                            f"Failed to get chute (status {response.status}): {error_text}"
+                        )
             except ValueError:
                 # Re-raise ValueError (chute not found) immediately
                 raise
             except Exception as e:
                 logger.debug(f"Error polling for instances: {e}")
-            
+
             await asyncio.sleep(poll_interval)
-        
+
         # Timeout reached
         raise TimeoutError(f"No instances found for chute {chute_name} within {max_wait} seconds")
 
@@ -77,7 +81,7 @@ async def poll_for_instances(chute_name: str, config, headers, poll_interval: fl
 async def stream_instance_logs(instance_id: str, config, backfill: int = 100):
     """
     Stream logs from an instance.
-    
+
     Raises:
         aiohttp.ClientResponseError: If the request fails
         Exception: For other streaming errors
@@ -98,7 +102,7 @@ async def stream_instance_logs(instance_id: str, config, backfill: int = 100):
                     status=response.status,
                     message=f"Failed to stream logs from instance {instance_id}: {error_text}",
                 )
-            
+
             logger.info(f"Streaming logs from instance {instance_id}...")
             # Parse SSE format and extract log content
             buffer = b""
@@ -131,19 +135,27 @@ async def stream_instance_logs(instance_id: str, config, backfill: int = 100):
                                     log_message = data.get("log", "")
                                     # Only output if we have actual non-empty log content
                                     # Also check that it's not just a single character like "."
-                                    if log_message and log_message.strip() and len(log_message.strip()) > 1:
+                                    if (
+                                        log_message
+                                        and log_message.strip()
+                                        and len(log_message.strip()) > 1
+                                    ):
                                         # Write just the log message with a newline
                                         sys.stdout.buffer.write(log_message.encode("utf-8") + b"\n")
                                         sys.stdout.buffer.flush()
                                     elif log_message and log_message.strip():
                                         # Single character - likely a keepalive, skip it
                                         skipped_lines_count += 1
-                                        logger.debug(f"Skipping single-character log message (likely keepalive): {repr(log_message)}")
+                                        logger.debug(
+                                            f"Skipping single-character log message (likely keepalive): {repr(log_message)}"
+                                        )
                                     else:
                                         skipped_lines_count += 1
                                 except (json.JSONDecodeError, KeyError) as e:
                                     # Log what we're skipping for debugging
-                                    logger.debug(f"Skipping unparseable SSE line: {line[:100]}, error: {e}")
+                                    logger.debug(
+                                        f"Skipping unparseable SSE line: {line[:100]}, error: {e}"
+                                    )
                                     skipped_lines_count += 1
                             else:
                                 # Skip non-SSE lines silently (likely keepalive messages)
@@ -152,7 +164,9 @@ async def stream_instance_logs(instance_id: str, config, backfill: int = 100):
                 raise
             except (aiohttp.ClientError, ConnectionError, OSError) as e:
                 # Connection errors - instance might have been deleted
-                raise Exception(f"Stream ended for instance {instance_id} (instance may have been deleted): {e}") from e
+                raise Exception(
+                    f"Stream ended for instance {instance_id} (instance may have been deleted): {e}"
+                ) from e
             except Exception as e:
                 # Re-raise to allow caller to handle (e.g., try another instance)
                 raise Exception(f"Error streaming logs from instance {instance_id}: {e}") from e
@@ -186,42 +200,46 @@ async def poll_and_stream_logs(chute_name: str, config, headers):
     try:
         instance_infos = await poll_for_instances(chute_name, config, headers)
         logger.info(f"Found {len(instance_infos)} instance(s), attempting to stream logs...")
-        
-        
+
         # Try each instance until one works
         # Keep trying instances even if they get deleted during streaming
         tried_instance_ids = set()
         max_retries = 10  # Limit retries to avoid infinite loops
-        
+
         for attempt in range(max_retries):
             # Refresh instance list in case instances were deleted
             try:
-                current_instance_infos = await poll_for_instances(chute_name, config, headers, poll_interval=1.0, max_wait=5.0)
+                current_instance_infos = await poll_for_instances(
+                    chute_name, config, headers, poll_interval=1.0, max_wait=5.0
+                )
                 # Filter out instances we've already tried
                 available_instances = [
-                    inst for inst in current_instance_infos
+                    inst
+                    for inst in current_instance_infos
                     if inst["instance_id"] not in tried_instance_ids
                 ]
-                
+
                 if not available_instances:
                     # No new instances available
                     if tried_instance_ids:
                         if attempt < max_retries - 1:
-                            logger.info("All instances have been tried or deleted. Waiting for new instances...")
+                            logger.info(
+                                "All instances have been tried or deleted. Waiting for new instances..."
+                            )
                             await asyncio.sleep(2.0)
                             continue
                         else:
                             raise Exception("No new instances available after retries")
                     else:
                         raise Exception("No instances available for log streaming")
-                
+
                 # Try the first available instance
                 inst_info = available_instances[0]
                 instance_id = inst_info["instance_id"]
                 tried_instance_ids.add(instance_id)
-                
+
                 logger.info(f"Attempting to stream logs from instance {instance_id}...")
-                
+
                 try:
                     # Stream logs - this will continue until interrupted or stream ends
                     await stream_instance_logs(instance_id, config)
@@ -244,10 +262,10 @@ async def poll_and_stream_logs(chute_name: str, config, headers):
                     continue
                 else:
                     raise
-        
+
         # Exhausted retries
         raise Exception(f"Failed to maintain stream after {max_retries} attempts")
-            
+
     except asyncio.CancelledError:
         pass
     except TimeoutError as e:
@@ -266,7 +284,9 @@ def warmup_chute(
         None, help="Custom path to the chutes config (credentials, API URL, etc.)"
     ),
     debug: bool = typer.Option(False, help="enable debug logging"),
-    stream_logs: bool = typer.Option(False, help="automatically stream logs from the first instance that appears"),
+    stream_logs: bool = typer.Option(
+        False, help="automatically stream logs from the first instance that appears"
+    ),
 ):
     async def warmup():
         """
@@ -283,12 +303,12 @@ def warmup_chute(
         if config_path:
             os.environ["CHUTES_CONFIG_PATH"] = config_path
         headers, _ = sign_request(purpose="chutes")
-        
+
         if stream_logs:
             # Run warmup monitoring and log streaming in parallel
             warmup_task = asyncio.create_task(monitor_warmup(chute_name, config, headers))
             poll_task = asyncio.create_task(poll_and_stream_logs(chute_name, config, headers))
-            
+
             # Wait for both tasks, but log streaming should continue even after warmup completes
             try:
                 # Wait for warmup to complete (or be cancelled)
@@ -296,7 +316,7 @@ def warmup_chute(
                     await warmup_task
                 except Exception as e:
                     logger.debug(f"Warmup task ended: {e}")
-                
+
                 # Log streaming continues independently - wait for it or user interrupt
                 try:
                     await poll_task
