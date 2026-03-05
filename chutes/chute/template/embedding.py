@@ -250,10 +250,11 @@ def build_embedding_chute(
 
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
         if enable_chunked_processing:
             env["VLLM_ENABLE_CHUNKED_PROCESSING"] = "true"
 
-        env["HF_HUB_OFFLINE"] = "1"
         env["SGL_MODEL_NAME"] = self.name
         env["SGL_REVISION"] = revision
         if use_mtls:

@@ -402,6 +402,8 @@ def build_sglang_chute(
         logger.info(f"Launching SGLang with command: {display_cmd}")
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
         if use_mtls:
             env["SGLANG_SSL_KEYFILE_PEM"] = certs["server_key_pem"].decode()
             env["SGLANG_SSL_CERTFILE_PEM"] = certs["server_cert_pem"].decode()

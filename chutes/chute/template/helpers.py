@@ -536,6 +536,7 @@ def set_default_cache_dirs(download_path):
         "SGL_DG_CACHE_DIR",
         "SGLANG_DG_CACHE_DIR",
         "VLLM_CACHE_ROOT",
+        "SGLANG_CACHE_DIR",
     ]
     for key in cache_keys:
         if not os.getenv(key):
