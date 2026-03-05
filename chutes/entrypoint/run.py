@@ -2118,447 +2118,440 @@ def run_chute(
                         "default": False,
                     }
                 )
-
-        try:
-            if is_tee_env():
-                await TeeEvidenceService().start()
                 
-            # GPU verification plus job fetching.
-            job_data: dict | None = None
-            job_id: str | None = None
-            job_obj: Job | None = None
-            job_method: str | None = None
-            job_status_url: str | None = None
-            activation_url: str | None = None
-            allow_external_egress: bool | None = False
-            lock_modules: bool = False
-            server_shutdown_event = asyncio.Event()
+        # GPU verification plus job fetching.
+        job_data: dict | None = None
+        job_id: str | None = None
+        job_obj: Job | None = None
+        job_method: str | None = None
+        job_status_url: str | None = None
+        activation_url: str | None = None
+        allow_external_egress: bool | None = False
+        lock_modules: bool = False
+        server_shutdown_event = asyncio.Event()
 
-            chute_filename = os.path.basename(chute_ref_str.split(":")[0] + ".py")
-            chute_abspath: str = os.path.abspath(os.path.join(os.getcwd(), chute_filename))
-            if token:
-                (
-                    allow_external_egress,
-                    lock_modules,
-                    response,
-                ) = await _gather_devices_and_initialize(
-                    external_host,
-                    port_mappings,
-                    chute_abspath,
-                    inspecto_hash,
-                    cert_pem=locals().get("cert_pem"),
-                cert_sig=locals().get("cert_sig"),
-                ca_cert_pem=locals().get("ca_cert_pem"),
-                e2e_pubkey=locals().get("e2e_pubkey"),
-                tls_client_cert=locals().get("client_cert_pem"),
-                tls_client_key=locals().get("client_key_pem"),
-                tls_client_key_password=locals().get("key_password"),
-            )
-                job_id = response.get("job_id")
-                job_method = response.get("job_method")
-                job_status_url = response.get("job_status_url")
-                job_data = response.get("job_data")
-                activation_url = response.get("activation_url")
-                code = response["code"]
-                fs_key = response["fs_key"]
-                encrypted_cache = response.get("efs") is True
-                if (
-                    fs_key
-                    and aegis.set_secure_fs(chute_abspath.encode(), fs_key.encode(), encrypted_cache)
-                    != 0
-                ):
-                    logger.error("NetNanny failed to set secure FS, aborting!")
-                    sys.exit(137)
-                with open(chute_abspath, "w") as outfile:
-                    outfile.write(code)
+        chute_filename = os.path.basename(chute_ref_str.split(":")[0] + ".py")
+        chute_abspath: str = os.path.abspath(os.path.join(os.getcwd(), chute_filename))
+        if token:
+            (
+                allow_external_egress,
+                lock_modules,
+                response,
+            ) = await _gather_devices_and_initialize(
+                external_host,
+                port_mappings,
+                chute_abspath,
+                inspecto_hash,
+                cert_pem=locals().get("cert_pem"),
+            cert_sig=locals().get("cert_sig"),
+            ca_cert_pem=locals().get("ca_cert_pem"),
+            e2e_pubkey=locals().get("e2e_pubkey"),
+            tls_client_cert=locals().get("client_cert_pem"),
+            tls_client_key=locals().get("client_key_pem"),
+            tls_client_key_password=locals().get("key_password"),
+        )
+            job_id = response.get("job_id")
+            job_method = response.get("job_method")
+            job_status_url = response.get("job_status_url")
+            job_data = response.get("job_data")
+            activation_url = response.get("activation_url")
+            code = response["code"]
+            fs_key = response["fs_key"]
+            encrypted_cache = response.get("efs") is True
+            if (
+                fs_key
+                and aegis.set_secure_fs(chute_abspath.encode(), fs_key.encode(), encrypted_cache)
+                != 0
+            ):
+                logger.error("NetNanny failed to set secure FS, aborting!")
+                sys.exit(137)
+            with open(chute_abspath, "w") as outfile:
+                outfile.write(code)
 
-                # Secret environment variables, e.g. HF tokens for private models.
-                if response.get("secrets"):
-                    for secret_key, secret_value in response["secrets"].items():
-                        os.environ[secret_key] = secret_value
+            # Secret environment variables, e.g. HF tokens for private models.
+            if response.get("secrets"):
+                for secret_key, secret_value in response["secrets"].items():
+                    os.environ[secret_key] = secret_value
 
-            elif not dev:
-                logger.error("No GraVal token supplied!")
-                sys.exit(1)
+        elif not dev:
+            logger.error("No GraVal token supplied!")
+            sys.exit(1)
 
-            # Module lock: if token says lock_modules=True (e.g. standard templates),
-            # engage immediately before any user code runs. If False (default), modules
-            # stay unlocked so startup hooks can pip install etc.
-            if lock_modules:
-                _aegis = get_aegis_ref()
-                if _aegis and _aegis.lock_modules() == 0:
-                    logger.success("Module lock engaged (lock_modules=True)")
-                else:
-                    logger.warning("Failed to engage module lock")
-
-                # Now we have the chute code available, either because it's dev and the file is plain text here,
-                # or it's prod and we've fetched the code from the validator and stored it securely.
-                logger.info("[aegis-debug] loading chute ref={}", chute_ref_str)
-                chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
-                logger.info("[aegis-debug] load_chute complete module={}", chute_module.__name__)
-                chute = chute.chute if isinstance(chute, ChutePack) else chute
-
-            # Sanity check: only warn if chute explicitly defines lock_modules and it
-            # disagrees with the JWT value. If the chute doesn't define it (old code),
-            # silently use the JWT value.
-            chute_lock = getattr(chute, "lock_modules", None)
-            if chute_lock is not None and chute_lock != lock_modules:
-                logger.warning(
-                    f"lock_modules mismatch: token={lock_modules}, chute={chute_lock} "
-                    f"(using token value={lock_modules})"
-                )
-                if job_method:
-                    job_obj = next(j for j in chute._jobs if j.name == job_method)
-
-                # Configure dev method job payload/method/etc.
-                if dev and dev_job_data_path:
-                    with open(dev_job_data_path) as infile:
-                        job_data = json.loads(infile.read())
-                    job_id = str(uuid.uuid4())
-                    job_method = dev_job_method
-                    job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
-                    logger.info(f"Creating task, dev mode, for {job_method=}")
-
-            # Run the chute's initialization code.
-            logger.info("[aegis-debug] chute.initialize start")
-            await chute.initialize()
-            logger.info("[aegis-debug] chute.initialize complete")
-
-            # Build public_api_path -> internal path mapping for E2E requests.
-            for cord in chute._cords:
-                if cord._public_api_path and cord.path:
-                    method = (cord._public_api_method or "POST").upper()
-                    stream = bool(cord._stream)
-                    _public_api_path_map[(cord._public_api_path, method, stream)] = cord.path
-                    _e2e_allowed_paths.add(cord.path)
-                    logger.info(
-                        f"E2E path map: ({cord._public_api_path}, {method}, stream={stream}) -> {cord.path}"
-                    )
-
-            # Encryption/rate-limiting middleware setup.
-            if dev:
-                chute.add_middleware(DevMiddleware)
+        # Module lock: if token says lock_modules=True (e.g. standard templates),
+        # engage immediately before any user code runs. If False (default), modules
+        # stay unlocked so startup hooks can pip install etc.
+        if lock_modules:
+            _aegis = get_aegis_ref()
+            if _aegis and _aegis.lock_modules() == 0:
+                logger.success("Module lock engaged (lock_modules=True)")
             else:
-                chute.add_middleware(
-                    GraValMiddleware,
-                    concurrency=chute.concurrency,
+                logger.warning("Failed to engage module lock")
+
+            # Now we have the chute code available, either because it's dev and the file is plain text here,
+            # or it's prod and we've fetched the code from the validator and stored it securely.
+            logger.info("[aegis-debug] loading chute ref={}", chute_ref_str)
+            chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
+            logger.info("[aegis-debug] load_chute complete module={}", chute_module.__name__)
+            chute = chute.chute if isinstance(chute, ChutePack) else chute
+
+        # Sanity check: only warn if chute explicitly defines lock_modules and it
+        # disagrees with the JWT value. If the chute doesn't define it (old code),
+        # silently use the JWT value.
+        chute_lock = getattr(chute, "lock_modules", None)
+        if chute_lock is not None and chute_lock != lock_modules:
+            logger.warning(
+                f"lock_modules mismatch: token={lock_modules}, chute={chute_lock} "
+                f"(using token value={lock_modules})"
+            )
+            if job_method:
+                job_obj = next(j for j in chute._jobs if j.name == job_method)
+
+            # Configure dev method job payload/method/etc.
+            if dev and dev_job_data_path:
+                with open(dev_job_data_path) as infile:
+                    job_data = json.loads(infile.read())
+                job_id = str(uuid.uuid4())
+                job_method = dev_job_method
+                job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
+                logger.info(f"Creating task, dev mode, for {job_method=}")
+
+        # Run the chute's initialization code.
+        logger.info("[aegis-debug] chute.initialize start")
+        await chute.initialize()
+        logger.info("[aegis-debug] chute.initialize complete")
+
+        # Build public_api_path -> internal path mapping for E2E requests.
+        for cord in chute._cords:
+            if cord._public_api_path and cord.path:
+                method = (cord._public_api_method or "POST").upper()
+                stream = bool(cord._stream)
+                _public_api_path_map[(cord._public_api_path, method, stream)] = cord.path
+                _e2e_allowed_paths.add(cord.path)
+                logger.info(
+                    f"E2E path map: ({cord._public_api_path}, {method}, stream={stream}) -> {cord.path}"
                 )
-    
-            # Slurps and processes.
-            async def _handle_slurp(request: Request):
-                nonlocal chute_module
-                return await handle_slurp(request, chute_module)
 
-            async def _wait_for_server_ready(timeout: float = 30.0):
-                """Wait until the server is accepting connections."""
-                import socket
-                start = asyncio.get_event_loop().time()
-                while (asyncio.get_event_loop().time() - start) < timeout:
-                    try:
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(1)
-                        result = sock.connect_ex(("127.0.0.1", port))
-                        sock.close()
-                        if result == 0:
-                            return True
-                    except Exception:
-                        pass
-                    await asyncio.sleep(0.1)
-                return False
+        # Encryption/rate-limiting middleware setup.
+        if dev:
+            chute.add_middleware(DevMiddleware)
+        else:
+            chute.add_middleware(
+                GraValMiddleware,
+                concurrency=chute.concurrency,
+            )
 
-            async def _do_activation():
-                """Activate after server is listening."""
-                if not activation_url:
-                    return
-                if not await _wait_for_server_ready():
-                    logger.error("Server failed to start listening")
-                    raise Exception("Server not ready for activation")
-                activated = False
-                for attempt in range(10):
-                    if attempt > 0:
-                        await asyncio.sleep(attempt)
-                    try:
-                        async with aiohttp.ClientSession(raise_for_status=False) as session:
-                            async with session.get(
-                                activation_url, headers={"Authorization": token}
-                            ) as resp:
-                                if resp.ok:
-                                    logger.success(f"Instance activated: {await resp.text()}")
-                                    activated = True
-                                    if not dev and not allow_external_egress:
-                                        if aegis.lock_network() != 0:
-                                            logger.error("Failed to lock network")
-                                            sys.exit(137)
-                                        logger.success("Successfully enabled network lock.")
-                                # Arm aegis — freeze all configuration. No more
-                                # lock/unlock/set calls allowed after this point.
-                                if not dev:
-                                    if aegis.aegis_arm() != 0:
-                                        logger.error("Failed to arm aegis")
+        # Slurps and processes.
+        async def _handle_slurp(request: Request):
+            nonlocal chute_module
+            return await handle_slurp(request, chute_module)
+
+        async def _wait_for_server_ready(timeout: float = 30.0):
+            """Wait until the server is accepting connections."""
+            import socket
+            start = asyncio.get_event_loop().time()
+            while (asyncio.get_event_loop().time() - start) < timeout:
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(1)
+                    result = sock.connect_ex(("127.0.0.1", port))
+                    sock.close()
+                    if result == 0:
+                        return True
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
+            return False
+
+        async def _do_activation():
+            """Activate after server is listening."""
+            if not activation_url:
+                return
+            if not await _wait_for_server_ready():
+                logger.error("Server failed to start listening")
+                raise Exception("Server not ready for activation")
+            activated = False
+            for attempt in range(10):
+                if attempt > 0:
+                    await asyncio.sleep(attempt)
+                try:
+                    async with aiohttp.ClientSession(raise_for_status=False) as session:
+                        async with session.get(
+                            activation_url, headers={"Authorization": token}
+                        ) as resp:
+                            if resp.ok:
+                                logger.success(f"Instance activated: {await resp.text()}")
+                                activated = True
+                                if not dev and not allow_external_egress:
+                                    if aegis.lock_network() != 0:
+                                        logger.error("Failed to lock network")
                                         sys.exit(137)
-                                    logger.success("Aegis armed — configuration frozen.")
-                                    break
-                                logger.error(
-                                    f"Instance activation failed: {resp.status=}: {await resp.text()}"
-                                )
-                                if resp.status == 423:
-                                    break
-                    except Exception as e:
-                        logger.error(f"Unexpected error attempting to activate instance: {str(e)}")
-                if not activated:
-                    logger.error("Failed to activate instance, aborting...")
-                    sys.exit(137)
+                                    logger.success("Successfully enabled network lock.")
+                            # Arm aegis — freeze all configuration. No more
+                            # lock/unlock/set calls allowed after this point.
+                            if not dev:
+                                if aegis.aegis_arm() != 0:
+                                    logger.error("Failed to arm aegis")
+                                    sys.exit(137)
+                                logger.success("Aegis armed — configuration frozen.")
+                                break
+                            logger.error(
+                                f"Instance activation failed: {resp.status=}: {await resp.text()}"
+                            )
+                            if resp.status == 423:
+                                break
+                except Exception as e:
+                    logger.error(f"Unexpected error attempting to activate instance: {str(e)}")
+            if not activated:
+                logger.error("Failed to activate instance, aborting...")
+                sys.exit(137)
 
-            @chute.on_event("startup")
-            async def activate_on_startup():
-                asyncio.create_task(_do_activation())
+        @chute.on_event("startup")
+        async def activate_on_startup():
+            asyncio.create_task(_do_activation())
 
-            async def _handle_fs_hash_challenge(request: Request):
-                nonlocal chute_abspath
-                data = request.state.decrypted
-                return {
-                    "result": await generate_filesystem_hash(
-                        data["salt"], chute_abspath, mode=data.get("mode", "sparse")
-                    )
-                }
-
-            async def _handle_conn_stats(request: Request):
-                return _conn_stats.get_stats()
-
-            def _handle_netconns(request: Request):
-                """Return parsed TCP/TCP6 connections from /proc/net/tcp{,6}."""
-                return Response(
-                    content=json.dumps(_parse_netconns()).decode(),
-                    media_type="application/json",
+        async def _handle_fs_hash_challenge(request: Request):
+            nonlocal chute_abspath
+            data = request.state.decrypted
+            return {
+                "result": await generate_filesystem_hash(
+                    data["salt"], chute_abspath, mode=data.get("mode", "sparse")
                 )
+            }
 
-            # Validation endpoints.
-            chute.add_api_route("/_ping", pong, methods=["POST"])
-            chute.add_api_route("/_token", get_token, methods=["POST"])
-            chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
-            chute.add_api_route("/_conn_stats", _handle_conn_stats, methods=["GET"])
-            chute.add_api_route("/_netconns", _handle_netconns, methods=["GET"])
-            chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
-            chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
-            chute.add_api_route("/_devices", get_devices, methods=["GET"])
-            chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
-            chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
-            chute.add_api_route("/_fs_hash", _handle_fs_hash_challenge, methods=["POST"])
-            chute.add_api_route("/_connectivity", check_connectivity, methods=["POST"])
+        async def _handle_conn_stats(request: Request):
+            return _conn_stats.get_stats()
 
-            def _handle_nn(request: Request):
-                return process_netnanny_challenge(chute, request)
+        def _handle_netconns(request: Request):
+            """Return parsed TCP/TCP6 connections from /proc/net/tcp{,6}."""
+            return Response(
+                content=json.dumps(_parse_netconns()).decode(),
+                media_type="application/json",
+            )
 
-            chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
+        # Validation endpoints.
+        chute.add_api_route("/_ping", pong, methods=["POST"])
+        chute.add_api_route("/_token", get_token, methods=["POST"])
+        chute.add_api_route("/_metrics", get_metrics, methods=["GET"])
+        chute.add_api_route("/_conn_stats", _handle_conn_stats, methods=["GET"])
+        chute.add_api_route("/_netconns", _handle_netconns, methods=["GET"])
+        chute.add_api_route("/_slurp", _handle_slurp, methods=["POST"])
+        chute.add_api_route("/_procs", get_all_process_info, methods=["GET"])
+        chute.add_api_route("/_devices", get_devices, methods=["GET"])
+        chute.add_api_route("/_device_challenge", process_device_challenge, methods=["GET"])
+        chute.add_api_route("/_fs_challenge", process_fs_challenge, methods=["POST"])
+        chute.add_api_route("/_fs_hash", _handle_fs_hash_challenge, methods=["POST"])
+        chute.add_api_route("/_connectivity", check_connectivity, methods=["POST"])
 
-            # Bytecode integrity query endpoints.
-            chute.add_api_route("/_integrity_status", process_integrity_status, methods=["POST"])
-            chute.add_api_route("/_integrity_packages", process_integrity_packages, methods=["POST"])
-            chute.add_api_route("/_integrity_verify", process_integrity_verify, methods=["POST"])
-            chute.add_api_route("/_maps", process_maps_query, methods=["POST"])
+        def _handle_nn(request: Request):
+            return process_netnanny_challenge(chute, request)
 
-            # Runtime integrity challenge endpoint.
-            def _handle_rint(request: Request):
-                """Handle runtime integrity challenge."""
-                challenge = request.state.decrypted.get("challenge")
-                if not challenge:
-                    return {"error": "missing challenge"}
-                result = aegis_prove(challenge)
-                if result is None:
-                    return {"error": "runtime integrity not initialized or not bound"}
-                signature, epoch = result
+        chute.add_api_route("/_netnanny_challenge", _handle_nn, methods=["POST"])
+
+        # Bytecode integrity query endpoints.
+        chute.add_api_route("/_integrity_status", process_integrity_status, methods=["POST"])
+        chute.add_api_route("/_integrity_packages", process_integrity_packages, methods=["POST"])
+        chute.add_api_route("/_integrity_verify", process_integrity_verify, methods=["POST"])
+        chute.add_api_route("/_maps", process_maps_query, methods=["POST"])
+
+        # Runtime integrity challenge endpoint.
+        def _handle_rint(request: Request):
+            """Handle runtime integrity challenge."""
+            challenge = request.state.decrypted.get("challenge")
+            if not challenge:
+                return {"error": "missing challenge"}
+            result = aegis_prove(challenge)
+            if result is None:
+                return {"error": "runtime integrity not initialized or not bound"}
+            signature, epoch = result
+            return {
+                "signature": signature,
+                "epoch": epoch,
+            }
+
+        chute.add_api_route("/_rint", _handle_rint, methods=["POST"])
+
+        # Aegis dump endpoint — comprehensive system introspection, Ed25519-signed.
+        def _handle_aegis_dump(request: Request):
+            """Return signed system introspection JSON."""
+            handle = get_aegis_handle()
+            result = handle.dump()
+            if result is None:
+                return {"error": "aegis_dump failed"}
+            json_str, sig_hex = result
+            encrypted = request.state._encrypt(json.dumps({"data": json_str, "sig": sig_hex}))
+            return {"payload": encrypted}
+
+        chute.add_api_route("/_aegis_dump", _handle_aegis_dump, methods=["POST"])
+
+        # New envdump endpoints.
+        import chutes.envdump as envdump
+
+        chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
+        chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
+        chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
+        chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
+
+        async def _handle_hf_check(request: Request):
+            """
+            Verify HuggingFace cache integrity.
+            """
+            data = request.state.decrypted
+            repo_id = data.get("repo_id")
+            revision = data.get("revision")
+            full_hash_check = data.get("full_hash_check", False)
+
+            if not repo_id or not revision:
                 return {
-                    "signature": signature,
-                    "epoch": epoch,
+                    "error": True,
+                    "reason": "bad_request",
+                    "message": "repo_id and revision are required",
+                    "repo_id": repo_id,
+                    "revision": revision,
                 }
 
-            chute.add_api_route("/_rint", _handle_rint, methods=["POST"])
+            try:
+                result = await verify_cache(
+                    repo_id=repo_id,
+                    revision=revision,
+                    full_hash_check=full_hash_check,
+                )
+                result["error"] = False
+                return result
+            except CacheVerificationError as e:
+                return e.to_dict()
 
-            # Aegis dump endpoint — comprehensive system introspection, Ed25519-signed.
-            def _handle_aegis_dump(request: Request):
-                """Return signed system introspection JSON."""
-                handle = get_aegis_handle()
-                result = handle.dump()
-                if result is None:
-                    return {"error": "aegis_dump failed"}
-                json_str, sig_hex = result
-                encrypted = request.state._encrypt(json.dumps({"data": json_str, "sig": sig_hex}))
-                return {"payload": encrypted}
+        chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
 
-            chute.add_api_route("/_aegis_dump", _handle_aegis_dump, methods=["POST"])
+        async def _handle_hf_check(request: Request):
+            """
+            Verify HuggingFace cache integrity.
+            """
+            data = request.state.decrypted
+            repo_id = data.get("repo_id")
+            revision = data.get("revision")
+            full_hash_check = data.get("full_hash_check", False)
 
-            # New envdump endpoints.
-            import chutes.envdump as envdump
+            if not repo_id or not revision:
+                return {
+                    "error": True,
+                    "reason": "bad_request",
+                    "message": "repo_id and revision are required",
+                    "repo_id": repo_id,
+                    "revision": revision,
+                }
 
-            chute.add_api_route("/_dump", envdump.handle_dump, methods=["POST"])
-            chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
-            chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
-            chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
+            try:
+                result = await verify_cache(
+                    repo_id=repo_id,
+                    revision=revision,
+                    full_hash_check=full_hash_check,
+                )
+                result["error"] = False
+                return result
+            except CacheVerificationError as e:
+                return e.to_dict()
 
-            async def _handle_hf_check(request: Request):
-                """
-                Verify HuggingFace cache integrity.
-                """
-                data = request.state.decrypted
-                repo_id = data.get("repo_id")
-                revision = data.get("revision")
-                full_hash_check = data.get("full_hash_check", False)
+        chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
 
-                if not repo_id or not revision:
-                    return {
-                        "error": True,
-                        "reason": "bad_request",
-                        "message": "repo_id and revision are required",
-                        "repo_id": repo_id,
-                        "revision": revision,
-                    }
+        logger.success("Added all chutes internal endpoints.")
 
-                try:
-                    result = await verify_cache(
-                        repo_id=repo_id,
-                        revision=revision,
-                        full_hash_check=full_hash_check,
+        # Job shutdown/kill endpoint.
+        async def _shutdown():
+            nonlocal job_obj
+            if not job_obj:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Job task not found",
+                )
+            logger.warning("Shutdown requested.")
+            if job_obj and not job_obj.cancel_event.is_set():
+                job_obj.cancel_event.set()
+            server_shutdown_event.set()
+            return {"ok": True}
+
+        # Jobs can't be started until the full suite of validation tests run,
+        # so we need to provide an endpoint for the validator to use to kick
+        # it off.
+        if job_id:
+            job_task = None
+
+            async def start_job_with_monitoring(**kwargs):
+                nonlocal job_task
+                ssh_process = None
+                job_task = asyncio.create_task(job_obj.run(job_status_url=job_status_url, **kwargs))
+
+                async def monitor_job():
+                    try:
+                        result = await job_task
+                        logger.info(f"Job completed with result: {result}")
+                    except Exception as e:
+                        logger.error(f"Job failed with error: {e}")
+                    finally:
+                        logger.info("Job finished, shutting down server...")
+                        if ssh_process:
+                            try:
+                                ssh_process.terminate()
+                                await asyncio.sleep(0.5)
+                                if ssh_process.poll() is None:
+                                    ssh_process.kill()
+                                logger.info("SSH server stopped")
+                            except Exception as e:
+                                logger.error(f"Error stopping SSH server: {e}")
+                        server_shutdown_event.set()
+
+                # If the pod defines SSH access, enable it.
+                if job_obj.ssh and job_data.get("_ssh_public_key"):
+                    ssh_process = await setup_ssh_access(job_data["_ssh_public_key"])
+
+                asyncio.create_task(monitor_job())
+
+            await start_job_with_monitoring(**job_data)
+            logger.info("Started job!")
+
+            chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
+            logger.info("Added shutdown endpoint")
+
+        # Start the API server.
+        import ssl as _ssl
+
+        # Retry server startup to handle transient SSL cert loading failures
+        # (e.g. aegis-generated cert/key PEM not yet valid on first attempt).
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                bind_host = host or "0.0.0.0"
+                bind_port = port or 8000
+                chute_concurrency = max(1, int(getattr(chute, "concurrency", 1) or 1))
+                h2_max_streams = max(256, chute_concurrency * 8)
+
+                config = HypercornConfig()
+                config.bind = [f"{bind_host}:{bind_port}"]
+                config.certfile = ssl_certfile
+                config.keyfile = ssl_keyfile
+                config.keyfile_password = ssl_keyfile_password
+                config.ca_certs = ssl_ca_certs
+                config.cert_reqs = _ssl.CERT_REQUIRED if ssl_ca_certs else _ssl.CERT_NONE
+                config.alpn_protocols = ["h2", "http/1.1"]
+                config.h2_max_concurrent_streams = h2_max_streams
+                config.keep_alive_timeout = 75
+                config.graceful_timeout = 30
+
+                logger.info(
+                    "Starting Hypercorn with h2: bind={} h2_max_concurrent_streams={} chute_concurrency={}",
+                    config.bind,
+                    h2_max_streams,
+                    chute_concurrency,
+                )
+                await hypercorn_serve(chute, config, shutdown_trigger=server_shutdown_event.wait)
+                break
+            except OSError as exc:
+                if attempt < max_attempts:
+                    logger.warning(
+                        f"Server SSL startup failed (attempt {attempt}/{max_attempts}): {exc}, retrying in 2s..."
                     )
-                    result["error"] = False
-                    return result
-                except CacheVerificationError as e:
-                    return e.to_dict()
-
-            chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
-
-            async def _handle_hf_check(request: Request):
-                """
-                Verify HuggingFace cache integrity.
-                """
-                data = request.state.decrypted
-                repo_id = data.get("repo_id")
-                revision = data.get("revision")
-                full_hash_check = data.get("full_hash_check", False)
-
-                if not repo_id or not revision:
-                    return {
-                        "error": True,
-                        "reason": "bad_request",
-                        "message": "repo_id and revision are required",
-                        "repo_id": repo_id,
-                        "revision": revision,
-                    }
-
-                try:
-                    result = await verify_cache(
-                        repo_id=repo_id,
-                        revision=revision,
-                        full_hash_check=full_hash_check,
-                    )
-                    result["error"] = False
-                    return result
-                except CacheVerificationError as e:
-                    return e.to_dict()
-
-            chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
-
-            logger.success("Added all chutes internal endpoints.")
-
-            # Job shutdown/kill endpoint.
-            async def _shutdown():
-                nonlocal job_obj
-                if not job_obj:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Job task not found",
-                    )
-                logger.warning("Shutdown requested.")
-                if job_obj and not job_obj.cancel_event.is_set():
-                    job_obj.cancel_event.set()
-                server_shutdown_event.set()
-                return {"ok": True}
-
-            # Jobs can't be started until the full suite of validation tests run,
-            # so we need to provide an endpoint for the validator to use to kick
-            # it off.
-            if job_id:
-                job_task = None
-
-                async def start_job_with_monitoring(**kwargs):
-                    nonlocal job_task
-                    ssh_process = None
-                    job_task = asyncio.create_task(job_obj.run(job_status_url=job_status_url, **kwargs))
-
-                    async def monitor_job():
-                        try:
-                            result = await job_task
-                            logger.info(f"Job completed with result: {result}")
-                        except Exception as e:
-                            logger.error(f"Job failed with error: {e}")
-                        finally:
-                            logger.info("Job finished, shutting down server...")
-                            if ssh_process:
-                                try:
-                                    ssh_process.terminate()
-                                    await asyncio.sleep(0.5)
-                                    if ssh_process.poll() is None:
-                                        ssh_process.kill()
-                                    logger.info("SSH server stopped")
-                                except Exception as e:
-                                    logger.error(f"Error stopping SSH server: {e}")
-                            server_shutdown_event.set()
-
-                    # If the pod defines SSH access, enable it.
-                    if job_obj.ssh and job_data.get("_ssh_public_key"):
-                        ssh_process = await setup_ssh_access(job_data["_ssh_public_key"])
-
-                    asyncio.create_task(monitor_job())
-
-                await start_job_with_monitoring(**job_data)
-                logger.info("Started job!")
-
-                chute.add_api_route("/_shutdown", _shutdown, methods=["POST"])
-                logger.info("Added shutdown endpoint")
-
-            # Start the API server.
-            import ssl as _ssl
-
-            # Retry server startup to handle transient SSL cert loading failures
-            # (e.g. aegis-generated cert/key PEM not yet valid on first attempt).
-            max_attempts = 3
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    bind_host = host or "0.0.0.0"
-                    bind_port = port or 8000
-                    chute_concurrency = max(1, int(getattr(chute, "concurrency", 1) or 1))
-                    h2_max_streams = max(256, chute_concurrency * 8)
-
-                    config = HypercornConfig()
-                    config.bind = [f"{bind_host}:{bind_port}"]
-                    config.certfile = ssl_certfile
-                    config.keyfile = ssl_keyfile
-                    config.keyfile_password = ssl_keyfile_password
-                    config.ca_certs = ssl_ca_certs
-                    config.cert_reqs = _ssl.CERT_REQUIRED if ssl_ca_certs else _ssl.CERT_NONE
-                    config.alpn_protocols = ["h2", "http/1.1"]
-                    config.h2_max_concurrent_streams = h2_max_streams
-                    config.keep_alive_timeout = 75
-                    config.graceful_timeout = 30
-
-                    logger.info(
-                        "Starting Hypercorn with h2: bind={} h2_max_concurrent_streams={} chute_concurrency={}",
-                        config.bind,
-                        h2_max_streams,
-                        chute_concurrency,
-                    )
-                    await hypercorn_serve(chute, config, shutdown_trigger=server_shutdown_event.wait)
-                    break
-                except OSError as exc:
-                    if attempt < max_attempts:
-                        logger.warning(
-                            f"Server SSL startup failed (attempt {attempt}/{max_attempts}): {exc}, retrying in 2s..."
-                        )
-                        await asyncio.sleep(2)
-                    else:
-                        raise
-        finally:
-            if is_tee_env():
-                await TeeEvidenceService().stop()
+                    await asyncio.sleep(2)
+                else:
+                    raise
 
 
     # Kick everything off
@@ -2578,6 +2571,8 @@ def run_chute(
 
         exception_raised = False
         try:
+            if is_tee_env():
+                await TeeEvidenceService().start()
             await _run_chute()
         except Exception as exc:
             logger.error(
@@ -2596,6 +2591,8 @@ def run_chute(
             exception_raised = True
             raise
         finally:
+            if is_tee_env():
+                await TeeEvidenceService().stop()
             if not exception_raised:
                 await asyncio.sleep(30)
 
