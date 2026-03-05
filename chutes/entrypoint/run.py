@@ -2143,12 +2143,12 @@ def run_chute(
                 chute_abspath,
                 inspecto_hash,
                 cert_pem=locals().get("cert_pem"),
-            cert_sig=locals().get("cert_sig"),
-            ca_cert_pem=locals().get("ca_cert_pem"),
-            e2e_pubkey=locals().get("e2e_pubkey"),
-            tls_client_cert=locals().get("client_cert_pem"),
-            tls_client_key=locals().get("client_key_pem"),
-            tls_client_key_password=locals().get("key_password"),
+                cert_sig=locals().get("cert_sig"),
+                ca_cert_pem=locals().get("ca_cert_pem"),
+                e2e_pubkey=locals().get("e2e_pubkey"),
+                tls_client_cert=locals().get("client_cert_pem"),
+                tls_client_key=locals().get("client_key_pem"),
+                tls_client_key_password=locals().get("key_password"),
         )
             job_id = response.get("job_id")
             job_method = response.get("job_method")
@@ -2187,12 +2187,12 @@ def run_chute(
             else:
                 logger.warning("Failed to engage module lock")
 
-            # Now we have the chute code available, either because it's dev and the file is plain text here,
-            # or it's prod and we've fetched the code from the validator and stored it securely.
-            logger.info("[aegis-debug] loading chute ref={}", chute_ref_str)
-            chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
-            logger.info("[aegis-debug] load_chute complete module={}", chute_module.__name__)
-            chute = chute.chute if isinstance(chute, ChutePack) else chute
+        # Now we have the chute code available, either because it's dev and the file is plain text here,
+        # or it's prod and we've fetched the code from the validator and stored it securely.
+        logger.info("[aegis-debug] loading chute ref={}", chute_ref_str)
+        chute_module, chute = load_chute(chute_ref_str=chute_ref_str, config_path=None, debug=debug)
+        logger.info("[aegis-debug] load_chute complete module={}", chute_module.__name__)
+        chute = chute.chute if isinstance(chute, ChutePack) else chute
 
         # Sanity check: only warn if chute explicitly defines lock_modules and it
         # disagrees with the JWT value. If the chute doesn't define it (old code),
@@ -2203,17 +2203,17 @@ def run_chute(
                 f"lock_modules mismatch: token={lock_modules}, chute={chute_lock} "
                 f"(using token value={lock_modules})"
             )
-            if job_method:
-                job_obj = next(j for j in chute._jobs if j.name == job_method)
+        if job_method:
+            job_obj = next(j for j in chute._jobs if j.name == job_method)
 
-            # Configure dev method job payload/method/etc.
-            if dev and dev_job_data_path:
-                with open(dev_job_data_path) as infile:
-                    job_data = json.loads(infile.read())
-                job_id = str(uuid.uuid4())
-                job_method = dev_job_method
-                job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
-                logger.info(f"Creating task, dev mode, for {job_method=}")
+        # Configure dev method job payload/method/etc.
+        if dev and dev_job_data_path:
+            with open(dev_job_data_path) as infile:
+                job_data = json.loads(infile.read())
+            job_id = str(uuid.uuid4())
+            job_method = dev_job_method
+            job_obj = next(j for j in chute._jobs if j.name == dev_job_method)
+            logger.info(f"Creating task, dev mode, for {job_method=}")
 
         # Run the chute's initialization code.
         logger.info("[aegis-debug] chute.initialize start")
@@ -2286,14 +2286,15 @@ def run_chute(
                                         logger.error("Failed to lock network")
                                         sys.exit(137)
                                     logger.success("Successfully enabled network lock.")
-                            # Arm aegis — freeze all configuration. No more
-                            # lock/unlock/set calls allowed after this point.
-                            if not dev:
-                                if aegis.aegis_arm() != 0:
-                                    logger.error("Failed to arm aegis")
-                                    sys.exit(137)
-                                logger.success("Aegis armed — configuration frozen.")
+                                # Arm aegis — freeze all configuration. No more
+                                # lock/unlock/set calls allowed after this point.
+                                if not dev:
+                                    if aegis.aegis_arm() != 0:
+                                        logger.error("Failed to arm aegis")
+                                        sys.exit(137)
+                                    logger.success("Aegis armed — configuration frozen.")
                                 break
+
                             logger.error(
                                 f"Instance activation failed: {resp.status=}: {await resp.text()}"
                             )
@@ -2390,37 +2391,6 @@ def run_chute(
         chute.add_api_route("/_sig", envdump.handle_sig, methods=["POST"])
         chute.add_api_route("/_toca", envdump.handle_toca, methods=["POST"])
         chute.add_api_route("/_eslurp", envdump.handle_slurp, methods=["POST"])
-
-        async def _handle_hf_check(request: Request):
-            """
-            Verify HuggingFace cache integrity.
-            """
-            data = request.state.decrypted
-            repo_id = data.get("repo_id")
-            revision = data.get("revision")
-            full_hash_check = data.get("full_hash_check", False)
-
-            if not repo_id or not revision:
-                return {
-                    "error": True,
-                    "reason": "bad_request",
-                    "message": "repo_id and revision are required",
-                    "repo_id": repo_id,
-                    "revision": revision,
-                }
-
-            try:
-                result = await verify_cache(
-                    repo_id=repo_id,
-                    revision=revision,
-                    full_hash_check=full_hash_check,
-                )
-                result["error"] = False
-                return result
-            except CacheVerificationError as e:
-                return e.to_dict()
-
-        chute.add_api_route("/_hf_check", _handle_hf_check, methods=["POST"])
 
         async def _handle_hf_check(request: Request):
             """
