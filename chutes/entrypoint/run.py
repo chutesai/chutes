@@ -76,13 +76,17 @@ _HypercornTCPServer._close = _patched_tcp_close
 from fastapi import Request, Response, status, HTTPException
 from fastapi.responses import ORJSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from chutes.entrypoint.verify import GpuVerifier
+from chutes.entrypoint.verify import (
+    GpuVerifier,
+    TeeEvidenceService,
+)
 from chutes.util.hf import verify_cache, CacheVerificationError
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from substrateinterface import Keypair, KeypairType
 from chutes.entrypoint._shared import (
     get_launch_token,
     get_launch_token_data,
+    is_tee_env,
     load_chute,
     miner,
     authenticate_request,
@@ -91,9 +95,6 @@ from chutes.entrypoint.ssh import setup_ssh_access
 from chutes.chute import ChutePack, Job
 from chutes.util.context import is_local, is_remote
 from chutes.cfsv_wrapper import get_cfsv
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import padding
 
 
 AEGIS_PATH = os.path.join(os.path.dirname(__file__), "..", "chutes-aegis.so")
@@ -1637,98 +1638,6 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     request.state.e2e_ctx = None
 
 
-def start_dummy_socket(port_mapping, symmetric_key):
-    """
-    Start a dummy socket based on the port mapping configuration to validate ports.
-    """
-    proto = port_mapping["proto"].lower()
-    internal_port = port_mapping["internal_port"]
-    response_text = f"response from {proto} {internal_port}"
-    if proto in ["tcp", "http"]:
-        return start_tcp_dummy(internal_port, symmetric_key, response_text)
-    return start_udp_dummy(internal_port, symmetric_key, response_text)
-
-
-def encrypt_response(symmetric_key, plaintext):
-    """
-    Encrypt the response using AES-CBC with PKCS7 padding.
-    """
-    padder = padding.PKCS7(128).padder()
-    new_iv = secrets.token_bytes(16)
-    cipher = Cipher(
-        algorithms.AES(symmetric_key),
-        modes.CBC(new_iv),
-        backend=default_backend(),
-    )
-    padded_data = padder.update(plaintext.encode()) + padder.finalize()
-    encryptor = cipher.encryptor()
-    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-    response_cipher = base64.b64encode(encrypted_data).decode()
-    return new_iv, response_cipher
-
-
-def start_tcp_dummy(port, symmetric_key, response_plaintext):
-    """
-    TCP port check socket.
-    """
-
-    def tcp_handler():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("0.0.0.0", port))
-            sock.listen(1)
-            logger.info(f"TCP socket listening on port {port}")
-            conn, addr = sock.accept()
-            logger.info(f"TCP connection from {addr}")
-            data = conn.recv(1024)
-            logger.info(f"TCP received: {data.decode('utf-8', errors='ignore')}")
-            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
-            full_response = f"{iv.hex()}|{encrypted_response}".encode()
-            conn.send(full_response)
-            logger.info(f"TCP sent encrypted response on port {port}: {full_response=}")
-            conn.close()
-        except Exception as e:
-            logger.info(f"TCP socket error on port {port}: {e}")
-            raise
-        finally:
-            sock.close()
-            logger.info(f"TCP socket on port {port} closed")
-
-    thread = threading.Thread(target=tcp_handler, daemon=True)
-    thread.start()
-    return thread
-
-
-def start_udp_dummy(port, symmetric_key, response_plaintext):
-    """
-    UDP port check socket.
-    """
-
-    def udp_handler():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("0.0.0.0", port))
-            logger.info(f"UDP socket listening on port {port}")
-            data, addr = sock.recvfrom(1024)
-            logger.info(f"UDP received from {addr}: {data.decode('utf-8', errors='ignore')}")
-            iv, encrypted_response = encrypt_response(symmetric_key, response_plaintext)
-            full_response = f"{iv.hex()}|{encrypted_response}".encode()
-            sock.sendto(full_response, addr)
-            logger.info(f"UDP sent encrypted response on port {port}")
-        except Exception as e:
-            logger.info(f"UDP socket error on port {port}: {e}")
-            raise
-        finally:
-            sock.close()
-            logger.info(f"UDP socket on port {port} closed")
-
-    thread = threading.Thread(target=udp_handler, daemon=True)
-    thread.start()
-    return thread
-
-
 async def _gather_devices_and_initialize(
     host: str,
     port_mappings: list[dict[str, Any]],
@@ -1750,7 +1659,6 @@ async def _gather_devices_and_initialize(
     logger.info("Collecting GPUs and port mappings...")
     body = {"gpus": [], "port_mappings": port_mappings, "host": host}
     token_data = get_launch_token_data()
-    url = token_data.get("url")
     key = token_data.get("env_key", "a" * 32)
 
     logger.info("Collecting full envdump...")
@@ -1822,16 +1730,9 @@ async def _gather_devices_and_initialize(
         logger.error(f"Error checking disk space: {e}")
         raise Exception(f"Failed to verify disk space availability: {e}")
 
-    # Start up dummy sockets to test port mappings.
-    dummy_socket_threads = []
-    for port_map in port_mappings:
-        if port_map.get("default"):
-            continue
-        dummy_socket_threads.append(start_dummy_socket(port_map, symmetric_key))
-
-    # Verify GPUs for symmetric key
-    verifier = GpuVerifier.create(url, body)
-    symmetric_key, response = await verifier.verify_devices()
+    # Verify GPUs, spin up dummy sockets, and finalize verification.
+    verifier = GpuVerifier.create(body)
+    response = await verifier.verify()
 
     # Derive aegis session key from validator's pubkey via ECDH if provided
     # Key derivation happens entirely in C - key never touches Python memory
@@ -1842,7 +1743,7 @@ async def _gather_devices_and_initialize(
         else:
             logger.warning("Failed to derive aegis session key - using legacy encryption")
 
-    return egress, lock_modules, symmetric_key, response
+    return egress, lock_modules, response
 
 
 # Run a chute (which can be an async job or otherwise long-running process).
@@ -2218,7 +2119,6 @@ def run_chute(
 
         # GPU verification plus job fetching.
         job_data: dict | None = None
-        symmetric_key: str | None = None
         job_id: str | None = None
         job_obj: Job | None = None
         job_method: str | None = None
@@ -2234,7 +2134,6 @@ def run_chute(
             (
                 allow_external_egress,
                 lock_modules,
-                symmetric_key,
                 response,
             ) = await _gather_devices_and_initialize(
                 external_host,
@@ -2342,7 +2241,6 @@ def run_chute(
         # Slurps and processes.
         async def _handle_slurp(request: Request):
             nonlocal chute_module
-
             return await handle_slurp(request, chute_module)
 
         async def _wait_for_server_ready(timeout: float = 30.0):
@@ -2367,11 +2265,9 @@ def run_chute(
             """Activate after server is listening."""
             if not activation_url:
                 return
-
             if not await _wait_for_server_ready():
                 logger.error("Server failed to start listening")
                 raise Exception("Server not ready for activation")
-
             activated = False
             for attempt in range(10):
                 if attempt > 0:
@@ -2403,7 +2299,6 @@ def run_chute(
                             )
                             if resp.status == 423:
                                 break
-
                 except Exception as e:
                     logger.error(f"Unexpected error attempting to activate instance: {str(e)}")
             if not activated:
@@ -2644,6 +2539,8 @@ def run_chute(
 
         exception_raised = False
         try:
+            if is_tee_env():
+                await TeeEvidenceService().start()
             await _run_chute()
         except Exception as exc:
             logger.error(
@@ -2662,6 +2559,8 @@ def run_chute(
             exception_raised = True
             raise
         finally:
+            if is_tee_env():
+                await TeeEvidenceService().stop()
             if not exception_raised:
                 await asyncio.sleep(30)
 

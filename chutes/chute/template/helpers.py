@@ -364,9 +364,9 @@ async def validate_mtls(
                 f"http://127.0.0.1:{port}/v1/models",
                 headers={"Authorization": f"Bearer {api_key}"},
             ) as resp:
-                assert (
-                    False
-                ), f"mTLS check 4 failed: plain HTTP should not succeed (got {resp.status})"
+                assert False, (
+                    f"mTLS check 4 failed: plain HTTP should not succeed (got {resp.status})"
+                )
     except (aiohttp.ClientError, ConnectionError, OSError):
         pass
     logger.success("mTLS check 4/5 passed: plain HTTP rejected")
@@ -382,9 +382,9 @@ async def validate_mtls(
                 f"{base_url}/v1/models",
                 headers={"Authorization": f"Bearer {api_key}"},
             ) as resp:
-                assert (
-                    False
-                ), f"mTLS check 5 failed: wrong cert should not succeed (got {resp.status})"
+                assert False, (
+                    f"mTLS check 5 failed: wrong cert should not succeed (got {resp.status})"
+                )
     except (aiohttp.ClientError, ConnectionError, OSError, ssl.SSLError):
         pass
     logger.success("mTLS check 5/5 passed: wrong client cert rejected")
@@ -433,9 +433,9 @@ async def prompt_one(
             headers=headers,
         ) as resp:
             if require_status:
-                assert (
-                    resp.status == require_status
-                ), f"Expected to receive status code {require_status}, received {resp.status}"
+                assert resp.status == require_status, (
+                    f"Expected to receive status code {require_status}, received {resp.status}"
+                )
                 return await resp.json()
             if resp.status == 200:
                 result = await resp.json()
