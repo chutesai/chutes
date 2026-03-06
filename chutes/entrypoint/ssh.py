@@ -61,8 +61,9 @@ async def setup_ssh_access(ssh_public_key):
                 ],
                 check=True,
             )
-        subprocess.Popen(["/usr/sbin/sshd", "-D", "-f", sshd_config_path])
+        sshd_process = subprocess.Popen(["/usr/sbin/sshd", "-D", "-f", sshd_config_path])
         logger.info(f"SSH server started successfully on port 2202 for user {username}")
+        return sshd_process
 
     except Exception as e:
         logger.error(f"Failed to setup SSH access: {e}")
