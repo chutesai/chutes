@@ -3,7 +3,6 @@ import asyncio
 import base64
 from contextlib import asynccontextmanager
 from functools import lru_cache
-import json
 import os
 import ssl
 import socket
@@ -16,7 +15,13 @@ from fastapi import FastAPI, Request, HTTPException, status
 from uvicorn import Config, Server
 
 from chutes.constants import ATTESTATION_SERVICE_BASE_URL
-from chutes.entrypoint._shared import encrypt_response, get_launch_token, get_launch_token_data, is_tee_env, miner
+from chutes.entrypoint._shared import (
+    encrypt_response,
+    get_launch_token,
+    get_launch_token_data,
+    is_tee_env,
+    miner,
+)
 
 
 # TEE endpoint constants
@@ -29,40 +34,39 @@ _evidence_nonce: str | None = None
 _evidence_nonce_locked: bool = False
 
 
-
 @asynccontextmanager
 async def _use_evidence_nonce(validator_url: str):
     """
     Context manager for TEE evidence nonce lifecycle. Fetches nonce from validator,
     makes it available for the duration, and automatically clears it when done.
-    
+
     Args:
         validator_url: The base URL of the validator
-    
+
     Yields:
         The nonce value
-        
+
     Raises:
         RuntimeError: If nonce is already locked (multiple verification processes detected)
     """
     global _evidence_nonce, _evidence_nonce_locked
-    
+
     if _evidence_nonce_locked:
         raise RuntimeError(
             "TEE nonce already locked. Only one verification process should be running."
         )
-    
+
     # Fetch nonce from validator
     url = urljoin(validator_url, "/instances/nonce")
     async with aiohttp.ClientSession(raise_for_status=True) as http_session:
         async with http_session.get(url) as resp:
             logger.success(f"Successfully initiated attestation with validator {validator_url}.")
             nonce = await resp.json()
-    
+
     # Set the nonce and lock
     _evidence_nonce = nonce
     _evidence_nonce_locked = True
-    
+
     try:
         yield nonce
     finally:
@@ -151,9 +155,7 @@ class GravalGpuVerifier(GpuVerifier):
             logger.info(f"Collected all environment data, submitting to validator: {url}")
             async with session.post(url, headers={"Authorization": token}, json=self._body) as resp:
                 self._init_params = await resp.json()
-                logger.success(
-                    f"Successfully fetched initialization params: {self._init_params=}"
-                )
+                logger.success(f"Successfully fetched initialization params: {self._init_params=}")
 
         # First, we initialize graval on all GPUs from the provided seed.
         miner()._graval_seed = self._init_params["seed"]
@@ -184,7 +186,6 @@ class GravalGpuVerifier(GpuVerifier):
         self._response_plaintext = sym_key["response_plaintext"]
 
     async def finalize_verification(self):
-
         token = self._token
         url = urljoin(self._url + "/", "graval")
         plaintext = self._response_plaintext
@@ -232,7 +233,9 @@ def _parse_evidence_port() -> int:
     """Parse TEE evidence port from env (default 8002)."""
     evidence_port = os.getenv("CHUTES_TEE_EVIDENCE_PORT", "8002")
     if not evidence_port.isdigit():
-        raise ValueError(f"CHUTES_TEE_EVIDENCE_PORT must be a valid port number, got: {evidence_port}")
+        raise ValueError(
+            f"CHUTES_TEE_EVIDENCE_PORT must be a valid port number, got: {evidence_port}"
+        )
     return int(evidence_port)
 
 
@@ -268,8 +271,12 @@ class TeeEvidenceService:
             return self._port_mapping()
         self._port = _parse_evidence_port()
         evidence_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-        evidence_app.add_api_route(TEE_VERIFICATION_ENDPOINT, self._get_verification_evidence, methods=["GET"])
-        evidence_app.add_api_route(TEE_EVIDENCE_RUNTIME_ENDPOINT, self._get_runtime_evidence, methods=["GET"])
+        evidence_app.add_api_route(
+            TEE_VERIFICATION_ENDPOINT, self._get_verification_evidence, methods=["GET"]
+        )
+        evidence_app.add_api_route(
+            TEE_EVIDENCE_RUNTIME_ENDPOINT, self._get_runtime_evidence, methods=["GET"]
+        )
         config = Config(
             app=evidence_app,
             host="0.0.0.0",
@@ -372,7 +379,7 @@ class TeeGpuVerifier(GpuVerifier):
     def validator_url(self) -> str:
         parsed = urlparse(self._url)
         return f"{parsed.scheme}://{parsed.netloc}"
-    
+
     @property
     @lru_cache(maxsize=1)
     def deployment_id(self) -> str:
@@ -397,18 +404,15 @@ class TeeGpuVerifier(GpuVerifier):
         Phase 3: Start dummy sockets and finalize verification (handled by base class)
         """
         token = self._token
-        
+
         # Gather GPUs before sending request
         gpus = await self.gather_gpus()
         # Append /tee to instance path; urljoin(base, "/tee") replaces path, urljoin(base, "tee") replaces last segment
         url = urljoin(self._url + "/", "tee")
-        
+
         async with _use_evidence_nonce(self.validator_url) as _nonce:
             async with aiohttp.ClientSession(raise_for_status=True) as session:
-                headers = {
-                    "Authorization": token,
-                    "X-Chutes-Nonce": _nonce
-                }
+                headers = {"Authorization": token, "X-Chutes-Nonce": _nonce}
                 _body = self._body.copy()
                 _body["deployment_id"] = self.deployment_id
                 _body["gpus"] = gpus
@@ -416,7 +420,9 @@ class TeeGpuVerifier(GpuVerifier):
                 async with session.post(url, headers=headers, json=_body) as resp:
                     data = await resp.json()
                     self._symmetric_key = bytes.fromhex(data["symmetric_key"])
-                    self._validator_pubkey = data["validator_pubkey"] if "validator_pubkey" in data else None
+                    self._validator_pubkey = (
+                        data["validator_pubkey"] if "validator_pubkey" in data else None
+                    )
                     logger.success("Successfully received symmetric key from validator")
 
     async def finalize_verification(self):
@@ -432,7 +438,7 @@ class TeeGpuVerifier(GpuVerifier):
 
         async with aiohttp.ClientSession(raise_for_status=False) as session:
             logger.info("Sending final verification request.")
-            
+
             async with session.put(
                 url,
                 headers={"Authorization": token},
@@ -447,7 +453,9 @@ class TeeGpuVerifier(GpuVerifier):
                     return response
                 else:
                     detail = await resp.text(encoding="utf-8", errors="replace")
-                    logger.error(f"Final verification failed: {resp.reason} ({resp.status}) {detail}")
+                    logger.error(
+                        f"Final verification failed: {resp.reason} ({resp.status}) {detail}"
+                    )
                     resp.raise_for_status()
 
     async def gather_gpus(self):
@@ -534,5 +542,3 @@ def start_udp_dummy(port, symmetric_key, response_plaintext):
     thread = threading.Thread(target=udp_handler, daemon=True)
     thread.start()
     return thread
-
-
