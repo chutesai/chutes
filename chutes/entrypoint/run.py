@@ -1988,10 +1988,13 @@ def run_chute(
         token = get_launch_token()
         token_data = get_launch_token_data()
 
+        # Dev mode: no launch JWT means no validator to fetch nonce from.
+        _is_dev = dev or not token
+
         # Runtime integrity must be initialized first to get the nonce.
         inspecto_hash = None
         aegis_nonce = None
-        if not (dev or generate_inspecto_hash):
+        if not (_is_dev or generate_inspecto_hash):
             # Fetch validator-provided nonce before initializing aegis.
             # This nonce is embedded in the commitment (signed by the keypair),
             # proving the keypair was created for this specific session.
@@ -2052,12 +2055,12 @@ def run_chute(
             return
 
         if not generate_inspecto_hash:
-            _skip_aegis = dev and not _aegis_available_for_dev()
+            _skip_aegis = _is_dev and not _aegis_available_for_dev()
 
             # Ensure aegis handle is initialized before TLS/E2E APIs are used.
             # In dev mode we don't have validator bootstrap, so initialize with
             # an ephemeral nonce to create the runtime handle.
-            if dev and not _skip_aegis:
+            if _is_dev and not _skip_aegis:
                 validator_nonce = None
                 bootstrap_nonce = secrets.token_hex(16)
                 logger.info(
