@@ -2089,7 +2089,10 @@ def run_chute(
                     f"handle_ptr={getattr(_aegis_handle, '_handle', None)}"
                 )
                 # Generate mTLS cert (nonce-bound).
-                mtls_nonce = validator_nonce if validator_nonce else None
+                # In dev mode use the ephemeral bootstrap nonce.
+                mtls_nonce = (
+                    validator_nonce if validator_nonce else (bootstrap_nonce if _is_dev else None)
+                )
                 client_cert_pem = None
                 client_key_pem = None
                 key_password = None

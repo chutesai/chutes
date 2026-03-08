@@ -44,8 +44,7 @@ def load_library(lib_path=None):
 
 
 def compile_py_file(filepath):
-    """Compile a .py file and return its code object, or None on failure.
-    """
+    """Compile a .py file and return its code object, or None on failure."""
     try:
         with open(filepath, "rb") as f:
             raw = f.read()
