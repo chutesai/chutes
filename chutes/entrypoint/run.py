@@ -1585,11 +1585,30 @@ class GraValMiddleware(BaseHTTPMiddleware):
                                     chunk if isinstance(chunk, bytes) else chunk.encode()
                                 )
                         raw_body = b"".join(body_parts)
+
+                        # Extract usage from plaintext before encrypting so
+                        # the API can bill based on token counts.
+                        usage = None
+                        try:
+                            resp_json = json.loads(raw_body)
+                            if isinstance(resp_json, dict) and "usage" in resp_json:
+                                usage = resp_json["usage"]
+                        except Exception:
+                            pass
+
                         compressed = gzip.compress(raw_body)
                         e2e_blob = handle.e2e_encrypt_response(e2e_ctx, compressed)
                         if e2e_blob is None:
                             raise RuntimeError("E2E encryption failed")
-                        encrypted = aegis_encrypt(e2e_blob)
+
+                        # Wrap E2E blob + plaintext usage in a JSON envelope
+                        # so the API can extract usage for billing.
+                        envelope = {"e2e": base64.b64encode(e2e_blob).decode()}
+                        if usage:
+                            envelope["usage"] = usage
+                        envelope_bytes = json.dumps(envelope)
+
+                        encrypted = aegis_encrypt(envelope_bytes)
                         if not encrypted:
                             raise RuntimeError("Transport encryption failed")
                         payload = base64.b64encode(encrypted)
@@ -1889,10 +1908,13 @@ def run_chute(
         token = get_launch_token()
         token_data = get_launch_token_data()
 
+        # Dev mode: no launch JWT means no validator to fetch nonce from.
+        _is_dev = dev or not token
+
         # Runtime integrity must be initialized first to get the nonce.
         inspecto_hash = None
         aegis_nonce = None
-        if not (dev or generate_inspecto_hash):
+        if not (_is_dev or generate_inspecto_hash):
             # Fetch validator-provided nonce before initializing aegis.
             # This nonce is embedded in the commitment (signed by the keypair),
             # proving the keypair was created for this specific session.
@@ -1953,12 +1975,12 @@ def run_chute(
             return
 
         if not generate_inspecto_hash:
-            _skip_aegis = dev and not _aegis_available_for_dev()
+            _skip_aegis = _is_dev and not _aegis_available_for_dev()
 
             # Ensure aegis handle is initialized before TLS/E2E APIs are used.
             # In dev mode we don't have validator bootstrap, so initialize with
             # an ephemeral nonce to create the runtime handle.
-            if dev and not _skip_aegis:
+            if _is_dev and not _skip_aegis:
                 validator_nonce = None
                 bootstrap_nonce = secrets.token_hex(16)
                 logger.info(
@@ -1987,7 +2009,10 @@ def run_chute(
                     f"handle_ptr={getattr(_aegis_handle, '_handle', None)}"
                 )
                 # Generate mTLS cert (nonce-bound).
-                mtls_nonce = validator_nonce if validator_nonce else None
+                # In dev mode use the ephemeral bootstrap nonce.
+                mtls_nonce = (
+                    validator_nonce if validator_nonce else (bootstrap_nonce if _is_dev else None)
+                )
                 client_cert_pem = None
                 client_key_pem = None
                 key_password = None

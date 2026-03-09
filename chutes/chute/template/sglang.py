@@ -365,6 +365,11 @@ def build_sglang_chute(
         # XXX Unfortunately, broadcast is disabled in TDX+PPCIE mode.
         if "--disable-custom-all-reduce" not in engine_args:
             engine_args += " --disable-custom-all-reduce"
+
+        # Logging of requests is already disabled by default, but just to be extra explicit about it...
+        if "--log-requests-level" not in engine_args:
+            engine_args += " --log-requests-level 0"
+
         api_key = str(uuid.uuid4())
         use_mtls = mtls_enabled()
         ssl_ctx = None
@@ -404,6 +409,28 @@ def build_sglang_chute(
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["HF_HUB_OFFLINE"] = "1"
         env["TRANSFORMERS_OFFLINE"] = "1"
+
+        # Explicitly set all the logging envs, even though they are disabled by default, just to be extra, extra clear.
+        env.update(
+            dict(
+                SGLANG_DISABLE_REQUEST_LOGGING="True",
+                SGLANG_LOG_REQUEST_EXCEEDED_MS="-1",
+                SGLANG_LOG_REQUEST_HEADERS="",
+                SGLANG_LOGGING_CONFIG_PATH="",
+                SGLANG_LOG_MS="False",
+                SGLANG_LOG_GC="False",
+                SGLANG_LOG_FORWARD_ITERS="False",
+                SGLANG_LOG_SCHEDULER_STATUS_TARGET="",
+                SGLANG_LOG_SCHEDULER_STATUS_INTERVAL="10",
+                SGLANG_PREFILL_DELAYER_DEBUG_LOG="False",
+                SGLANG_ROUTING_KEY_POLICY_DEBUG_LOG="False",
+                SGLANG_DIFFUSION_LOGGING_LEVEL="INFO",
+                SGLANG_DIFFUSION_LOGGING_PREFIX="",
+                SGLANG_DIFFUSION_LOGGING_CONFIG_PATH="",
+                SGLANG_DIFFUSION_STAGE_LOGGING="False",
+                SGLANG_PERF_LOG_DIR="",
+            )
+        )
         if use_mtls:
             env["SGLANG_SSL_KEYFILE_PEM"] = certs["server_key_pem"].decode()
             env["SGLANG_SSL_CERTFILE_PEM"] = certs["server_cert_pem"].decode()

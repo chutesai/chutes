@@ -240,9 +240,11 @@ class Cord:
                         raise StillProvisioning(await response.text())
                     elif response.status != 200:
                         logger.error(
-                            f"Error invoking {self._func.__name__} [status={response.status}]: {await response.text()}"
+                            f"Error invoking {self._func.__name__} [status={response.status}]"
                         )
-                        raise Exception(await response.text())
+                        raise Exception(
+                            f"Error invoking {self._func.__name__} [status={response.status}]"
+                        )
                     yield response
 
         started_at = time.time()
@@ -297,7 +299,7 @@ class Cord:
                     )
                     logger.debug(message)
                 elif data.get("error"):
-                    logger.error(data["error"])
+                    logger.error(f"Error in streaming response for {self._func.__name__}")
                     raise Exception(data["error"])
                 elif data.get("result"):
                     if self._passthrough:
@@ -556,7 +558,9 @@ class Cord:
             status = 499
             raise
         except Exception as exc:
-            logger.error(f"Error performing non-streamed call: {str(exc)}")
+            logger.error(
+                f"Error performing non-streamed call for {self._func.__name__}: {type(exc).__name__}"
+            )
             status = 500
             raise
         finally:
@@ -650,7 +654,9 @@ class Cord:
             raise
 
         except Exception as exc:
-            logger.error(f"Error performing stream call: {str(exc)}")
+            logger.error(
+                f"Error performing stream call for {self._func.__name__}: {type(exc).__name__}"
+            )
             status = 500
             raise
         finally:
@@ -736,10 +742,10 @@ class Cord:
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Failed to initialize stream: {e}")
+                logger.error(f"Failed to initialize stream: {type(e).__name__}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Error initializing stream: {e}",
+                    detail="Error initializing stream",
                 )
 
         return await self._remote_call(request, *args, **kwargs)
