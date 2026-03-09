@@ -382,6 +382,14 @@ def build_vllm_chute(
         if "--api-key" in engine_args:
             raise ValueError("You may not override api key!")
 
+        # Logging of requests is already disabled by default, but just to be extra explicit about it...
+        if "--enable-log-requests" not in engine_args:
+            engine_args += " --enable-log-requests=False"
+        if "--enable-log-outputs" not in engine_args:
+            engine_args += " --enable-log-outputs=False"
+        if "--enable-log-deltas" not in engine_args:
+            engine_args += " --enable-log-deltas=False"
+
         use_mtls = mtls_enabled()
         ssl_ctx = None
         wrong_ssl_ctx = None
@@ -418,6 +426,29 @@ def build_vllm_chute(
             env["VLLM_SSL_CERTFILE_PEM"] = certs["server_cert_pem"].decode()
             env["VLLM_SSL_CA_CERTS_PEM"] = certs["ca_cert_pem"].decode()
             set_encrypted_env_var(env, "VLLM_SSL_KEYFILE_PASSWORD", certs["password"])
+
+        # Explicitly set all the logging envs, even though they are disabled by default, just to be extra, extra clear.
+        env.update(
+            dict(
+                VLLM_LOGGING_PREFIX="",
+                VLLM_LOGGING_STREAM="stdout",
+                VLLM_LOGGING_COLOR="False",
+                VLLM_LOG_STATS_INTERVAL="10.0",
+                VLLM_LOG_BATCHSIZE_INTERVAL="-1",
+                VLLM_DEBUG_DUMP_PATH="",
+                VLLM_PATTERN_MATCH_DEBUG="",
+                VLLM_DEBUG_WORKSPACE="False",
+                VLLM_GC_DEBUG="",
+                VLLM_LOG_MODEL_INSPECTION="False",
+                VLLM_DEBUG_MFU_METRICS="False",
+                VLLM_DISABLE_LOG_LOGO="False",
+                VLLM_DEBUG_LOG_API_SERVER_RESPONSE="False",
+                VLLM_LOGGING_LEVEL="INFO",
+                VLLM_LOGGING_CONFIG_PATH="",
+                VLLM_TRACE_FUNCTION="0",
+                VLLM_SERVER_DEV_MODE="False",
+            )
+        )
 
         ssl_args = " --ssl-cert-reqs 2" if use_mtls else ""
         startup_command = (

@@ -64,12 +64,7 @@ setup(
         "cllmv==0.1.3",
     ],
     extras_require={
-        "dev": [
-            "black",
-            "flake8",
-            "wheel",
-            "pytest"
-        ],
+        "dev": ["black", "flake8", "wheel", "pytest"],
     },
     classifiers=[
         "Development Status :: 3 - Alpha",
