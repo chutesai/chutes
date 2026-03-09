@@ -1584,11 +1584,30 @@ class GraValMiddleware(BaseHTTPMiddleware):
                                     chunk if isinstance(chunk, bytes) else chunk.encode()
                                 )
                         raw_body = b"".join(body_parts)
+
+                        # Extract usage from plaintext before encrypting so
+                        # the API can bill based on token counts.
+                        usage = None
+                        try:
+                            resp_json = json.loads(raw_body)
+                            if isinstance(resp_json, dict) and "usage" in resp_json:
+                                usage = resp_json["usage"]
+                        except Exception:
+                            pass
+
                         compressed = gzip.compress(raw_body)
                         e2e_blob = handle.e2e_encrypt_response(e2e_ctx, compressed)
                         if e2e_blob is None:
                             raise RuntimeError("E2E encryption failed")
-                        encrypted = aegis_encrypt(e2e_blob)
+
+                        # Wrap E2E blob + plaintext usage in a JSON envelope
+                        # so the API can extract usage for billing.
+                        envelope = {"e2e": base64.b64encode(e2e_blob).decode()}
+                        if usage:
+                            envelope["usage"] = usage
+                        envelope_bytes = json.dumps(envelope)
+
+                        encrypted = aegis_encrypt(envelope_bytes)
                         if not encrypted:
                             raise RuntimeError("Transport encryption failed")
                         payload = base64.b64encode(encrypted)
