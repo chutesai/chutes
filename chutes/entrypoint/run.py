@@ -1914,6 +1914,7 @@ def run_chute(
         # Runtime integrity must be initialized first to get the nonce.
         inspecto_hash = None
         aegis_nonce = None
+        e2e_pubkey = None
         if not (_is_dev or generate_inspecto_hash):
             # Fetch validator-provided nonce before initializing aegis.
             # This nonce is embedded in the commitment (signed by the keypair),
@@ -2155,6 +2156,11 @@ def run_chute(
 
         chute_filename = os.path.basename(chute_ref_str.split(":")[0] + ".py")
         chute_abspath: str = os.path.abspath(os.path.join(os.getcwd(), chute_filename))
+
+        # Start TEE evidence server (after e2e_init; requires e2e_pubkey for nonce binding)
+        if is_tee_env() and e2e_pubkey:
+            await TeeEvidenceService().start(e2e_pubkey=e2e_pubkey)
+
         if token:
             (
                 allow_external_egress,
@@ -2564,8 +2570,6 @@ def run_chute(
 
         exception_raised = False
         try:
-            if is_tee_env():
-                await TeeEvidenceService().start()
             await _run_chute()
         except Exception as exc:
             logger.error(

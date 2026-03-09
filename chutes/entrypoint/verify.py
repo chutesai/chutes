@@ -3,6 +3,7 @@ import asyncio
 import base64
 from contextlib import asynccontextmanager
 from functools import lru_cache
+import hashlib
 import os
 import ssl
 import socket
@@ -258,10 +259,10 @@ class TeeEvidenceService:
             self._server: Server | None = None
             self._task: asyncio.Task | None = None
 
-    async def start(self) -> dict:
+    async def start(self, e2e_pubkey: str) -> dict:
         """
         Start the evidence server. Idempotent: if already started, returns the same
-        port mapping without starting a second server.
+        port mapping without starting a second server. Requires e2e_pubkey for nonce binding.
 
         Returns:
             Port mapping dict to append to port_mappings in the run entrypoint, e.g.:
@@ -269,6 +270,7 @@ class TeeEvidenceService:
         """
         if self._task is not None:
             return self._port_mapping()
+        self._e2e_pubkey = e2e_pubkey
         self._port = _parse_evidence_port()
         evidence_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
         evidence_app.add_api_route(
@@ -319,8 +321,9 @@ class TeeEvidenceService:
     async def _fetch_evidence(self, nonce: str) -> dict:
         """Request evidence from the attestation service for the given nonce."""
         url = f"{ATTESTATION_SERVICE_BASE_URL}/server/attest"
+        _nonce = hashlib.sha256((nonce + self._e2e_pubkey).encode()).hexdigest()
         params = {
-            "nonce": nonce,
+            "nonce": _nonce,
             "gpu_ids": os.environ.get("CHUTES_NVIDIA_DEVICES"),
         }
         async with _attestation_session() as http_session:
