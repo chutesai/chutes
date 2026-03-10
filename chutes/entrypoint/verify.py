@@ -278,7 +278,24 @@ class TeeEvidenceService:
         )
         self._server = Server(config)
         self._task = asyncio.create_task(self._server.serve())
-        await asyncio.sleep(0.5)
+
+        # Wait for the server to be listening.
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            if self._task.done():
+                exc = self._task.exception()
+                raise RuntimeError(f"TEE evidence server failed to start: {exc}")
+            try:
+                sock = socket.create_connection(("127.0.0.1", self._port), timeout=0.1)
+                sock.close()
+                break
+            except OSError:
+                continue
+        else:
+            raise RuntimeError(
+                f"TEE evidence server did not start listening on port {self._port} within 2s"
+            )
+
         logger.info(f"Started TEE evidence server on port {self._port}")
         return self._port_mapping()
 
@@ -367,7 +384,7 @@ class TeeEvidenceService:
 
 
 class TeeGpuVerifier(GpuVerifier):
-    
+
     @property
     def validator_url(self) -> str:
         parsed = urlparse(self._url)
