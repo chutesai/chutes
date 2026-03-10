@@ -377,14 +377,13 @@ class TeeEvidenceService:
 
 
 class TeeGpuVerifier(GpuVerifier):
+    
     @property
-    @lru_cache(maxsize=1)
     def validator_url(self) -> str:
         parsed = urlparse(self._url)
         return f"{parsed.scheme}://{parsed.netloc}"
 
     @property
-    @lru_cache(maxsize=1)
     def deployment_id(self) -> str:
         hostname = os.environ.get("HOSTNAME")
         # Pod name format: chute-{deployment_id}-{k8s-suffix}
