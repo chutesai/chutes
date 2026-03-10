@@ -32,7 +32,7 @@ TEE_EVIDENCE_RUNTIME_ENDPOINT = "/evidence"  # Third parties: accept nonce from 
 # Global nonce storage for TEE verification (validator flow only)
 # Set during fetch_symmetric_key; used only by /verify to prove same instance
 _evidence_nonce: str | None = None
-_evidence_nonce_locked: bool = False
+_evidence_nonce_lock = asyncio.Lock()
 
 
 @asynccontextmanager
@@ -46,34 +46,24 @@ async def _use_evidence_nonce(validator_url: str):
 
     Yields:
         The nonce value
-
-    Raises:
-        RuntimeError: If nonce is already locked (multiple verification processes detected)
     """
-    global _evidence_nonce, _evidence_nonce_locked
+    global _evidence_nonce
 
-    if _evidence_nonce_locked:
-        raise RuntimeError(
-            "TEE nonce already locked. Only one verification process should be running."
-        )
+    async with _evidence_nonce_lock:
+        # Fetch nonce from validator
+        url = urljoin(validator_url, "/instances/nonce")
+        async with aiohttp.ClientSession(raise_for_status=True) as http_session:
+            async with http_session.get(url) as resp:
+                logger.success(
+                    f"Successfully initiated attestation with validator {validator_url}."
+                )
+                nonce = await resp.json()
 
-    # Fetch nonce from validator
-    url = urljoin(validator_url, "/instances/nonce")
-    async with aiohttp.ClientSession(raise_for_status=True) as http_session:
-        async with http_session.get(url) as resp:
-            logger.success(f"Successfully initiated attestation with validator {validator_url}.")
-            nonce = await resp.json()
-
-    # Set the nonce and lock
-    _evidence_nonce = nonce
-    _evidence_nonce_locked = True
-
-    try:
-        yield nonce
-    finally:
-        # Clean up nonce state
-        _evidence_nonce = None
-        _evidence_nonce_locked = False
+        _evidence_nonce = nonce
+        try:
+            yield nonce
+        finally:
+            _evidence_nonce = None
 
 
 def _get_evidence_nonce() -> str | None:
