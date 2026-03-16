@@ -115,6 +115,30 @@ TCP_STATES = {
 }
 
 
+def _is_disconnect_error(exc: Exception) -> bool:
+    """
+    Identify the transport/session teardown errors we expect when a client
+    disappears while middleware is still draining a response body stream.
+    """
+    if isinstance(
+        exc,
+        (
+            BrokenPipeError,
+            ConnectionAbortedError,
+            ConnectionResetError,
+            asyncio.IncompleteReadError,
+        ),
+    ):
+        return True
+    if isinstance(exc, aiohttp.ClientConnectionError):
+        return True
+    if isinstance(exc, RuntimeError):
+        message = str(exc).lower()
+        if "session is closed" in message or "session closed" in message:
+            return True
+    return False
+
+
 def _hex_to_ipv4(hex_ip: str) -> str:
     return socket.inet_ntoa(struct.pack("<I", int(hex_ip, 16)))
 
@@ -1563,6 +1587,10 @@ class GraValMiddleware(BaseHTTPMiddleware):
                             logger.info("E2E stream cancelled (client disconnect)")
                             _conn_stats.requests_in_flight.pop(request.request_id, None)
                         except Exception as exc:
+                            if _is_disconnect_error(exc):
+                                logger.info("E2E body iterator closed after client disconnect")
+                                _conn_stats.requests_in_flight.pop(request.request_id, None)
+                                return
                             logger.warning(f"Unhandled exception in E2E body iterator: {exc}")
                             _conn_stats.requests_in_flight.pop(request.request_id, None)
                             raise
@@ -1579,11 +1607,22 @@ class GraValMiddleware(BaseHTTPMiddleware):
                     e2e_ctx = getattr(request.state, "e2e_ctx", None)
                     try:
                         body_parts = []
-                        async for chunk in original_iterator:
-                            if chunk:
-                                body_parts.append(
-                                    chunk if isinstance(chunk, bytes) else chunk.encode()
+                        try:
+                            async for chunk in original_iterator:
+                                if chunk:
+                                    body_parts.append(
+                                        chunk if isinstance(chunk, bytes) else chunk.encode()
+                                    )
+                        except Exception as exc:
+                            if _is_disconnect_error(exc):
+                                logger.info(
+                                    "Client disconnected while collecting non-stream E2E response"
                                 )
+                                return ORJSONResponse(
+                                    status_code=499,
+                                    content={"detail": "Client disconnected"},
+                                )
+                            raise
                         raw_body = b"".join(body_parts)
 
                         # Extract usage from plaintext before encrypting so
@@ -1636,6 +1675,12 @@ class GraValMiddleware(BaseHTTPMiddleware):
                             logger.info("Stream cancelled (client disconnect)")
                             _conn_stats.requests_in_flight.pop(request.request_id, None)
                         except Exception as exc:
+                            if _is_disconnect_error(exc):
+                                logger.info(
+                                    "Body iterator closed after client disconnect"
+                                )
+                                _conn_stats.requests_in_flight.pop(request.request_id, None)
+                                return
                             logger.warning(f"Unhandled exception in body iterator: {exc}")
                             _conn_stats.requests_in_flight.pop(request.request_id, None)
                             raise

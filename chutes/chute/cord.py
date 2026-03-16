@@ -46,17 +46,64 @@ def _is_async(func) -> bool:
     return inspect.iscoroutinefunction(func) or inspect.isasyncgenfunction(func)
 
 
-def _run_user_coro(coro):
+class _CancelHandle:
+    """Allow the main event loop to cancel a user coroutine running in a worker thread.
+
+    The handle is populated by ``_run_user_coro`` once the inner event loop and
+    task are available.  Calling :meth:`cancel` from *any* thread injects a
+    ``CancelledError`` into the coroutine at its next ``await`` point (e.g.
+    an aiohttp download).  Blocking C/CUDA calls will finish their current
+    invocation before the cancellation takes effect — that is an inherent
+    limitation of Python threads.
+    """
+    __slots__ = ("_inner_loop", "_inner_task")
+
+    def __init__(self):
+        self._inner_loop: asyncio.AbstractEventLoop | None = None
+        self._inner_task: asyncio.Task | None = None
+
+    def cancel(self):
+        loop = self._inner_loop
+        task = self._inner_task
+        if loop is not None and task is not None:
+            try:
+                loop.call_soon_threadsafe(task.cancel)
+            except RuntimeError:
+                pass  # loop already closed
+
+
+def _run_user_coro(coro, cancel_handle=None):
     """Run an async user coroutine in a *new* event loop on the current (worker) thread.
 
     This is called from within the thread pool so the main event loop is never
     touched.  A fresh loop is created and destroyed per call — cheap relative to
     the minutes-long inference workloads this is designed for.
+
+    If *cancel_handle* is provided it is populated with references to the inner
+    loop and task so the caller can cancel the coroutine from the main thread.
     """
     loop = asyncio.new_event_loop()
+    if cancel_handle is not None:
+        cancel_handle._inner_loop = loop
     try:
+        if cancel_handle is not None:
+            async def _wrapper():
+                cancel_handle._inner_task = asyncio.current_task()
+                return await coro
+            return loop.run_until_complete(_wrapper())
         return loop.run_until_complete(coro)
     finally:
+        try:
+            # Properly clean up async generators and pending tasks (e.g.
+            # aiohttp connector cleanup callbacks) before closing the loop.
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception:
+            pass
         loop.close()
 
 
@@ -342,19 +389,27 @@ class Cord:
             ) as response:
                 yield response
 
-    async def _run_in_thread(self, *args, **kwargs):
+    async def _run_in_thread(self, *args, _cancel_handle=None, **kwargs):
         """Run user function (sync *or* async) in the dedicated thread pool.
 
         Sync functions are called directly in the worker thread.  Async
         functions get a fresh event loop in the worker thread so even a
         badly-written ``async def`` that blocks for minutes cannot starve
         the main loop.
+
+        If *_cancel_handle* is supplied (async path only) it is threaded
+        through to ``_run_user_coro`` so the caller can cancel the inner
+        coroutine from the main event loop.
         """
         loop = asyncio.get_running_loop()
         if _is_async(self._func):
             return await loop.run_in_executor(
                 _user_code_executor,
-                functools.partial(_run_user_coro, self._func(self._app, *args, **kwargs)),
+                functools.partial(
+                    _run_user_coro,
+                    self._func(self._app, *args, **kwargs),
+                    _cancel_handle,
+                ),
             )
         return await loop.run_in_executor(
             _user_code_executor,
@@ -520,7 +575,93 @@ class Cord:
             # long-running or blocking work (including "async def" functions
             # that never truly await) cannot starve the event loop and prevent
             # health-check pings from responding.
-            response = await asyncio.wait_for(self._run_in_thread(*args, **kwargs), 1800)
+            #
+            # Run a disconnect watcher in parallel so we detect client
+            # disconnects early and:
+            #   1. Return a clean 499 before the middleware tries to drain
+            #      the response body on a dead H2 stream (the primary
+            #      "RuntimeError: session closed" vector).
+            #   2. Cancel the user coroutine's inner task so it stops at
+            #      the next await point (e.g. mid-download).  Blocking
+            #      C/CUDA calls will finish their current invocation
+            #      before the cancellation takes effect.
+            cancel_handle = _CancelHandle() if _is_async(self._func) else None
+
+            async def _run_user_code():
+                try:
+                    return await asyncio.wait_for(
+                        self._run_in_thread(*args, _cancel_handle=cancel_handle, **kwargs),
+                        1800,
+                    )
+                except asyncio.TimeoutError:
+                    # wait_for cancels the asyncio future but the thread-pool
+                    # job keeps running.  Cancel the inner coroutine too.
+                    if cancel_handle is not None:
+                        cancel_handle.cancel()
+                    raise
+
+            async def _watch_user_disconnect():
+                try:
+                    while True:
+                        message = await request._receive()
+                        if message.get("type") == "http.disconnect":
+                            logger.info(
+                                f"[{self._func.__name__}] Client disconnected during "
+                                f"non-passthrough execution, cancelling worker"
+                            )
+                            if cancel_handle is not None:
+                                cancel_handle.cancel()
+                            raise HTTPException(
+                                status_code=499,
+                                detail="Client disconnected",
+                            )
+                except HTTPException:
+                    raise
+                except (
+                    ConnectionError,
+                    asyncio.IncompleteReadError,
+                ) as exc:
+                    # Transport-level teardown — treat as a disconnect.
+                    logger.info(f"watch_disconnect transport error (non-passthrough): {exc}")
+                    if cancel_handle is not None:
+                        cancel_handle.cancel()
+                    raise HTTPException(
+                        status_code=499,
+                        detail="Client disconnected",
+                    )
+                except Exception as exc:
+                    logger.error(
+                        f"Unexpected error in watch_disconnect (non-passthrough): "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    if cancel_handle is not None:
+                        cancel_handle.cancel()
+                    raise
+
+            user_task = asyncio.create_task(_run_user_code())
+            watcher_task = asyncio.create_task(_watch_user_disconnect())
+
+            done, pending = await asyncio.wait(
+                {user_task, watcher_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            if watcher_task in done:
+                exc = watcher_task.exception()
+                if exc:
+                    raise exc
+                raise HTTPException(
+                    status_code=499,
+                    detail="Client disconnected",
+                )
+
+            response = user_task.result()
             logger.success(
                 f"Completed request [{self._func.__name__} passthrough={self._passthrough}] "
                 f"in {time.time() - started_at} seconds"

@@ -107,11 +107,15 @@ def _build_local(image):
         tmp.flush()
         tmp.seek(0)
         logger.info(f"Starting build of {tmp.name}...")
+        docker = shutil.which("docker")
+        if not docker:
+            raise FileNotFoundError("docker executable not found on PATH")
         os.execv(
-            "/usr/bin/docker",
+            docker,
             [
-                "/usr/bin/docker",
+                "docker",
                 "build",
+                "--platform=linux/amd64",
                 "-t",
                 f"{image.name}:{image.tag}",
                 ".",
