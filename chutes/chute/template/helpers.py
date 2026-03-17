@@ -565,15 +565,18 @@ async def monitor_engine(
     ssl_context: ssl.SSLContext = None,
     wrong_ssl_context: ssl.SSLContext = None,
     mtls_check_interval: int = 30,
+    mtls_failure_threshold: int = 3,
 ):
     """
     Monitor the engine process and HTTP endpoint.
     Periodically re-validates mTLS invariants if ssl_context is set.
     """
     consecutive_failures = 0
+    mtls_consecutive_failures = 0
     scheme = "https" if ssl_context else "http"
     connector_factory = lambda: aiohttp.TCPConnector(ssl=ssl_context) if ssl_context else None  # noqa
-    last_mtls_check = 0
+    # Delay the first mTLS re-validation until the engine has been up for a full interval.
+    last_mtls_check = time.time()
 
     while True:
         if process.poll() is not None:
@@ -650,12 +653,47 @@ async def monitor_engine(
                     except (aiohttp.ClientError, ConnectionError, OSError, ssl.SSLError):
                         pass
 
+                    mtls_consecutive_failures = 0
                     logger.debug(f"mTLS monitor: periodic re-validation passed for {model_name}")
                 except SystemExit:
                     raise
+                except (
+                    aiohttp.ClientError,
+                    asyncio.TimeoutError,
+                    ConnectionError,
+                    OSError,
+                    ssl.SSLError,
+                ) as exc:
+                    mtls_consecutive_failures += 1
+                    logger.warning(
+                        "mTLS monitor transport/runtime failure for {} "
+                        "(consecutive_failures={}, threshold={}): {} ({})",
+                        model_name,
+                        mtls_consecutive_failures,
+                        mtls_failure_threshold,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    if mtls_consecutive_failures >= mtls_failure_threshold:
+                        raise RuntimeError(
+                            "mTLS monitor transport/runtime failures exceeded threshold "
+                            f"for {model_name} ({type(exc).__name__}): {exc!r}"
+                        ) from exc
                 except Exception as exc:
-                    raise RuntimeError(
-                        f"mTLS monitor: unexpected error during re-validation: {exc}"
-                    ) from exc
+                    mtls_consecutive_failures += 1
+                    logger.warning(
+                        "mTLS monitor invariant failure for {} "
+                        "(consecutive_failures={}, threshold={}): {} ({})",
+                        model_name,
+                        mtls_consecutive_failures,
+                        mtls_failure_threshold,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    if mtls_consecutive_failures >= mtls_failure_threshold:
+                        raise RuntimeError(
+                            "mTLS monitor invariant failures exceeded threshold "
+                            f"for {model_name} ({type(exc).__name__}): {exc!r}"
+                        ) from exc
 
         await asyncio.sleep(check_interval)

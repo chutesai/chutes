@@ -455,7 +455,9 @@ def build_sglang_chute(
                 return
             exc = t.exception()
             if exc:
-                logger.error("SGLang monitor task failed, terminating: {}", exc)
+                logger.opt(exception=exc).error(
+                    "SGLang monitor task failed, terminating: {} ({})", type(exc).__name__, exc
+                )
                 force_exit(1)
 
         self._monitor_task.add_done_callback(_on_monitor_done)
