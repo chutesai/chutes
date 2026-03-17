@@ -378,3 +378,22 @@ curl -XPOST http://127.0.0.1:8000/chat_stream -H 'content-type: application/json
 }'
 ```
 
+
+
+## OpenAI-compatible /v1 usage
+
+Use a single canonical header for all /v1 endpoints (chat/completions, embeddings, models):
+
+```
+Authorization: Bearer <your-api-key>
+```
+
+Examples:
+
+```bash
+# Chat completions
+curl -sS "$BASE/v1/chat/completions"   -H "content-type: application/json"   -H "authorization: Bearer $KEY"   -d '{"model":"your-model","messages":[{"role":"user","content":"Hello!"}]}'
+
+# Embeddings
+curl -sS "$BASE/v1/embeddings"   -H "content-type: application/json"   -H "authorization: Bearer $KEY"   -d '{"model":"your-embedding-model","input":["hello world"]}'
+```
