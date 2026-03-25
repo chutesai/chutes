@@ -12,7 +12,7 @@ import asyncio
 import backoff
 import orjson as json
 from concurrent.futures import ThreadPoolExecutor
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from typing import Optional, Dict, Any
 from fastapi import Request, HTTPException, status
 from loguru import logger
@@ -175,7 +175,10 @@ class Cord:
             else None
         )
         self.output_content_type = output_content_type
-        self.output_schema = output_schema
+        if inspect.isclass(output_schema) and issubclass(output_schema, BaseModel):
+            self.output_schema = output_schema.model_json_schema()
+        else:
+            self.output_schema = output_schema
 
     @property
     def path(self):

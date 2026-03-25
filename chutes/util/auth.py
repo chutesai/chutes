@@ -1,7 +1,9 @@
+import inspect
 import time
 import hashlib
 import orjson as json
 from typing import Dict, Any
+from pydantic import BaseModel
 from substrateinterface import Keypair
 from chutes.constants import (
     USER_ID_HEADER,
@@ -51,7 +53,11 @@ def sign_request(payload: Dict[str, Any] | str | None = None, purpose: str = Non
     if payload is not None:
         if isinstance(payload, dict):
             headers["Content-Type"] = "application/json"
-            payload_string = json.dumps(payload)
+            def _default(obj):
+                if inspect.isclass(obj) and issubclass(obj, BaseModel):
+                    return obj.model_json_schema()
+                raise TypeError(f"Type is not JSON serializable: {type(obj).__name__}")
+            payload_string = json.dumps(payload, default=_default)
         else:
             payload_string = payload
         signature_string = get_signing_message(
