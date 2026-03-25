@@ -71,7 +71,10 @@ def get_config() -> Config:
                         f"Please ensure you have an [auth] section defined in {CONFIG_PATH} with 'hotkey_seed', 'hotkey_name', and 'hotkey_ss58address' values"
                     )
 
-        api_base_url = raw_config.get("api", "base_url")
+        try:
+            api_base_url = raw_config.get("api", "base_url")
+        except NoSectionError:
+            api_base_url = None
         if not api_base_url:
             api_base_url = os.getenv("CHUTES_API_URL", "https://api.chutes.ai")
         generic_config = GenericConfig(api_base_url=api_base_url)
