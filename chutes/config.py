@@ -2,7 +2,7 @@ from functools import lru_cache
 import os
 from loguru import logger
 from pathlib import Path
-from configparser import ConfigParser, NoSectionError, NoOptionError
+from configparser import ConfigParser, NoSectionError, NoOptionError, ParsingError
 from chutes.constants import CHUTES_DIR
 from chutes.exception import AuthenticationRequired, NotConfigured
 from dataclasses import dataclass
@@ -60,7 +60,13 @@ def get_config() -> Config:
                 )
         else:
             logger.info(f"Loading chutes config from {CONFIG_PATH}...")
-            raw_config.read(CONFIG_PATH)
+            try:
+                raw_config.read(CONFIG_PATH)
+            except ParsingError:
+                if not ALLOW_MISSING:
+                    raise NotConfigured(
+                        f"Unable to parse {CONFIG_PATH} — please check the file is valid INI format!"
+                    )
 
             try:
                 auth_config = AuthConfig(
