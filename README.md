@@ -4,6 +4,18 @@ This package provides the command line interface and development kit for use wit
 
 The miner code is available [here](https://github.com/rayonlabs/chutes-miner), and validator/API code [here](https://github.com/rayonlabs/chutes-api).
 
+## 📦 Installation
+
+First, install uv (if you don't have it):
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then run the CLI directly from GitHub:
+```bash
+uv tool install git+https://github.com/chutesai/chutes
+```
+
 ## 📚 Glossary
 
 Before getting into the weeds, it might be useful to understand the terminology.
