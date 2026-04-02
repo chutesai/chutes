@@ -337,6 +337,17 @@ class WarmupDashboard(App):
                     instance_count = result.get("instance_count", 0)
                     bounty = result.get("bounty")
 
+                    # Seed/update GPU tracking from poll instance data.
+                    gpu_panel = self.query_one("#gpu-panel", GpuPanel)
+                    for inst in result.get("instances", []):
+                        iid = inst.get("instance_id")
+                        gpu_type = inst.get("gpu_model_name")
+                        gpu_count = inst.get("gpu_count")
+                        if iid and gpu_type and gpu_count:
+                            gpu_panel.track_instance(
+                                iid, gpu_type, gpu_count, active=inst.get("active", False)
+                            )
+
                     header_widget.set_status(chute_status)
                     if bounty:
                         header_widget.set_bounty(bounty)
