@@ -90,6 +90,7 @@ class GpuPanel(Static):
         self.node_selector = node_selector or {}
         self._observed_gpus: dict[str, dict] = {}
         self._instance_state: dict[str, dict] = {}
+        self._total_instances = 0
         super().__init__(**kwargs)
 
     def on_mount(self):
@@ -111,7 +112,7 @@ class GpuPanel(Static):
             parts.append(f"[cyan]>={min_vram}GB[/]")
         left = "  ".join(parts)
 
-        # Right side: observed GPUs
+        # Right side: observed GPUs or estimated total
         if self._observed_gpus:
             obs = []
             for gpu_type, info in sorted(self._observed_gpus.items()):
@@ -119,6 +120,9 @@ class GpuPanel(Static):
                 total = info.get("total", 0)
                 obs.append(f"{gpu_type}: [green]{active}[/]/[dim]{total}[/]")
             right = "  |  [bold]Live:[/] " + "  ".join(obs)
+        elif self._total_instances > 0:
+            total_gpus = gpu_count * self._total_instances
+            right = f"  |  [bold]Total:[/] [dim]{total_gpus} GPUs across {self._total_instances} instances[/]"
         else:
             right = ""
 
@@ -234,6 +238,10 @@ class WarmupDashboard(App):
         self._log_workers: dict[str, Worker] = {}
         self._events_client: Optional[EventsClient] = None
         self._is_hot = any(inst.get("active") for inst in self.existing_instances)
+        self._total_instances = len(self.existing_instances)
+        self._known_instance_ids: set[str] = {
+            inst.get("instance_id") for inst in self.existing_instances if inst.get("instance_id")
+        }
 
     def compose(self) -> ComposeResult:
         initial_status = "HOT" if self._is_hot else "COLD"
@@ -258,8 +266,20 @@ class WarmupDashboard(App):
                 self._add_log_panel(instance_id)
         self._update_status_bar()
 
+    # border (2) + at least 3 lines of visible log text per panel
+    MIN_PANEL_HEIGHT = 5
+
+    def _max_log_panels(self) -> int:
+        """Max panels that fit in a single column with MIN_PANEL_HEIGHT each."""
+        # Terminal height minus header(3) + top panels(7) + status bar(1) = 11 overhead
+        term_height = self.screen.size.height if self.screen else 24
+        avail = max(term_height - 11, 6)
+        return max(1, avail // self.MIN_PANEL_HEIGHT)
+
     def _add_log_panel(self, instance_id: str):
         if instance_id in self._log_panels:
+            return
+        if len(self._log_panels) >= self._max_log_panels():
             return
         panel = LogPanel(instance_id)
         self._log_panels[instance_id] = panel
@@ -284,26 +304,23 @@ class WarmupDashboard(App):
         self._update_status_bar()
 
     def _reflow_grid(self):
-        count = len(self._log_panels)
         grid = self.query_one("#log-grid")
-        if count <= 1:
-            cols = 1
-        elif count <= 2:
-            cols = 2
-        elif count <= 4:
-            cols = 2
-        else:
-            cols = 3
-        grid.styles.grid_size_columns = cols
+        grid.styles.grid_size_columns = 1
 
     def _update_status_bar(self):
         bar = self.query_one("#status-bar", Static)
-        count = len(self._log_panels)
+        shown = len(self._log_panels)
+        total = self._total_instances
         hot_str = "[green]HOT[/]" if self._is_hot else "[yellow]COLD[/]"
+        inst_str = (
+            f"[bold]{total}[/]"
+            if shown == total
+            else f"[bold]{shown}[/] shown / [bold]{total}[/] total"
+        )
         bar.update(
             f"Press [bold]q[/] to quit  |  "
             f"Status: {hot_str}  |  "
-            f"Instances: [bold]{count}[/]  |  "
+            f"Instances: {inst_str}  |  "
             f"Chute: [dim]{self.chute_id[:12]}...[/]"
         )
 
@@ -337,9 +354,18 @@ class WarmupDashboard(App):
                     instance_count = result.get("instance_count", 0)
                     bounty = result.get("bounty")
 
+                    # Update total instance count from poll.
+                    poll_instances = result.get("instances", [])
+                    if poll_instances:
+                        self._total_instances = len(poll_instances)
+                    elif instance_count:
+                        self._total_instances = max(self._total_instances, instance_count)
+
                     # Seed/update GPU tracking from poll instance data.
                     gpu_panel = self.query_one("#gpu-panel", GpuPanel)
-                    for inst in result.get("instances", []):
+                    gpu_panel._total_instances = self._total_instances
+                    gpu_panel._refresh_content()
+                    for inst in poll_instances:
                         iid = inst.get("instance_id")
                         gpu_type = inst.get("gpu_model_name")
                         gpu_count = inst.get("gpu_count")
@@ -347,7 +373,9 @@ class WarmupDashboard(App):
                             gpu_panel.track_instance(
                                 iid, gpu_type, gpu_count, active=inst.get("active", False)
                             )
+                            self._known_instance_ids.add(iid)
 
+                    self._update_status_bar()
                     header_widget.set_status(chute_status)
                     if bounty:
                         header_widget.set_bounty(bounty)
@@ -404,7 +432,11 @@ class WarmupDashboard(App):
             if reason == "instance_created" and instance_id:
                 if gpu_type and gpu_count:
                     gpu_panel.track_instance(instance_id, gpu_type, gpu_count, active=False)
+                if instance_id not in self._known_instance_ids:
+                    self._known_instance_ids.add(instance_id)
+                    self._total_instances += 1
                 self._add_log_panel(instance_id)
+                self._update_status_bar()
 
             elif reason == "instance_hot":
                 # instance_hot = verified but not yet active, treat same as created
@@ -423,6 +455,8 @@ class WarmupDashboard(App):
                     gpu_panel.track_instance(
                         instance_id, gpu_type, gpu_count, active=False, removed=True
                     )
+                self._known_instance_ids.discard(instance_id)
+                self._total_instances = max(0, self._total_instances - 1)
                 self._remove_log_panel(instance_id)
 
             elif reason == "instance_disabled" and instance_id:

@@ -172,6 +172,102 @@ async def stream_instance_logs(instance_id: str, config, backfill: int = 100):
                 raise Exception(f"Error streaming logs from instance {instance_id}: {e}") from e
 
 
+async def plain_stream_all_instances(chute_name: str, config, headers):
+    """Stream logs from all instances to stdout with instance ID prefixes."""
+    active_tasks: dict[str, asyncio.Task] = {}
+    seen_ids: set[str] = set()
+
+    async def _stream_one(instance_id: str):
+        short_id = instance_id[:8]
+        log_headers, _ = sign_request(purpose="logs")
+        try:
+            async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
+                async with session.get(
+                    f"/instances/{instance_id}/logs",
+                    headers=log_headers,
+                    params={"backfill": "100"},
+                ) as response:
+                    if response.status != 200:
+                        logger.warning(f"[{short_id}] Log stream failed: {response.status}")
+                        return
+                    logger.info(f"[{short_id}] Streaming logs...")
+                    buffer = b""
+                    async for chunk in response.content.iter_any():
+                        if not chunk:
+                            continue
+                        buffer += chunk
+                        while b"\n" in buffer:
+                            line, buffer = buffer.split(b"\n", 1)
+                            if not line.strip() or line.startswith(b":"):
+                                continue
+                            if line.startswith(b"data: "):
+                                data_content = line[6:].strip()
+                                if not data_content:
+                                    continue
+                                try:
+                                    data = json.loads(data_content)
+                                    log_msg = data.get("log", "")
+                                    if log_msg and log_msg.strip() and len(log_msg.strip()) > 1:
+                                        sys.stdout.buffer.write(
+                                            f"[{short_id}] {log_msg.rstrip()}\n".encode("utf-8")
+                                        )
+                                        sys.stdout.buffer.flush()
+                                except Exception:
+                                    pass
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.warning(f"[{short_id}] Stream ended: {e}")
+        finally:
+            active_tasks.pop(instance_id, None)
+
+    async def _discover_instances():
+        """Get instance IDs from the chute info endpoint."""
+        try:
+            h, _ = sign_request(purpose="chutes")
+            async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
+                # Try quick warmup first (has gpu info too)
+                async with session.get(
+                    f"/chutes/warmup/{chute_name}",
+                    headers=h,
+                    params={"quick": "true"},
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        instances = result.get("instances", [])
+                        if instances:
+                            return [i.get("instance_id") for i in instances if i.get("instance_id")]
+                # Fallback: chute detail endpoint
+                async with session.get(f"/chutes/{chute_name}", headers=h) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return [
+                            i.get("instance_id")
+                            for i in data.get("instances", [])
+                            if i.get("instance_id")
+                        ]
+        except Exception as e:
+            logger.warning(f"Failed to discover instances: {e}")
+        return []
+
+    logger.info(f"Watching for instances of {chute_name}...")
+    try:
+        while True:
+            instance_ids = await _discover_instances()
+            for iid in instance_ids:
+                if iid not in seen_ids:
+                    seen_ids.add(iid)
+                    active_tasks[iid] = asyncio.create_task(_stream_one(iid))
+            if not seen_ids:
+                logger.info("Waiting for instances...")
+            await asyncio.sleep(10.0)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass
+    finally:
+        for task in active_tasks.values():
+            task.cancel()
+
+
 async def monitor_warmup(chute_name: str, config, headers):
     """
     Monitor the warmup stream and log status updates.
@@ -285,6 +381,9 @@ def warmup_chute(
     ),
     debug: bool = typer.Option(False, help="enable debug logging"),
     stream_logs: bool = typer.Option(
+        False, help="stream plain-text logs from all instances to stdout"
+    ),
+    dashboard: bool = typer.Option(
         False, help="launch TUI dashboard with real-time events and instance logs"
     ),
 ):
@@ -306,7 +405,7 @@ def warmup_chute(
         """
         Do the warmup.
         """
-        nonlocal chute_id_or_ref_str, config_path, debug, stream_logs
+        nonlocal chute_id_or_ref_str, config_path, debug, stream_logs, dashboard
         chute_name = chute_id_or_ref_str
         if ":" in chute_id_or_ref_str and os.path.exists(chute_id_or_ref_str.split(":")[0] + ".py"):
             from chutes.chute.base import Chute
@@ -319,7 +418,9 @@ def warmup_chute(
         headers, _ = sign_request(purpose="chutes")
 
         if stream_logs:
-            # Resolve chute info for the dashboard
+            await plain_stream_all_instances(chute_name, config, headers)
+        else:
+            # Dashboard is the default (also explicit with --dashboard)
             chute_info = await _resolve_chute(chute_name, config, headers)
             chute_id = chute_info["chute_id"]
             if not chute_id:
@@ -329,16 +430,13 @@ def warmup_chute(
 
             from chutes.entrypoint.warmup_dashboard import WarmupDashboard
 
-            dashboard = WarmupDashboard(
+            app = WarmupDashboard(
                 chute_name=chute_name,
                 chute_id=chute_id,
                 node_selector=chute_info["node_selector"],
                 existing_instances=chute_info["instances"],
                 config=config,
             )
-            await dashboard.run_async()
-        else:
-            # Just monitor warmup
-            await monitor_warmup(chute_name, config, headers)
+            await app.run_async()
 
     return asyncio.run(warmup())

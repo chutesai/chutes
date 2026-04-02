@@ -35,15 +35,14 @@ Screen {
 #log-grid {
     column-span: 2;
     layout: grid;
-    grid-size: 2;
-    grid-gutter: 1;
+    grid-size: 1;
     padding: 0 1;
+    overflow-y: auto;
 }
 
 .log-panel {
     border: solid $secondary;
-    height: 100%;
-    min-height: 10;
+    height: 1fr;
 }
 
 #status-bar {
