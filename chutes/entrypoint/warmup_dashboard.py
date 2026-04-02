@@ -24,10 +24,12 @@ from chutes.util.auth import sign_request
 class HeaderWidget(Static):
     """Top bar showing chute name, status, GPU requirements, and bounty info."""
 
-    def __init__(self, chute_name: str, node_selector: dict, **kwargs):
+    def __init__(
+        self, chute_name: str, node_selector: dict, initial_status: str = "COLD", **kwargs
+    ):
         self.chute_name = chute_name
         self.node_selector = node_selector or {}
-        self._status = "COLD"
+        self._status = initial_status
         self._bounty_info = None
         super().__init__(**kwargs)
 
@@ -91,9 +93,9 @@ class GpuPanel(Static):
         super().__init__(**kwargs)
 
     def on_mount(self):
-        self._render()
+        self._refresh_content()
 
-    def _render(self):
+    def _refresh_content(self):
         lines = ["[bold underline]GPU Requirements[/]\n"]
         gpu_count = self.node_selector.get("gpu_count", 1)
         include = self.node_selector.get("include", [])
@@ -153,7 +155,7 @@ class GpuPanel(Static):
                 "gpu_count": gpu_count,
                 "active": active,
             }
-        self._render()
+        self._refresh_content()
 
 
 class EventsPanel(RichLog):
@@ -223,10 +225,13 @@ class WarmupDashboard(App):
         self._log_panels: dict[str, LogPanel] = {}
         self._log_workers: dict[str, Worker] = {}
         self._events_client: Optional[EventsClient] = None
-        self._is_hot = False
+        self._is_hot = any(inst.get("active") for inst in self.existing_instances)
 
     def compose(self) -> ComposeResult:
-        yield HeaderWidget(self.chute_name, self.node_selector, id="header-widget")
+        initial_status = "HOT" if self._is_hot else "COLD"
+        yield HeaderWidget(
+            self.chute_name, self.node_selector, initial_status=initial_status, id="header-widget"
+        )
         with Container(id="main-area"):
             yield GpuPanel(self.node_selector, id="gpu-panel")
             yield EventsPanel(id="events-panel", max_lines=500)
