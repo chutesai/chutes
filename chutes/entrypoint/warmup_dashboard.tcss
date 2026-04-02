@@ -16,7 +16,7 @@ Screen {
     layout: grid;
     grid-size: 2;
     grid-columns: 1fr 2fr;
-    grid-rows: auto 1fr;
+    grid-rows: 14 1fr;
 }
 
 #gpu-panel {
@@ -26,6 +26,7 @@ Screen {
 }
 
 #events-panel {
+    max-height: 14;
     height: 14;
     border: solid $accent;
     padding: 0 1;

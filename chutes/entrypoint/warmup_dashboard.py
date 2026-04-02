@@ -161,6 +161,9 @@ class GpuPanel(Static):
 class EventsPanel(RichLog):
     """Scrolling event log with color-coded entries."""
 
+    def __init__(self, **kwargs):
+        super().__init__(markup=True, **kwargs)
+
     def add_event(self, reason: str, message: str):
         now = datetime.now().strftime("%H:%M:%S")
         color_map = {
