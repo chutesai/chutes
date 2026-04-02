@@ -1,0 +1,53 @@
+Screen {
+    layout: grid;
+    grid-size: 1;
+    grid-rows: auto 1fr auto;
+}
+
+#header-widget {
+    height: 3;
+    background: $surface;
+    border-bottom: solid $primary;
+    padding: 0 1;
+    content-align: left middle;
+}
+
+#main-area {
+    layout: grid;
+    grid-size: 2;
+    grid-columns: 1fr 2fr;
+    grid-rows: auto 1fr;
+}
+
+#gpu-panel {
+    height: 14;
+    border: solid $primary;
+    padding: 0 1;
+}
+
+#events-panel {
+    height: 14;
+    border: solid $accent;
+    padding: 0 1;
+}
+
+#log-grid {
+    column-span: 2;
+    layout: grid;
+    grid-size: 2;
+    grid-gutter: 1;
+    padding: 0 1;
+}
+
+.log-panel {
+    border: solid $secondary;
+    height: 100%;
+    min-height: 10;
+}
+
+#status-bar {
+    height: 1;
+    dock: bottom;
+    background: $surface;
+    padding: 0 1;
+}

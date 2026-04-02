@@ -34,6 +34,7 @@ setup(
             "cfsv_v4",
         ],
         "chutes.envdump": ["*.so"],
+        "chutes.entrypoint": ["*.tcss"],
     },
     install_requires=[
         "aiohttp[speedups]>=3.10,<4",
@@ -62,6 +63,10 @@ setup(
         "hf_transfer",
         "setproctitle",
         "cllmv==0.1.3",
+        "textual>=1.0.0",
+        "python-socketio[asyncio_client]>=5.10",
+        "rbcl>=1.0.0",
+        "pybase64>=1.4",
     ],
     extras_require={
         "dev": ["black", "flake8", "wheel", "pytest"],

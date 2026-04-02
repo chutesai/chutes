@@ -285,9 +285,23 @@ def warmup_chute(
     ),
     debug: bool = typer.Option(False, help="enable debug logging"),
     stream_logs: bool = typer.Option(
-        False, help="automatically stream logs from the first instance that appears"
+        False, help="launch TUI dashboard with real-time events and instance logs"
     ),
 ):
+    async def _resolve_chute(chute_name, config, headers):
+        """Fetch chute info from the API to get chute_id, node_selector, and existing instances."""
+        async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
+            async with session.get(f"/chutes/{chute_name}", headers=headers) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise ValueError(f"Failed to resolve chute '{chute_name}': {error_text}")
+                data = await response.json()
+                return {
+                    "chute_id": data.get("chute_id"),
+                    "node_selector": data.get("node_selector", {}),
+                    "instances": data.get("instances", []),
+                }
+
     async def warmup():
         """
         Do the warmup.
@@ -305,33 +319,24 @@ def warmup_chute(
         headers, _ = sign_request(purpose="chutes")
 
         if stream_logs:
-            # Run warmup monitoring and log streaming in parallel
-            warmup_task = asyncio.create_task(monitor_warmup(chute_name, config, headers))
-            poll_task = asyncio.create_task(poll_and_stream_logs(chute_name, config, headers))
+            # Resolve chute info for the dashboard
+            chute_info = await _resolve_chute(chute_name, config, headers)
+            chute_id = chute_info["chute_id"]
+            if not chute_id:
+                logger.error("Could not resolve chute_id — falling back to simple warmup")
+                await monitor_warmup(chute_name, config, headers)
+                return
 
-            # Wait for both tasks, but log streaming should continue even after warmup completes
-            try:
-                # Wait for warmup to complete (or be cancelled)
-                try:
-                    await warmup_task
-                except Exception as e:
-                    logger.debug(f"Warmup task ended: {e}")
+            from chutes.entrypoint.warmup_dashboard import WarmupDashboard
 
-                # Log streaming continues independently - wait for it or user interrupt
-                try:
-                    await poll_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    logger.debug(f"Poll task ended: {e}")
-            except KeyboardInterrupt:
-                warmup_task.cancel()
-                poll_task.cancel()
-                try:
-                    await asyncio.gather(warmup_task, poll_task, return_exceptions=True)
-                except Exception:
-                    pass
-                raise
+            dashboard = WarmupDashboard(
+                chute_name=chute_name,
+                chute_id=chute_id,
+                node_selector=chute_info["node_selector"],
+                existing_instances=chute_info["instances"],
+                config=config,
+            )
+            await dashboard.run_async()
         else:
             # Just monitor warmup
             await monitor_warmup(chute_name, config, headers)
