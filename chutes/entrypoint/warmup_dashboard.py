@@ -96,28 +96,33 @@ class GpuPanel(Static):
         self._refresh_content()
 
     def _refresh_content(self):
-        lines = ["[bold underline]GPU Requirements[/]\n"]
         gpu_count = self.node_selector.get("gpu_count", 1)
         include = self.node_selector.get("include", [])
         exclude = self.node_selector.get("exclude", [])
         min_vram = self.node_selector.get("min_vram_gb_per_gpu")
 
-        lines.append(f"  Count: [bold]{gpu_count}[/]")
+        # Left column: requirements
+        parts = [f"[bold]GPUs:[/] {gpu_count}"]
         if include:
-            lines.append(f"  Include: [green]{', '.join(include)}[/]")
+            parts.append(f"[green]{','.join(include)}[/]")
         if exclude:
-            lines.append(f"  Exclude: [red]{', '.join(exclude)}[/]")
+            parts.append(f"[red]!{','.join(exclude)}[/]")
         if min_vram:
-            lines.append(f"  Min VRAM: [cyan]{min_vram}GB[/]")
+            parts.append(f"[cyan]>={min_vram}GB[/]")
+        left = "  ".join(parts)
 
+        # Right side: observed GPUs
         if self._observed_gpus:
-            lines.append("\n[bold underline]Observed GPUs[/]\n")
+            obs = []
             for gpu_type, info in sorted(self._observed_gpus.items()):
                 active = info.get("active", 0)
                 total = info.get("total", 0)
-                lines.append(f"  {gpu_type}: [green]{active}[/]/[dim]{total}[/]")
+                obs.append(f"{gpu_type}: [green]{active}[/]/[dim]{total}[/]")
+            right = "  |  [bold]Live:[/] " + "  ".join(obs)
+        else:
+            right = ""
 
-        self.update("\n".join(lines))
+        self.update(left + right)
 
     def track_instance(
         self, instance_id: str, gpu_type: str, gpu_count: int, active: bool, removed: bool = False
@@ -391,15 +396,16 @@ class WarmupDashboard(App):
                 self._add_log_panel(instance_id)
 
             elif reason == "instance_hot":
+                # instance_hot = verified but not yet active, treat same as created
                 if instance_id and gpu_type and gpu_count:
-                    gpu_panel.track_instance(instance_id, gpu_type, gpu_count, active=True)
-                self._is_hot = True
-                header_widget.set_status("HOT")
-                self._update_status_bar()
+                    gpu_panel.track_instance(instance_id, gpu_type, gpu_count, active=False)
 
             elif reason == "instance_activated" and instance_id:
                 if gpu_type and gpu_count:
                     gpu_panel.track_instance(instance_id, gpu_type, gpu_count, active=True)
+                self._is_hot = True
+                header_widget.set_status("HOT")
+                self._update_status_bar()
 
             elif reason == "instance_deleted" and instance_id:
                 if gpu_type and gpu_count:

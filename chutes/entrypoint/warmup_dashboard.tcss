@@ -16,18 +16,18 @@ Screen {
     layout: grid;
     grid-size: 2;
     grid-columns: 1fr 2fr;
-    grid-rows: 14 1fr;
+    grid-rows: 7 1fr;
 }
 
 #gpu-panel {
-    height: 14;
+    height: 7;
     border: solid $primary;
     padding: 0 1;
 }
 
 #events-panel {
-    max-height: 14;
-    height: 14;
+    max-height: 7;
+    height: 7;
     border: solid $accent;
     padding: 0 1;
 }
