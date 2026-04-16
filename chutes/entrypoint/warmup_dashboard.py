@@ -495,7 +495,9 @@ class WarmupDashboard(App):
                     return
             headers, _ = sign_request(purpose="logs")
             try:
-                async with aiohttp.ClientSession(base_url=self.config.generic.api_base_url) as session:
+                async with aiohttp.ClientSession(
+                    base_url=self.config.generic.api_base_url
+                ) as session:
                     async with session.get(
                         f"/instances/{instance_id}/logs",
                         headers=headers,
