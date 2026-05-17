@@ -365,6 +365,8 @@ def build_sglang_chute(
         # XXX Unfortunately, broadcast is disabled in TDX+PPCIE mode.
         if "--disable-custom-all-reduce" not in engine_args:
             engine_args += " --disable-custom-all-reduce"
+        if "--gc-threshold" not in engine_args:
+            engine_args += " --gc-threshold 50000 100 100"
 
         # Logging of requests is already disabled by default, but just to be extra explicit about it...
         if "--log-requests-level" not in engine_args:
@@ -485,6 +487,22 @@ def build_sglang_chute(
 
         self.passthrough_headers["Authorization"] = f"Bearer {api_key}"
         await warmup_model(self, base_url=base_url, api_key=api_key, ssl_context=ssl_ctx)
+
+        # Freeze GC after warmup to prevent gen2 collection stalls (can block 10-30s).
+        try:
+            connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async with session.post(
+                    f"{base_url}/freeze_gc",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                ) as resp:
+                    if resp.status == 200:
+                        logger.info("GC frozen successfully after warmup")
+                    else:
+                        logger.warning(f"Failed to freeze GC: status {resp.status}")
+        except Exception as exc:
+            logger.warning(f"Failed to freeze GC: {exc}")
+
         await validate_auth(self, base_url=base_url, api_key=api_key, ssl_context=ssl_ctx)
         if use_mtls:
             await validate_mtls(self.name, api_key, ssl_ctx, wrong_ssl_ctx)
