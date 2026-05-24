@@ -82,7 +82,7 @@ from chutes.entrypoint.verify import (
 )
 from chutes.util.hf import verify_cache, CacheVerificationError
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-from substrateinterface import Keypair, KeypairType
+from async_substrate_interface import Keypair, KeypairType
 from chutes.entrypoint._shared import (
     get_launch_token,
     get_launch_token_data,

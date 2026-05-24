@@ -9,7 +9,7 @@ import pybase64
 import typer
 from rich.console import Console
 from rich.prompt import Prompt
-from substrateinterface import Keypair
+from async_substrate_interface import Keypair
 
 from chutes.config import get_config
 from chutes.util.auth import sign_request

@@ -15,7 +15,7 @@ import aiohttp
 import typer
 from loguru import logger
 from rich import print as rprint
-from substrateinterface import Keypair
+from async_substrate_interface import Keypair
 
 from chutes.config import get_config, get_generic_config
 from chutes.exception import NotConfigured, AuthenticationRequired

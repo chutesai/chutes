@@ -22,7 +22,7 @@ from fastapi.responses import ORJSONResponse
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
-from substrateinterface import Keypair
+from async_substrate_interface import Keypair
 
 CHUTE_REF_RE = re.compile(r"^[a-z][a-z0-9_]*:[a-z][a-z0-9_]+$", re.I)
 
