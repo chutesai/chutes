@@ -9,7 +9,7 @@ import time
 from loguru import logger
 import typer
 import orjson as json
-from async_substrate_interface import Keypair
+from bittensor_wallet import Keypair
 from chutes.config import get_config
 from chutes.constants import (
     HOTKEY_HEADER,

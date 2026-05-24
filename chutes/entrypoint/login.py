@@ -15,7 +15,7 @@ import aiohttp
 import typer
 from loguru import logger
 from rich import print as rprint
-from async_substrate_interface import Keypair
+from bittensor_wallet import Keypair
 
 from chutes.config import get_config, get_generic_config
 from chutes.exception import NotConfigured, AuthenticationRequired

@@ -82,7 +82,7 @@ from chutes.entrypoint.verify import (
 )
 from chutes.util.hf import verify_cache, CacheVerificationError
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-from async_substrate_interface import Keypair, KeypairType
+from bittensor_wallet import Keypair
 from chutes.entrypoint._shared import (
     get_launch_token,
     get_launch_token_data,
@@ -2609,7 +2609,7 @@ def run_chute(
         if not (dev or generate_inspecto_hash):
             miner()._miner_ss58 = miner_ss58
             miner()._validator_ss58 = validator_ss58
-            miner()._keypair = Keypair(ss58_address=validator_ss58, crypto_type=KeypairType.SR25519)
+            miner()._keypair = Keypair(ss58_address=validator_ss58)
 
         if generate_inspecto_hash:
             await _run_chute()

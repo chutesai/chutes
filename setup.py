@@ -48,6 +48,7 @@ setup(
         "orjson>=3.10",
         "setuptools>=0.75",
         "async-substrate-interface>=2.0.0",
+        "bittensor-wallet>=4.0.1",
         "rich>=13.0.0",
         "typer>=0.12.5",
         "graval>=0.2.6",

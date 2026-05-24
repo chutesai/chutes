@@ -4,7 +4,7 @@ import hashlib
 import orjson as json
 from typing import Dict, Any
 from pydantic import BaseModel
-from async_substrate_interface import Keypair
+from bittensor_wallet import Keypair
 from chutes.constants import (
     USER_ID_HEADER,
     HOTKEY_HEADER,

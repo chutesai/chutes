@@ -11,7 +11,7 @@ import time
 import aiohttp
 from loguru import logger
 from pathlib import Path
-from async_substrate_interface import Keypair
+from bittensor_wallet import Keypair
 import typer
 from chutes.config import get_generic_config
 from rich import print as rprint
