@@ -56,7 +56,7 @@ setup(
         "cryptography",
         "psutil",
         "pyjwt>=2.10.1",
-        "netifaces",
+        "netifaces-plus>=0.12.3",
         "pyudev",
         "aiofiles>=23",
         "semver",
