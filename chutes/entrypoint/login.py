@@ -56,7 +56,7 @@ def login(
                 base_url = config.generic.api_base_url.rstrip("/")
                 if config.auth.hotkey_seed and config.auth.hotkey_ss58address:
                     ss58 = config.auth.hotkey_ss58address
-                    keypair = Keypair.create_from_seed(seed_hex=config.auth.hotkey_seed)
+                    keypair = Keypair.create_from_seed(config.auth.hotkey_seed)
                     rprint(f"[dim]Using hotkey from chutes config: {ss58}[/dim]")
             except (NotConfigured, AuthenticationRequired):
                 pass
@@ -120,7 +120,7 @@ def login(
                 hotkey_data = json.load(infile)
             ss58 = hotkey_data["ss58Address"]
             secret_seed = hotkey_data["secretSeed"].replace("0x", "")
-            keypair = Keypair.create_from_seed(seed_hex=secret_seed)
+            keypair = Keypair.create_from_seed(secret_seed)
 
         # Get nonce from IDP
         rprint("\n[bold]Fetching login nonce...[/bold]")

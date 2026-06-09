@@ -73,6 +73,6 @@ def sign_request(payload: Dict[str, Any] | str | None = None, purpose: str = Non
             config.auth.hotkey_ss58address, nonce, payload_str=None, purpose=purpose
         )
     logger.debug(f"Signing message: {signature_string}")
-    keypair = Keypair.create_from_seed(seed_hex=config.auth.hotkey_seed)
+    keypair = Keypair.create_from_seed(config.auth.hotkey_seed)
     headers[SIGNATURE_HEADER] = keypair.sign(signature_string.encode()).hex()
     return headers, payload_string

@@ -47,7 +47,7 @@ def fetch_startup_logs(
             os.environ["CHUTES_CONFIG_PATH"] = config_path
 
         config = get_config()
-        keypair = Keypair.create_from_seed(seed_hex=config.auth.hotkey_seed)
+        keypair = Keypair.create_from_seed(config.auth.hotkey_seed)
         private_key_scalar = keypair.private_key[:32]
         user_pubkey = bytes.fromhex(
             keypair.public_key[2:] if keypair.public_key.startswith("0x") else keypair.public_key

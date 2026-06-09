@@ -150,7 +150,7 @@ def register(
                 "coldkey": coldkey_ss58,
             }
         )
-        keypair = Keypair.create_from_seed(seed_hex=secret_seed)
+        keypair = Keypair.create_from_seed(secret_seed)
         headers = {
             "Content-Type": "application/json",
             HOTKEY_HEADER: ss58,

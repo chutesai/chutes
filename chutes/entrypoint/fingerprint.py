@@ -41,7 +41,7 @@ def change_fingerprint(
         # Create the signature.
         with open(hotkey_path, "r") as infile:
             hotkey_data = json.loads(infile.read())
-        keypair = Keypair.create_from_seed(seed_hex=hotkey_data["secretSeed"])
+        keypair = Keypair.create_from_seed(hotkey_data["secretSeed"])
         nonce = str(int(time.time()))
         ss58 = hotkey_data["ss58Address"]
         signature_string = f"{ss58}:{fingerprint}:{nonce}"
