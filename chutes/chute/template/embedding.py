@@ -104,6 +104,8 @@ def build_embedding_chute(
     enable_chunked_processing: bool = True,
     allow_external_egress: bool = False,
     tee: bool = False,
+    official_package: bool = False,
+    name: str = None,
 ):
     if engine_args and "--revision" in engine_args:
         raise ValueError("Revision is now a top-level argument to build_embedding_chute!")
@@ -131,7 +133,7 @@ def build_embedding_chute(
 
     chute = Chute(
         username=username,
-        name=model_name,
+        name=name or model_name,
         tagline=tagline,
         readme=readme,
         image=image,
@@ -223,7 +225,7 @@ def build_embedding_chute(
         if "--api-key" in engine_args:
             raise ValueError("You may not override api key!")
 
-        use_mtls = mtls_enabled()
+        use_mtls = not official_package and mtls_enabled()
         ssl_ctx = None
         wrong_ssl_ctx = None
 
@@ -250,13 +252,15 @@ def build_embedding_chute(
 
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env["HF_HUB_OFFLINE"] = "1"
-        env["TRANSFORMERS_OFFLINE"] = "1"
+        if not official_package:
+            env["HF_HUB_OFFLINE"] = "1"
+            env["TRANSFORMERS_OFFLINE"] = "1"
+            env["SGL_MODEL_NAME"] = self.name
+            env["SGL_REVISION"] = revision
+
         if enable_chunked_processing:
             env["VLLM_ENABLE_CHUNKED_PROCESSING"] = "true"
 
-        env["SGL_MODEL_NAME"] = self.name
-        env["SGL_REVISION"] = revision
         if use_mtls:
             env["VLLM_SSL_KEYFILE_PEM"] = certs["server_key_pem"].decode()
             env["VLLM_SSL_CERTFILE_PEM"] = certs["server_cert_pem"].decode()

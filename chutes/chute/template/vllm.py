@@ -250,6 +250,8 @@ def build_vllm_chute(
     shutdown_after_seconds: int = 300,
     allow_external_egress: bool = False,
     tee: bool = False,
+    official_package: bool = False,
+    name: str = None,
 ):
     if engine_args and "--revision" in engine_args:
         raise ValueError("Revision is now a top-level argument to build_vllm_chute!")
@@ -273,7 +275,7 @@ def build_vllm_chute(
 
     chute = Chute(
         username=username,
-        name=model_name,
+        name=name or model_name,
         tagline=tagline,
         readme=readme,
         image=image,
@@ -322,7 +324,11 @@ def build_vllm_chute(
 
         import torch
         import multiprocessing
-        from chutes.util.hf import verify_cache, purge_model_cache, CacheVerificationError
+        from chutes.util.hf import (
+            verify_cache,
+            purge_model_cache,
+            CacheVerificationError,
+        )
         from huggingface_hub import snapshot_download
 
         download_path = None
@@ -370,8 +376,6 @@ def build_vllm_chute(
             engine_args += " --enable-prompt-tokens-details"
         if "--served-model-name" in engine_args:
             raise ValueError("You may not override served model name!")
-        if "--enable-return-hidden-states" not in engine_args and "affine" in self.name.lower():
-            engine_args += " --enable-return-hidden-states"
         if len(re.findall(r"(?:^|\s)--(?:tensor-parallel-size|tp)[=\s]", engine_args)) > 1:
             raise ValueError(
                 "Please use only --tensor-parallel-size (or omit and let gpu_count set it automatically)"
@@ -396,7 +400,7 @@ def build_vllm_chute(
         if "--enable-log-deltas" not in engine_args and "--no-enable-log-deltas" not in engine_args:
             engine_args += " --no-enable-log-deltas"
 
-        use_mtls = mtls_enabled()
+        use_mtls = not official_package and mtls_enabled()
         ssl_ctx = None
         wrong_ssl_ctx = None
 
@@ -423,10 +427,11 @@ def build_vllm_chute(
 
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env["SGL_MODEL_NAME"] = self.name
-        env["SGL_REVISION"] = revision
-        env["HF_HUB_OFFLINE"] = "1"
-        env["TRANSFORMERS_OFFLINE"] = "1"
+        if not official_package:
+            env["SGL_MODEL_NAME"] = self.name
+            env["SGL_REVISION"] = revision
+            env["HF_HUB_OFFLINE"] = "1"
+            env["TRANSFORMERS_OFFLINE"] = "1"
         env["VLLM_NO_USAGE_STATS"] = "1"
         env["VLLM_DO_NOT_TRACK"] = "1"
         env["DO_NOT_TRACK"] = "1"

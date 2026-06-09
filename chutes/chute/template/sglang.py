@@ -224,6 +224,8 @@ def build_sglang_chute(
     shutdown_after_seconds: int = 300,
     allow_external_egress: bool = False,
     tee: bool = False,
+    official_package: bool = False,
+    name: str = None,
 ):
     # Prevent revision in the code, must be in the top level helper args.
     m = re.search(r"--revision\s*=?\s*([^ ]+)", engine_args or "", re.I)
@@ -249,7 +251,7 @@ def build_sglang_chute(
 
     chute = Chute(
         username=username,
-        name=model_name,
+        name=name or model_name,
         tagline=tagline,
         readme=readme,
         image=image,
@@ -301,7 +303,11 @@ def build_sglang_chute(
         import torch
         import multiprocessing
         import subprocess
-        from chutes.util.hf import verify_cache, purge_model_cache, CacheVerificationError
+        from chutes.util.hf import (
+            verify_cache,
+            purge_model_cache,
+            CacheVerificationError,
+        )
         from huggingface_hub import snapshot_download
         from chutes.chute.template.helpers import warmup_model, validate_auth
 
@@ -340,8 +346,9 @@ def build_sglang_chute(
         # Set torch inductor, flashinfer, etc., cache directories.
         set_default_cache_dirs(download_path)
 
-        os.environ["SGL_MODEL_NAME"] = self.name
-        os.environ["SGL_REVISION"] = revision
+        if not official_package:
+            os.environ["SGL_MODEL_NAME"] = self.name
+            os.environ["SGL_REVISION"] = revision
 
         # Reset torch.
         torch.cuda.empty_cache()
@@ -356,8 +363,9 @@ def build_sglang_chute(
             engine_args += f" --tp {gpu_count}"
         if "--enable-cache-report" not in engine_args:
             engine_args += " --enable-cache-report"
-        if "--enable-return-hidden-states" not in engine_args:
-            engine_args += " --enable-return-hidden-states"
+        if not official_package:
+            if "--enable-return-hidden-states" not in engine_args:
+                engine_args += " --enable-return-hidden-states"
         if self.revision:
             engine_args += f" --revision {self.revision}"
         if "--api-key" in engine_args:
@@ -373,7 +381,7 @@ def build_sglang_chute(
             engine_args += " --log-requests-level 0"
 
         api_key = str(uuid.uuid4())
-        use_mtls = mtls_enabled()
+        use_mtls = not official_package and mtls_enabled()
         ssl_ctx = None
         wrong_ssl_ctx = None
 
@@ -409,8 +417,9 @@ def build_sglang_chute(
         logger.info(f"Launching SGLang with command: {display_cmd}")
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env["HF_HUB_OFFLINE"] = "1"
-        env["TRANSFORMERS_OFFLINE"] = "1"
+        if not official_package:
+            env["HF_HUB_OFFLINE"] = "1"
+            env["TRANSFORMERS_OFFLINE"] = "1"
 
         # Explicitly set all the logging envs, even though they are disabled by default, just to be extra, extra clear.
         env.update(
@@ -458,7 +467,9 @@ def build_sglang_chute(
             exc = t.exception()
             if exc:
                 logger.opt(exception=exc).error(
-                    "SGLang monitor task failed, terminating: {} ({})", type(exc).__name__, exc
+                    "SGLang monitor task failed, terminating: {} ({})",
+                    type(exc).__name__,
+                    exc,
                 )
                 force_exit(1)
 
