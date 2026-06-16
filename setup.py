@@ -20,7 +20,7 @@ setup(
     description="Chutes development kit and CLI.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/rayonlabs/chutes",
+    url="https://github.com/chutesai/chutes",
     author="Jon Durbin",
     license_expression="MIT",
     packages=find_packages(),
