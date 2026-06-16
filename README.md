@@ -338,6 +338,17 @@ if __name__ == "__main__":
 
 The main thing to notice here are the various the `@chute.cord(..)` decorators and `@chute.on_startup()` decorator.
 
+When building a custom chute that depends on local project files or modules, run the build from the project root and
+include the current working directory in the remote build context:
+
+```bash
+chutes build validator_chute:chute --include-cwd --wait --debug
+```
+
+Keep the `readme=` values explicit in your `Image(...)` and `Chute(...)` declarations. The CLI does not infer these
+from a nearby `README.md`, because the chute file can live inside a larger project whose README describes something
+else.
+
 Any code within the `@chute.on_startup()` decorated function(s) are executed when the application starts on the miner, it does not run in the local/client context.
 
 Any function that you decorate with `@chute.cord()` becomes a function that runs within the chute, i.e. not locally - it's executed on the miners' hardware.
