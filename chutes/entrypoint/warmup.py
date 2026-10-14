@@ -12,6 +12,7 @@ from loguru import logger
 import typer
 from chutes.config import get_config
 from chutes.entrypoint._shared import load_chute
+from chutes.entrypoint.log_read import SessionClient, prefix_instance_logs, read_instance_logs
 from chutes.util.auth import sign_request
 
 
@@ -78,98 +79,17 @@ async def poll_for_instances(
         raise TimeoutError(f"No instances found for chute {chute_name} within {max_wait} seconds")
 
 
-async def stream_instance_logs(instance_id: str, config, backfill: int = 100):
-    """
-    Stream logs from an instance.
-
-    Raises:
-        aiohttp.ClientResponseError: If the request fails
-        Exception: For other streaming errors
-    """
-    # Sign the request with purpose for instances endpoint
+async def stream_instance_logs(instance_id: str, config):
+    """Read stored logs for one instance and write them to stdout."""
     headers, _ = sign_request(purpose="logs")
     async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
-        async with session.get(
-            f"/instances/{instance_id}/logs",
-            headers=headers,
-            params={"backfill": str(backfill)},
-        ) as response:
-            if response.status != 200:
-                error_text = await response.text()
-                raise aiohttp.ClientResponseError(
-                    request_info=response.request_info,
-                    history=response.history,
-                    status=response.status,
-                    message=f"Failed to stream logs from instance {instance_id}: {error_text}",
-                )
-
-            logger.info(f"Streaming logs from instance {instance_id}...")
-            # Parse SSE format and extract log content
-            buffer = b""
-            skipped_lines_count = 0
-            try:
-                async for chunk in response.content.iter_any():
-                    if chunk:
-                        buffer += chunk
-                        # Process complete lines
-                        while b"\n" in buffer:
-                            line, buffer = buffer.split(b"\n", 1)
-                            # Skip empty lines completely
-                            if not line.strip():
-                                skipped_lines_count += 1
-                                continue
-                            # Skip SSE comment lines (lines starting with :)
-                            if line.startswith(b":"):
-                                skipped_lines_count += 1
-                                continue
-                            # Only process SSE data lines - ignore everything else
-                            if line.startswith(b"data: "):
-                                # Check for empty data: lines (just "data: " or "data:")
-                                data_content = line[6:].strip() if len(line) > 6 else b""
-                                if not data_content:
-                                    skipped_lines_count += 1
-                                    continue
-                                try:
-                                    # Parse JSON from SSE data line
-                                    data = json.loads(data_content)
-                                    log_message = data.get("log", "")
-                                    # Only output if we have actual non-empty log content
-                                    # Also check that it's not just a single character like "."
-                                    if (
-                                        log_message
-                                        and log_message.strip()
-                                        and len(log_message.strip()) > 1
-                                    ):
-                                        # Write just the log message with a newline
-                                        sys.stdout.buffer.write(log_message.encode("utf-8") + b"\n")
-                                        sys.stdout.buffer.flush()
-                                    elif log_message and log_message.strip():
-                                        # Single character - likely a keepalive, skip it
-                                        skipped_lines_count += 1
-                                        logger.debug(
-                                            f"Skipping single-character log message (likely keepalive): {repr(log_message)}"
-                                        )
-                                    else:
-                                        skipped_lines_count += 1
-                                except (json.JSONDecodeError, KeyError) as e:
-                                    # Log what we're skipping for debugging
-                                    logger.debug(
-                                        f"Skipping unparseable SSE line: {line[:100]}, error: {e}"
-                                    )
-                                    skipped_lines_count += 1
-                            else:
-                                # Skip non-SSE lines silently (likely keepalive messages)
-                                skipped_lines_count += 1
-            except asyncio.CancelledError:
-                raise
-            except (aiohttp.ClientError, ConnectionError, OSError) as e:
-                # Connection errors - instance might have been deleted
-                raise Exception(
-                    f"Stream ended for instance {instance_id} (instance may have been deleted): {e}"
-                ) from e
-            except Exception as e:
-                # Re-raise to allow caller to handle (e.g., try another instance)
-                raise Exception(f"Error streaming logs from instance {instance_id}: {e}") from e
+        result = await read_instance_logs(SessionClient(session), instance_id, headers)
+    if result.error:
+        raise Exception(f"Failed to read logs from instance {instance_id}: {result.error}")
+    logger.info(f"Read logs from instance {instance_id}...")
+    if result.text:
+        sys.stdout.buffer.write(result.text.encode("utf-8"))
+        sys.stdout.buffer.flush()
 
 
 async def plain_stream_all_instances(chute_name: str, config, headers):
@@ -182,42 +102,21 @@ async def plain_stream_all_instances(chute_name: str, config, headers):
         log_headers, _ = sign_request(purpose="logs")
         try:
             async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
-                async with session.get(
-                    f"/instances/{instance_id}/logs",
-                    headers=log_headers,
-                    params={"backfill": "100"},
-                ) as response:
-                    if response.status != 200:
-                        logger.warning(f"[{short_id}] Log stream failed: {response.status}")
-                        return
-                    logger.info(f"[{short_id}] Streaming logs...")
-                    buffer = b""
-                    async for chunk in response.content.iter_any():
-                        if not chunk:
-                            continue
-                        buffer += chunk
-                        while b"\n" in buffer:
-                            line, buffer = buffer.split(b"\n", 1)
-                            if not line.strip() or line.startswith(b":"):
-                                continue
-                            if line.startswith(b"data: "):
-                                data_content = line[6:].strip()
-                                if not data_content:
-                                    continue
-                                try:
-                                    data = json.loads(data_content)
-                                    log_msg = data.get("log", "")
-                                    if log_msg and log_msg.strip() and len(log_msg.strip()) > 1:
-                                        sys.stdout.buffer.write(
-                                            f"[{short_id}] {log_msg.rstrip()}\n".encode("utf-8")
-                                        )
-                                        sys.stdout.buffer.flush()
-                                except Exception:
-                                    pass
+                result = await read_instance_logs(
+                    SessionClient(session), instance_id, log_headers
+                )
+            if result.error:
+                logger.warning(f"[{short_id}] {result.error}")
+                return
+            logger.info(f"[{short_id}] Read logs...")
+            text = prefix_instance_logs(instance_id, result.text)
+            if text:
+                sys.stdout.buffer.write(text.encode("utf-8"))
+                sys.stdout.buffer.flush()
         except asyncio.CancelledError:
             return
         except Exception as e:
-            logger.warning(f"[{short_id}] Stream ended: {e}")
+            logger.warning(f"[{short_id}] Log read failed: {e}")
         finally:
             active_tasks.pop(instance_id, None)
 
