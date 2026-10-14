@@ -1,4 +1,4 @@
-import json
+import orjson as json
 
 
 def log_read_failure(status, body):
