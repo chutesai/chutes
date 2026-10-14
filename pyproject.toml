@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+norecursedirs = [
+  ".*",
+  "build",
+  "dist",
+  "CVS",
+  "_darcs",
+  "{arch}",
+  "*.egg",
+  "tdd",
+]

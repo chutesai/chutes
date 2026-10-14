@@ -10,7 +10,6 @@ from datetime import datetime
 from typing import Optional
 
 import aiohttp
-import orjson as json
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Container
@@ -18,6 +17,7 @@ from textual.widgets import Static, RichLog
 from textual.worker import Worker
 
 from chutes.config import get_config
+from chutes.entrypoint.log_read import SessionClient, read_instance_logs
 from chutes.entrypoint.warmup_events import EventsClient
 from chutes.util.auth import sign_request
 
@@ -479,63 +479,29 @@ class WarmupDashboard(App):
             )
 
     async def _log_stream_worker(self, instance_id: str):
-        """Stream logs from a single instance, auto-reconnecting on failure."""
-        max_retries = 30
-        retry_delay = 2
-
-        for attempt in range(max_retries):
-            panel = self._log_panels.get(instance_id)
-            if not panel:
-                return
-            if attempt > 0:
-                panel.write(Text(f"Reconnecting (attempt {attempt + 1})...", style="dim"))
-                await asyncio.sleep(min(retry_delay * attempt, 30))
-                panel = self._log_panels.get(instance_id)
-                if not panel:
-                    return
-            headers, _ = sign_request(purpose="logs")
-            try:
-                async with aiohttp.ClientSession(
-                    base_url=self.config.generic.api_base_url
-                ) as session:
-                    async with session.get(
-                        f"/instances/{instance_id}/logs",
-                        headers=headers,
-                        params={"backfill": "100"},
-                    ) as response:
-                        if response.status != 200:
-                            panel.write(Text(f"Log stream failed: {response.status}", style="red"))
-                            continue
-                        buffer = b""
-                        async for chunk in response.content.iter_any():
-                            if not chunk:
-                                continue
-                            buffer += chunk
-                            while b"\n" in buffer:
-                                line, buffer = buffer.split(b"\n", 1)
-                                if not line.strip():
-                                    continue
-                                if line.startswith(b":"):
-                                    continue
-                                if line.startswith(b"data: "):
-                                    data_content = line[6:].strip()
-                                    if not data_content:
-                                        continue
-                                    try:
-                                        data = json.loads(data_content)
-                                        log_msg = data.get("log", "")
-                                        if log_msg and log_msg.strip() and len(log_msg.strip()) > 1:
-                                            panel.write(log_msg.rstrip())
-                                    except Exception:
-                                        pass
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                continue
-
+        """Read stored logs for one instance once."""
         panel = self._log_panels.get(instance_id)
-        if panel:
-            panel.write(Text("Log stream disconnected after max retries.", style="red"))
+        if not panel:
+            return
+        headers, _ = sign_request(purpose="logs")
+        try:
+            async with aiohttp.ClientSession(base_url=self.config.generic.api_base_url) as session:
+                result = await read_instance_logs(SessionClient(session), instance_id, headers)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            panel = self._log_panels.get(instance_id)
+            if panel:
+                panel.write(Text(f"Log read failed: {exc}", style="red"))
+            return
+        panel = self._log_panels.get(instance_id)
+        if not panel:
+            return
+        if result.error:
+            panel.write(Text(result.error, style="red"))
+            return
+        for line in result.text.splitlines():
+            panel.write(line)
 
     async def action_quit(self) -> None:
         if self._events_client:
